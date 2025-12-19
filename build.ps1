@@ -23,7 +23,7 @@ function BuildPsm1 {
 }
 
 function GetModuleVersion {
-	"0.7.1"
+	"1.0.0"
 }
 
 $buildDir = "$PSScriptRoot\build\Airpower"
