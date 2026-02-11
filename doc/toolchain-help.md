@@ -1,17 +1,23 @@
+<!--
+Toolchain
+Copyright (c) 2026 AllSageTech
+SPDX-License-Identifier: MPL-2.0
+-->
+
 # help
 
 Outputs usage for this command.
 
 ## Usage
 
-    airpower help
+    toolchain help
 
 ## Example
 
 ```
-PS C:\example> airpower help
+PS C:\example> toolchain help
 
-Usage: airpower COMMAND
+Usage: toolchain COMMAND
 
 Commands:
   version        Outputs the version of the module
@@ -27,6 +33,6 @@ Commands:
   save           Downloads packages for use in an offline installation
   help           Outputs usage for this command
 
-For detailed documentation and examples, visit https://github.com/airpwr/airpwr.
+For detailed documentation and examples, visit https://github.com/allsagetech/toolchain.
 
 ```

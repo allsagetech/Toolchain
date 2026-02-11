@@ -5,13 +5,13 @@ BeforeAll {
 
 Describe "Db" {
 	BeforeAll {
-		$script:AirpowerPath = "$root\airpower"
+		$script:ToolchainPath = "$root\toolchain"
 	}
 	BeforeEach {
 		[Db]::Init()
 	}
 	AfterEach {
-		[IO.Directory]::Delete("\\?\$AirpowerPath", $true)
+		[IO.Directory]::Delete("\\?\$ToolchainPath", $true)
 	}
 	It "Get No Exist" {
 		$v, $err = [Db]::TryGet("no such")

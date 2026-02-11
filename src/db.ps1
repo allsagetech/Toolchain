@@ -91,7 +91,7 @@ class Db {
 	static [string] Encode([object]$value) {
 		$json = $value | ConvertTo-Json -Compress -Depth 10
 		if ($null -eq $json) {
-			$json = 'null' # PS 5.1 does not handle null
+			$json = 'null'
 		}
 		return [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))
 	}
@@ -177,7 +177,7 @@ class Db {
 					if ($locks) {
 						$locks.Revert()
 					}
-					return $null, "a package $($decodedKey) is being used by another airpower process"
+					return $null, "a package $($decodedKey) is being used by another toolchain process"
 				}
 			}
 		}

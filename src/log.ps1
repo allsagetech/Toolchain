@@ -1,6 +1,6 @@
-function WriteHost {
+function Write-ToolchainInfo {
 	param (
-		[string]$Line
+		[Parameter(Mandatory)][string]$Line
 	)
-	Write-Information $Line -InformationAction Continue
+	Write-Information $Line -InformationAction Continue -Tags @('Toolchain','Info')
 }

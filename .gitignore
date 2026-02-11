@@ -1,3 +1,5 @@
 ps_modules
 build
 *.xml
+re-flash.ps1
+.env

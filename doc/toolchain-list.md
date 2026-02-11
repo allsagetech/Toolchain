@@ -1,3 +1,9 @@
+<!--
+Toolchain
+Copyright (c) 2026 AllSageTech
+SPDX-License-Identifier: MPL-2.0
+-->
+
 # list
 
 Outputs a list of installed packages.
@@ -8,12 +14,12 @@ When a displayed package has an empty tag, it is considered *orphaned* and eligi
 
 ## Usage
 
-	airpower list
+	toolchain list
 
 ## Examples
 
 ```
-PS C:\example> airpower list
+PS C:\example> toolchain list
 
 Package    Tag    Digest       Size
 -------    ---    ------       ----
@@ -22,7 +28,7 @@ anotherpkg latest 9e662865b2ba 349.89 MB
 ```
 
 ```
-PS C:\example> airpower list | where { $_.Package -eq 'somepkg' } | select -expand digest
+PS C:\example> toolchain list | where { $_.Package -eq 'somepkg' } | select -expand digest
 
 Sha256
 ------

@@ -61,9 +61,9 @@ Describe 'ExecuteScript' {
 			}
 			Should -Invoke SomeFn -Times 1 -Exactly
 			$env:Path | Should -Not -BeLike '*zzz;*'
-			$env:var1 | Should -Be 'val' # env vars persist in session
-			$xxx | Should -Be '987' # script vars persist in session
-			$yyy | Should -BeNullOrEmpty # local vars do not persist in session
+			$env:var1 | Should -Be 'val'
+			$xxx | Should -Be '987'
+			$yyy | Should -BeNullOrEmpty
 		}
 		It 'Nests' {
 			$SysPath = "$env:SYSTEMROOT;$env:SYSTEMROOT\System32;$PSHOME"

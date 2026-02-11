@@ -1,12 +1,33 @@
-# Copies the built Airpower module to the $env:PSModulePath user directory.
-# Equivalent to `Install-Module Airpower -Scope CurrentUser`.
+# Copies the built Toolchain module to the $env:PSModulePath user directory.
+# Equivalent to `Install-Module Toolchain -Scope CurrentUser`.
 # Useful if powershellgallery.com is not available.
 
-. $PSScriptRoot\build.ps1
-$dir = "${HOME}\Documents\WindowsPowerShell\Modules\Airpower\$(GetModuleVersion)"
-mkdir -p $dir -ErrorAction SilentlyContinue | Out-Null
-Get-ChildItem $buildDir | ForEach-Object {
-	Copy-Item $_.FullName $dir
-	Unblock-File "$dir\$_"
-	Write-Output "$dir\$_"
+$ErrorActionPreference = 'Stop'
+
+& $PSScriptRoot\build.ps1
+
+$version = (Get-Content "$PSScriptRoot\VERSION" -Raw).Trim()
+
+# Install for both PowerShell 7+ and Windows PowerShell 5.1 (CurrentUser scope)
+$pwshModuleRoot  = Join-Path $HOME 'Documents\PowerShell\Modules'
+$winpsModuleRoot = Join-Path $HOME 'Documents\WindowsPowerShell\Modules'
+
+$installPaths = @(
+	(Join-Path $pwshModuleRoot  "Toolchain\$version"),
+	(Join-Path $winpsModuleRoot "Toolchain\$version")
+)
+
+Remove-Module Toolchain -ErrorAction SilentlyContinue
+
+foreach ($installPath in $installPaths) {
+	if (Test-Path $installPath) {
+		Remove-Item -Path $installPath -Recurse -Force
+	}
+
+	New-Item -ItemType Directory -Path $installPath -Force | Out-Null
+	Copy-Item "$PSScriptRoot\build\Toolchain\*" $installPath -Recurse -Force
 }
+
+Import-Module Toolchain -Force
+
+Write-Host "Toolchain $version installed successfully"
