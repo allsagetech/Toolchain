@@ -1,8 +1,15 @@
+<#
+Toolchains
+Copyright (c) 2021 - 02-08-2026 U.S. Federal Government
+Copyright (c) 2026 AllSageTech
+SPDX-License-Identifier: MPL-2.0
+#>
+
 BeforeAll {
 	. $PSCommandPath.Replace('.Tests.ps1', '.ps1')
-	Mock WriteHost {}
+	Mock Write-ToolchainInfo {}
 	$script:root = (Resolve-Path "$PSScriptRoot\..\test").Path
-	$script:AirpowerPath = "$root\airpower"
+	$script:ToolchainPath = "$root\toolchain"
 }
 
 Describe 'TryEachPackage' {
@@ -34,7 +41,7 @@ Describe 'InstallPackage' {
 		[Db]::Init()
 	}
 	AfterEach {
-		[IO.Directory]::Delete("\\?\$root\airpower", $true)
+		[IO.Directory]::Delete("\\?\$root\toolchain", $true)
 	}
 	Context 'From Nothing' {
 		BeforeAll {
@@ -228,7 +235,7 @@ Describe 'UninstallPackage' {
 		[Db]::Init()
 	}
 	AfterEach {
-		[IO.Directory]::Delete("\\?\$root\airpower", $true)
+		[IO.Directory]::Delete("\\?\$root\toolchain", $true)
 	}
 	Context 'From 2+' {
 		BeforeEach {
@@ -284,7 +291,7 @@ Describe 'PrunePackages' {
 		[Db]::Init()
 	}
 	AfterEach {
-		[IO.Directory]::Delete("\\?\$root\airpower", $true)
+		[IO.Directory]::Delete("\\?\$root\toolchain", $true)
 	}
 	Context 'From DB' {
 		BeforeEach {
@@ -323,10 +330,10 @@ Describe 'PrunePackages' {
 	Context 'Auto' {
 		BeforeAll {
 			Mock UninstallOrphanedPackages { @(), @() }
-			$script:AirpowerAutoprune = "4.11:22:33"
+			$script:ToolchainAutoprune = "4.11:22:33"
 		}
 		AfterAll {
-			$script:AirpowerAutoprune = $null
+			$script:ToolchainAutoprune = $null
 		}
 		It 'Prunes' {
 			PrunePackages -Auto
@@ -340,7 +347,7 @@ Describe 'UpdatePackages' {
 		[Db]::Init()
 	}
 	AfterEach {
-		[IO.Directory]::Delete("\\?\$root\airpower", $true)
+		[IO.Directory]::Delete("\\?\$root\toolchain", $true)
 	}
 	Context 'From DB' {
 		BeforeEach {
@@ -374,7 +381,7 @@ Describe 'UpdatePackages' {
 	}
 	Context 'Auto' {
 		BeforeAll {
-			$script:AirpowerAutoupdate = "4.11:22:33"
+			$script:ToolchainAutoupdate = "4.11:22:33"
 		}
 		BeforeEach {
 			[Db]::Put(('pkgdb', 'somepkg', 'sha256:fde54e65gd4678'), $null)
@@ -387,7 +394,7 @@ Describe 'UpdatePackages' {
 			[Db]::Put(('metadatadb', 'sha256:e340857fffc987'), @{RefCount = 1; Updated = '0001-01-01 00:00:00Z'})
 		}
 		AfterAll {
-			$script:AirpowerAutoupdate = $null
+			$script:ToolchainAutoupdate = $null
 		}
 		It 'Outofdate' {
 			Mock GetOutofdatePackages { @() }
@@ -409,7 +416,7 @@ Describe 'ResolvePackageDigest' {
 		[Db]::Init()
 	}
 	AfterEach {
-		[IO.Directory]::Delete("\\?\$root\airpower", $true)
+		[IO.Directory]::Delete("\\?\$root\toolchain", $true)
 	}
 	Context 'From DB' {
 		BeforeEach {
@@ -435,7 +442,7 @@ Describe 'GetLocalPackages' {
 		[Db]::Init()
 	}
 	AfterEach {
-		[IO.Directory]::Delete("\\?\$root\airpower", $true)
+		[IO.Directory]::Delete("\\?\$root\toolchain", $true)
 	}
 	Context 'From Nothing' {
 		It 'Blank' {
@@ -475,20 +482,20 @@ Describe 'PullPackage' {
 		$script:testRoot = (Resolve-Path "$PSScriptRoot\..\test").Path
 		$script:testPath = "$testRoot\pull_package_test"
 		BeforeAll {
-			Mock ResolveRemoteRef { 'none' }
+			Mock ResolveDockerRef { 'none' }
 
 			Mock GetManifest { [Net.Http.HttpResponseMessage]::new() }
 			Mock GetDigest { 'sha256:00000000000000000000' }
 			Mock DebugRateLimit {}
 			Mock GetSize {}
-			Mock WriteHost {}
+			Mock Write-ToolchainInfo {}
 			Mock InstallPackage { @(New-MockObject -Type 'System.Object' -Methods @{Unlock = {}; Revert = {}}), 'new' }
 			Mock SavePackage {
-				$pkgPath = (@{} | ResolveRemoteRef |GetManifest | GetDigest) | ResolvePackagePath
+				$pkgPath = (@{} | ResolveDockerRef |GetManifest | GetDigest) | ResolvePackagePath
 				MakeDirIfNotExist $pkgPath | Out-Null
 				Set-Content -Path "$pkgPath\file.txt" -Value 'abc123'
 			}
-			Mock GetAirpowerPath {
+			Mock GetToolchainPath {
 				$testPath
 			}
 		}
@@ -523,10 +530,15 @@ Describe 'PullPackage' {
 	}
 	Context 'DB Contains Key' {
 		BeforeAll {
-			New-Item -ItemType Directory -Path "$root\airpower\cache" -ErrorAction Ignore | Out-Null
-			Mock ResolveRemoteRef { 'none' }
+			New-Item -ItemType Directory -Path "$root\toolchain\cache" -ErrorAction Ignore | Out-Null
+
+			$script:oldDbDir = [Db]::Dir
+			[Db]::Dir = "$root\toolchain\cache"
+			[Db]::Init()
+			[Db]::Put(@('metadatadb','f12345'), @{ Size = 123 })
+			Mock ResolveDockerRef { 'none' }
 			Mock GetDigestForRef { 'f12345' }
-			Mock WriteHost {}
+			Mock Write-ToolchainInfo {}
 			Mock InstallPackage { @(New-MockObject -Type 'System.Object' -Methods @{Unlock = {}; Revert = {}}), 'ref' }
 			Mock MakeDirIfNotExist {}
 			Mock SavePackage {}
@@ -534,7 +546,8 @@ Describe 'PullPackage' {
 			Mock New-Item {}
 		}
 		AfterAll {
-			[IO.Directory]::Delete("$root\airpower", $true)
+			if ($script:oldDbDir) { [Db]::Dir = $script:oldDbDir }
+			[IO.Directory]::Delete("$root\toolchain", $true)
 		}
 		It 'Does not SavePackage' {
 			$pkg = @{
@@ -552,10 +565,10 @@ Describe 'RemovePackage' {
 		$script:testRoot = (Resolve-Path "$PSScriptRoot\..\test").Path
 		$script:testPath = "$testRoot\remove_package_test"
 		BeforeAll {
-			Mock ResolveRemoteRef { 'none' }
-			Mock WriteHost {}
+			Mock ResolveDockerRef { 'none' }
+			Mock Write-ToolchainInfo {}
 			Mock UninstallPackage { @(New-MockObject -Type 'System.Object' -Methods @{Unlock = {}; Revert = {}}), 'sha256:00000000000000000000', $null }
-			Mock GetAirpowerPath {
+			Mock GetToolchainPath {
 				$testPath
 			}
 		}
@@ -594,9 +607,20 @@ Describe 'SavePackage' {
 		$script:testRoot = (Resolve-Path "$PSScriptRoot\..\test").Path
 		$script:testPath = "$testRoot\save_package_test"
 		BeforeAll {
-			Mock ResolveRemoteRef { 'none' }
+			Mock ResolveDockerRef { 'none' }
+			Mock GetDigestForRef { 'sha256:00000000000000000000' }
 
 			Mock GetManifest {
+				param(
+					[Parameter(ValueFromPipeline)]
+					[String]$Ref,
+					[String]$Method,
+					[Parameter(ValueFromRemainingArguments)]
+					[Object[]]$Remaining
+				)
+				$null = $Ref
+				$null = $Method
+				$null = $Remaining
 				$response = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::OK)
 				$response.Headers.Add('Docker-Content-Digest', "sha256:00000000000000000000")
 				$response.Content = [Net.Http.StringContent]::new('none manifest')
@@ -604,18 +628,23 @@ Describe 'SavePackage' {
 			}
 			Mock DebugRateLimit {}
 			Mock GetSize {}
-			Mock WriteHost {}
+			Mock Write-ToolchainInfo {}
 			Mock SavePackage {
 				param (
 					[Parameter(Mandatory, ValueFromPipeline)]
 					[Net.Http.HttpResponseMessage]$Resp,
-					[String]$Output
+					[String]$Output,
+					[String]$Digest,
+					[Parameter(ValueFromRemainingArguments)]
+					[Object[]]$Remaining
 				)
 				$null = $Resp
+				$null = $Digest
+				$null = $Remaining
 				MakeDirIfNotExist $Output | Out-Null
 				Set-Content -Path "$Output\file.txt" -Value 'abc123'
 			}
-			Mock GetAirpowerPath {
+			Mock GetToolchainPath {
 				$testPath
 			}
 		}

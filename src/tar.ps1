@@ -1,3 +1,10 @@
+<#
+Toolchains
+Copyright (c) 2021 - 02-08-2026 U.S. Federal Government
+Copyright (c) 2026 AllSageTech
+SPDX-License-Identifier: MPL-2.0
+#>
+
 . $PSScriptRoot\config.ps1
 . $PSScriptRoot\progress.ps1
 
@@ -44,6 +51,9 @@ function ParsePaxHeader {
 		[Parameter(Mandatory)]
 		[Collections.Hashtable]$Header
 	)
+	if ($Header.Size -gt 1048576) {
+		throw "pax header too large ($($Header.Size) bytes)"
+	}
 	$buf = New-Object byte[] $Header.Size
 	[void]([Util]::GzipRead($Source, $buf, $Header.Size))
 	$content = [Text.Encoding]::UTF8.GetString($buf)
@@ -66,24 +76,24 @@ function ExtractTarGz {
 		[string]$Digest
 	)
 	$tgz = $Path | Split-Path -Leaf
-	$layer = $tgz.Replace('.tar.gz', '')
-	if ($layer -ne (Get-FileHash $Path).Hash) {
+	$layerId = $tgz.Replace('.tar.gz', '')
+	if ($layerId -ne (Get-FileHash $Path).Hash) {
 		[IO.File]::Delete($Path)
 		throw "removed $Path because it had corrupted data"
 	}
 	$fs = [IO.File]::OpenRead($Path)
 	try {
-		$gz = [IO.Compression.GZipStream]::new($fs, [IO.Compression.CompressionMode]::Decompress, $true)
+		$gz = [IO.Compression.GZipStream]::new($fs, [IO.Compression.CompressionMode]::Decompress)
 		try {
-			$gz | ExtractTar -Digest $Digest
+			$gz | ExtractTar -Digest $Digest -LayerId $layerId
 		} finally {
 			$gz.Dispose()
 		}
 	} finally {
 		$fs.Dispose()
 	}
-	return $Path
 }
+
 
 class Util {
 	static [int] GzipRead([IO.Compression.GZipStream]$Source, [byte[]]$Buffer, [int]$Size) {
@@ -106,69 +116,103 @@ function ExtractTar {
 		[Parameter(Mandatory, ValueFromPipeline)]
 		[IO.Compression.GZipStream]$Source,
 		[Parameter(Mandatory)]
-		[string]$Digest
+		[string]$Digest,
+		[Parameter(Mandatory)]
+		[string]$LayerId
 	)
+
 	$root = ResolvePackagePath -Digest $Digest
 	MakeDirIfNotExist -Path $root | Out-Null
+
+	$rootFull = [IO.Path]::GetFullPath($root)
+	if (-not $rootFull.EndsWith([IO.Path]::DirectorySeparatorChar)) {
+		$rootFull += [IO.Path]::DirectorySeparatorChar
+	}
+
 	$buffer = New-Object byte[] 512
-	try {
-		while ($true) {
-			{ $layer.Substring(0, 12) + ': Extracting ' + (GetProgress -Current $Source.BaseStream.Position -Total $Source.BaseStream.Length) + '   ' } | WritePeriodicConsole
-			if ([Util]::GzipRead($Source, $buffer, 512) -eq 0) {
-				break
-			}
-			$hdr = ParseTarHeader $buffer
-			$size = if ($xhdr.Size) { $xhdr.Size } else { $hdr.Size }
-			$filename = if ($xhdr.Path) { $xhdr.Path } else { $hdr.Filename }
-			$file = ($filename -split '/' | Select-Object -Skip 1) -join '\'
-			if ($filename.Contains('\..')) {
-				throw "suspicious tar filename '$($filename)'"
-			}
-			if ($hdr.Type -eq [char]53 -and $file -ne '') {
-				New-Item -Path "\\?\$root\$file" -ItemType Directory -Force -ErrorAction Ignore | Out-Null
-			}
-			if ($hdr.Type -in [char]103, [char]120) {
-				$xhdr = ParsePaxHeader -Source $Source -Header $hdr
-			} elseif ($hdr.Type -in [char]0, [char]48, [char]55 -and $filename.StartsWith('Files')) {
-				$buf = New-Object byte[] $size
-				[void]([Util]::GzipRead($Source, $buf, $size))
-				$fs = [IO.File]::Open("\\?\$root\$file", [IO.FileMode]::Create, [IO.FileAccess]::Write)
-				try {
-					if ($write) {
-						$write.Wait()
-						if ($write.IsFaulted) {
-							throw $write.Exception
-						}
-						$writefs.Dispose()
-					}
-				} catch {
-					$fs.Dispose()
-					throw
-				}
-				$writefs = $fs
-				$write = $writefs.WriteAsync($buf, 0, $size)
-				$xhdr = $null
-			} else {
-				if ($size -gt 0) {
-					[void]([Util]::GzipRead($Source, (New-Object byte[] $size), $size))
-				}
-				$xhdr = $null
-			}
-			$leftover = $size % 512
-			if ($leftover -gt 0) {
-				[void]([Util]::GzipRead($Source, $buffer, (512 - $leftover)))
-			}
-		}
-		if ($write) {
-			$write.Wait()
-			if ($write.IsFaulted) {
-				throw $write.Exception
-			}
-		}
-	} finally {
-		if ($writefs) {
-			$writefs.Dispose()
+	$ioBuf  = New-Object byte[] 65536
+	$xhdr = $null
+
+	function Skip-Byte([int64]$count) {
+		$remaining = $count
+		while ($remaining -gt 0) {
+			$n = [int][Math]::Min($ioBuf.Length, $remaining)
+			[void]([Util]::GzipRead($Source, $ioBuf, $n))
+			$remaining -= $n
 		}
 	}
-	$layer.Substring(0, 12) + ': Extracting ' + (GetProgress -Current $Source.BaseStream.Length -Total $Source.BaseStream.Length) + '   ' | WriteConsole
+
+	function Get-SafeDest([string]$relativePath) {
+		if (-not $relativePath) { return $null }
+
+		if ($relativePath -match '^[\/]' -or $relativePath -match '^[A-Za-z]:' ) {
+			throw "suspicious tar path '$relativePath'"
+		}
+		$segments = $relativePath -split '[\/]' | Where-Object { $_ -ne '' }
+		if ($segments -contains '..') { throw "suspicious tar path '$relativePath'" }
+
+		$dest = [IO.Path]::GetFullPath((Join-Path $rootFull $relativePath))
+		if (-not $dest.StartsWith($rootFull, [StringComparison]::OrdinalIgnoreCase)) {
+			throw "tar path escapes root: '$relativePath'"
+		}
+		return $dest
+	}
+
+	try {
+		while ($true) {
+			{ $LayerId.Substring(0, 12) + ': Extracting ' + (GetProgress -Current $Source.BaseStream.Position -Total $Source.BaseStream.Length) + '   ' } | WritePeriodicConsole
+
+			if ([Util]::GzipRead($Source, $buffer, 512) -eq 0) { break }
+
+			$hdr = ParseTarHeader $buffer
+			$size = if ($xhdr -and $xhdr.Size) { [int64]$xhdr.Size } else { [int64]$hdr.Size }
+			$filename = if ($xhdr -and $xhdr.Path) { [string]$xhdr.Path } else { [string]$hdr.Filename }
+
+			$file = ($filename -split '/' | Select-Object -Skip 1) -join '\'
+
+			if ($hdr.Type -eq [char]53 -and $file -ne '') {
+				$dest = Get-SafeDest $file
+				New-Item -Path ("\\?\$dest") -ItemType Directory -Force -ErrorAction Ignore | Out-Null
+				$xhdr = $null
+			} elseif ($hdr.Type -in [char]103, [char]120) {
+				$xhdr = ParsePaxHeader -Source $Source -Header $hdr
+			} elseif ($hdr.Type -in [char]0, [char]48, [char]55 -and $filename.StartsWith('Files')) {
+				$dest = Get-SafeDest $file
+				if ($null -eq $dest) {
+					Skip-Byte $size
+					$xhdr = $null
+				} else {
+					$parent = Split-Path $dest -Parent
+					if ($parent) {
+						New-Item -Path ("\\?\$parent") -ItemType Directory -Force -ErrorAction Ignore | Out-Null
+					}
+
+					$fs = [IO.File]::Open("\\?\$dest", [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)
+					try {
+						$remaining = $size
+						while ($remaining -gt 0) {
+							$n = [int][Math]::Min($ioBuf.Length, $remaining)
+							[void]([Util]::GzipRead($Source, $ioBuf, $n))
+							$fs.Write($ioBuf, 0, $n)
+							$remaining -= $n
+						}
+					} finally {
+						$fs.Dispose()
+					}
+					$xhdr = $null
+				}
+			} else {
+				if ($size -gt 0) { Skip-Byte $size }
+				$xhdr = $null
+			}
+
+			$leftover = $size % 512
+			if ($leftover -gt 0) {
+				Skip-Byte (512 - $leftover)
+			}
+		}
+	} finally {}
+
+	$LayerId.Substring(0, 12) + ': Extracting ' + (GetProgress -Current $Source.BaseStream.Length -Total $Source.BaseStream.Length) + '   ' | WriteConsole
 }
+

@@ -1,3 +1,10 @@
+<#
+Toolchains
+Copyright (c) 2021 - 02-08-2026 U.S. Federal Government
+Copyright (c) 2026 AllSageTech
+SPDX-License-Identifier: MPL-2.0
+#>
+
 BeforeAll {
 	. $PSCommandPath.Replace('.Tests.ps1', '.ps1')
 	$script:root = (Resolve-Path "$PSScriptRoot\..\test").Path
@@ -5,13 +12,13 @@ BeforeAll {
 
 Describe "Db" {
 	BeforeAll {
-		$script:AirpowerPath = "$root\airpower"
+		$script:ToolchainPath = "$root\toolchain"
 	}
 	BeforeEach {
 		[Db]::Init()
 	}
 	AfterEach {
-		[IO.Directory]::Delete("\\?\$AirpowerPath", $true)
+		[IO.Directory]::Delete("\\?\$ToolchainPath", $true)
 	}
 	It "Get No Exist" {
 		$v, $err = [Db]::TryGet("no such")

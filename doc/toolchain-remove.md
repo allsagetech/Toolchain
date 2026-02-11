@@ -1,3 +1,9 @@
+<!--
+Toolchain
+Copyright (c) 2026 AllSageTech
+SPDX-License-Identifier: MPL-2.0
+-->
+
 # remove
 
 Untags and deletes packages.
@@ -8,12 +14,12 @@ An array of package are accepted as input.
 
 ## Usage
 
-	airpower <remove | rm> <package[:tag]>...
+	toolchain <remove | rm> <package[:tag]>...
 
 ## Example
 
 ```
-PS C:\example> airpower remove somepkg
+PS C:\example> toolchain remove somepkg
 Untagged: somepkg:latest
 Deleted: sha256:db2a58b317e90e537aa1e9b9ab4f1875689bcd9d25a20abdfbf96d3cb0a5ec45
 ```

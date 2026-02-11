@@ -1,3 +1,9 @@
+<!--
+Toolchain
+Copyright (c) 2026 AllSageTech
+SPDX-License-Identifier: MPL-2.0
+-->
+
 # load
 
 Loads packages into the PowerShell session.
@@ -8,12 +14,12 @@ An array of packages are accepted as input.
 
 ## Usage
 
-	airpower load <package[:tag]>...
+	toolchain load <package[:tag]>...
 
 ## Example
 
 ```
-PS C:\example> airpower load somepkg
+PS C:\example> toolchain load somepkg
 Digest: sha256:5987423d9c30b66bbce0ad10337a96bef2e49d69625a1647a769f4df4dc83172
 Status: Session configured for somepkg:latest
 ```

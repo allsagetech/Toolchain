@@ -1,5 +1,9 @@
-# U+2588	█	Full block
-# U+258C	▌	Left half block
+<#
+Toolchains
+Copyright (c) 2021 - 02-08-2026 U.S. Federal Government
+Copyright (c) 2026 AllSageTech
+SPDX-License-Identifier: MPL-2.0
+#>
 
 function GetUnicodeBlock {
 	param (
@@ -47,13 +51,18 @@ function WritePeriodicConsole {
 	}
 }
 
+function Set-ToolchainConsoleCursorVisible {
+	param([bool]$Enable)
+	[Console]::CursorVisible = $Enable
+}
+
 function SetCursorVisible {
 	param (
 		[Parameter(Mandatory)]
 		[bool]$Enable
 	)
 	try {
-		[Console]::CursorVisible = $Enable
+		Set-ToolchainConsoleCursorVisible -Enable $Enable
 	} catch {
 		Write-Error $_ -ErrorAction Ignore
 	}
@@ -79,7 +88,7 @@ function AsByteString {
 	)
 	$n = [Math]::Abs($Bytes)
 	$p = 0
-	while ($n -gt 1024) {
+	while ($n -ge 1024) {
 		$n /= 1024
 		$p += 3
 	}

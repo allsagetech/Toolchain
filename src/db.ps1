@@ -1,3 +1,10 @@
+<#
+Toolchains
+Copyright (c) 2021 - 02-08-2026 U.S. Federal Government
+Copyright (c) 2026 AllSageTech
+SPDX-License-Identifier: MPL-2.0
+#>
+
 . $PSScriptRoot\config.ps1
 
 class FileLock {
@@ -91,7 +98,7 @@ class Db {
 	static [string] Encode([object]$value) {
 		$json = $value | ConvertTo-Json -Compress -Depth 10
 		if ($null -eq $json) {
-			$json = 'null' # PS 5.1 does not handle null
+			$json = 'null'
 		}
 		return [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))
 	}
@@ -177,7 +184,7 @@ class Db {
 					if ($locks) {
 						$locks.Revert()
 					}
-					return $null, "a package $($decodedKey) is being used by another airpower process"
+					return $null, "a package $($decodedKey) is being used by another toolchain process"
 				}
 			}
 		}

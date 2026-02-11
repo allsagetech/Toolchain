@@ -1,103 +1,259 @@
-# Airpower
+# Toolchain
 
-A package manager and environment to provide consistent tooling for software teams.
+A PowerShell module that manages *tool packages* (distributed as OCI images) and configures your shell environment consistently across a team.
 
-Airpower manages software packages using container technology and allows users to configure local PowerShell sessions to their need. Airpower seamlessly integrates common packages with a standardized project script to enable common build commands kept in source control for consistency.
+Toolchain can:
 
-# Requirements
+- Pull tools from an OCI registry (Docker Registry API)
+- “Load” a tool into your current PowerShell session (sets env vars, updates PATH)
+- Run commands in a clean, managed session (`exec`) or via a repo-scoped project file (`run`)
+- Support offline / air‑gapped installs (`save` + `$ToolchainRepo`)
+- Enforce allow/deny policy and optional signature verification
 
-Windows operating system with PowerShell version 5.1 or later.
+> **License:** MPL-2.0 (see `LICENSE.md`). Prior upstream MIT license text is preserved at `LICENSES/OLD-MIT.txt`.
 
-# Installing
+## Requirements
 
-Use this PowerShell command to install Airpower:
+- Windows
+- PowerShell 5.1+ (Windows PowerShell) or PowerShell 7+
+- Network access to your OCI registry (unless using offline mode)
 
-```PowerShell
-Install-Module Airpower -Scope CurrentUser
+Toolchain downloads and extracts OCI layers itself; it does **not** require the Docker daemon.
+
+## Installation
+
+### From PowerShell Gallery
+
+```powershell
+Install-Module Toolchain -Scope CurrentUser
+Import-Module Toolchain
 ```
 
-When you want to avoid user prompts, use these PowerShell commands before installation:
+### Offline / no PowerShell Gallery access
 
-```PowerShell
-Install-PackageProvider -Name NuGet -Force
-Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+This repo includes an installer that builds the module and copies it to your user module path:
+
+```powershell
+# from the repo root
+.\install.ps1
 ```
 
-Alternatively, if <powershellgallery.com> is not available, you can download or clone this repository and install locally with the `install.ps1` script.
+## Quick start
 
-See the [Airpower PS Gallery](https://www.powershellgallery.com/packages/Airpower) for other installation methods.
+### 1) Create a project file
 
-# Updating
+In your repository root:
 
-Use this PowerShell command to update Airpower:
-
-```PowerShell
-Update-Module Airpower
+```powershell
+toolchain init
 ```
 
-# Usage
+This writes a starter `Toolchain.ps1`. Toolchain searches upward from the current directory to find the nearest `Toolchain.ps1`, so you can run commands from subfolders.
 
-Airpower is provided by the `Invoke-Airpower` commandlet. Several aliases are provided for ease-of-use: `airpower`, `air`, and `pwr`.
+### 2) Choose packages
 
-	airpower [COMMAND]
+Edit `Toolchain.ps1`:
+
+```powershell
+$ToolchainPackages = @(
+  'git:latest',
+  'node:22',
+  'go:1.22'
+)
+
+function ToolchainBuild {
+  param([string]$Configuration = 'Release')
+  Write-Host "Building ($Configuration)" 
+}
+```
+
+### 3) Pull tools
+
+```powershell
+toolchain pull
+```
+
+### 4) Use the tools
+
+Load tools into your *current* session:
+
+```powershell
+toolchain load
+```
+
+Or run in a clean, managed session that does not permanently modify your current shell:
+
+```powershell
+toolchain exec { git --version; node --version }
+```
+
+Or run a project command from `Toolchain.ps1`:
+
+```powershell
+toolchain run build -Configuration Debug
+```
 
 ## Commands
 
-Command | Description
--- | --
-[`version`](./doc/airpower-version.md) | Outputs the version of the module
-[`list`](./doc/airpower-list.md) | Outputs a list of installed packages
-[`remote`](./doc/airpower-remote.md) | Outputs an object of remote packages and versions
-[`pull`](./doc/airpower-pull.md) | Downloads packages
-[`load`](./doc/airpower-load.md) | Loads packages into the PowerShell session
-[`exec`](./doc/airpower-exec.md) | Runs a user-defined scriptblock in a managed PowerShell session
-[`run`](./doc/airpower-run.md) | Runs a user-defined scriptblock provided in a project file
-[`update`](./doc/airpower-update.md) | Updates all tagged packages
-[`prune`](./doc/airpower-prune.md) | Deletes unreferenced packages
-[`remove`](./doc/airpower-remove.md) | Untags and deletes packages
-[`save`](./doc/airpower-save.md) | Downloads packages for use in an offline installation
-[`help`](./doc/airpower-help.md) | Outputs usage for this command
+| Command | Description | Docs |
+|---|---|---|
+| `version` | Print module version | `doc/toolchain-version.md` |
+| `list` | List installed packages | `doc/toolchain-list.md` |
+| `remote list` | List remote packages/tags (or offline repo tags) | `doc/toolchain-remote.md` |
+| `pull` | Download packages | `doc/toolchain-pull.md` |
+| `load` | Load packages into current session | `doc/toolchain-load.md` |
+| `exec` | Run a scriptblock in a managed session | `doc/toolchain-exec.md` |
+| `run` | Run a function from `Toolchain.ps1` (optionally under packages) | `doc/toolchain-run.md` |
+| `update` | Update all tagged packages | `doc/toolchain-update.md` |
+| `prune` | Delete unreferenced packages | `doc/toolchain-prune.md` |
+| `remove` / `rm` | Untag/delete packages | `doc/toolchain-remove.md` |
+| `save` | Download packages for offline use | `doc/toolchain-save.md` |
+| `init` | Write a starter `Toolchain.ps1` | `doc/toolchain-init.md` |
+| `doctor` | Print diagnostics for your Toolchain setup | `doc/toolchain-doctor.md` |
+| `help` | Show CLI help | `doc/toolchain-help.md` |
 
-# Configuration
+## Package reference syntax
 
-## Global
+Toolchain accepts a few package reference forms:
 
-The following variables modify runtime behavior of `airpower`. Each can be specified as an in-scope variable or an environment variable.
+- **By tag:** `name:tag` (examples: `git:latest`, `node:22`, `go:1.22.3`)
+- **Optional config selector:** `name:tag::config` (selects a named configuration inside the package definition)
+- **Pinned by digest:** `name@sha256:<digest>` (optionally `::config`)
+- **Local unpacked package:** `file:///C:/path/to/unpacked-package` (optionally append `<config>` like `file:///C:/pkg<dev>`)
 
-### `AirpowerPullPolicy`
+Notes:
 
-The pull policy determines when a package is downloaded, or pulled, from the upstream registry. It is a `[string]` which can take on the values:
+- `latest` resolves to the newest available semver-like tag for a package when possible.
+- Tags like `v1.2.3` are accepted; Toolchain will match either `1.2.3` or `v1.2.3` when present.
+- Registry tags sometimes represent build metadata using `_` instead of `+`; Toolchain handles both.
 
-- `"IfNotPresent"` - The package is pulled only when its tag does not exist locally.
-- `"Never"` - The package is never pulled. If the tag does not exist, an error is raised.
-- `"Always"` - The package is pulled from the upstream registry. If the local tag matches the remote digest, no data is downloaded.
+## How packages configure your shell
 
-> The default `AirpowerPullPolicy` is `"IfNotPresent"`.
+A package provides a *toolchain definition* that maps environment variables to values:
 
-### `AirpowerPath`
+- Inline JSON via image label: `io.allsagetech.toolchain.tlc` (or legacy `toolchain.tlc`)
+- A JSON file referenced by label: `io.allsagetech.toolchain.tlcPath` (optionally `...tlcSha256`)
+- A definition file at the package root: `.tlc` (or legacy `.pwr`)
+- Individual env-var labels: `io.allsagetech.toolchain.env.<NAME>`
 
-The path determines where packages and metadata exist on a user's machine. It is a `[string]`.
+A definition **must** have a top-level `env` object. Values may be strings or arrays of strings.
 
-> The default `AirpowerPath` is `"$env:LocalAppData\Airpower"`.
+The `${.}` token expands to the package’s extracted root directory (so packages can reference their own files).
 
-### `AirpowerAutoupdate`
+Schema reference: `schema/Toolchain.PackageDefinition.schema.json`.
 
-The autoupdate determines if and how often the [update](./doc/airpower-update.md) action is taken. It is a [`[timespan]`](https://learn.microsoft.com/en-us/dotnet/api/system.timespan) but can be specified and parsed as a `[string]`. The autoupdate mechanism is evaluated upon initialization of the `airpower` module, meaning once per shell instance in which you use an `airpower` command.
+## Offline / air‑gapped workflow
 
-For example, if `AirpowerAutoupdate` is set to `'1.00:00:00'`, then update will only automatically execute for packages that were last updated at least one day ago.
+1) On an internet-connected machine, download packages into a folder:
 
-> The default `AirpowerAutoupdate` is `$null`
+```powershell
+toolchain save -Index -Sign git:latest .\toolchain-cache
+toolchain save -Index -Sign node:22 .\toolchain-cache
+```
 
-### `AirpowerAutoprune`
+2) Copy that folder to the offline environment.
 
-The autoprune determines if and how often the [prune](./doc/airpower-prune.md) action is taken. It is a [`[timespan]`](https://learn.microsoft.com/en-us/dotnet/api/system.timespan) but can be specified and parsed as a `[string]`. The autoprune mechanism is evaluated upon initialization of the `airpower` module, meaning once per shell instance in which you use an `airpower` command.
+3) Point Toolchain at the offline repo directory:
 
-For example, if `AirpowerAutoprune` is set to `'1.00:00:00'`, then prune will only automatically execute for packages that have been orphaned for at least one day.
+```powershell
+# Either a global variable...
+$ToolchainRepo = 'D:\toolchain-cache'
 
-> The default `AirpowerAutoprune` is `$null`.
+# ...or an environment variable
+$env:ToolchainRepo = 'D:\toolchain-cache'
+```
 
-## Other
+With `$ToolchainRepo` set:
 
-### `ProgressPreference`
+- `toolchain pull` reads manifests/blobs from disk (no network)
+- `toolchain remote list` lists the saved tags (folder names)
 
-The progress bar for downloading and extracting packages can be suppressed by assigning the `ProgressPreference` variable to `'SilentlyContinue'`. This behavior is often desirable for environments such as CI pipelines.
+Tip: use `toolchain doctor` to confirm offline mode is active.
+
+## Policy and security
+
+Toolchain supports:
+
+- Allow/deny policies for registries, repos, packages and versions (`doc/toolchain-policy.md`)
+- Optional signed-manifest enforcement for offline repos (CMS/PKCS#7)
+- Optional Sigstore/cosign verification for online pulls (`doc/toolchain-security.md`)
+
+### Environment toggles (high-level)
+
+- `TOOLCHAIN_POLICY_PATH` / `$ToolchainPolicyPath` / `$env:ToolchainPolicyPath` — policy discovery
+- `TOOLCHAIN_REQUIRE_SIGNED_MANIFESTS=1` — require `manifest.json.p7s` in offline repo
+- `TOOLCHAIN_COSIGN_VERIFY=1` — run `cosign verify <registry>/<repo>@sha256:...` (requires `cosign` on PATH)
+
+## Configuration reference
+
+Toolchain reads configuration from either a global variable (highest priority) or an environment variable.
+
+### Core paths and behavior
+
+- `$ToolchainPath` / `$env:ToolchainPath` — root cache directory (default: `%LocalAppData%\Toolchain`)
+- `$ToolchainRepo` / `$env:ToolchainRepo` — offline repository directory (enables offline mode)
+- `$ToolchainPullPolicy` / `$env:ToolchainPullPolicy` — `IfNotPresent` (default), `Always`, or `Never`
+- `$ToolchainAutoprune` / `$env:ToolchainAutoprune` — timespan (e.g. `7.00:00:00`) for auto-prune on module import
+- `$ToolchainAutoupdate` / `$env:ToolchainAutoupdate` — timespan for auto-update checks on module import
+
+### Registry selection
+
+- `TOOLCHAIN_REGISTRY` — base registry URL (default: `https://registry-1.docker.io`)
+- `TOOLCHAIN_INDEX_REGISTRY` — index API URL used for tag listing (default: `https://index.docker.io`)
+- `TOOLCHAIN_REPOSITORY` — repo name (default: `allsagetech/toolchains`)
+- `TOOLCHAIN_OS` / `TOOLCHAIN_ARCH` — platform selection when resolving multi-arch manifests (defaults: `windows` / `amd64`)
+
+### Registry authentication
+
+Toolchain supports:
+
+- Bearer token: `TOOLCHAIN_TOKEN`
+- Basic auth: `TOOLCHAIN_USERNAME` + `TOOLCHAIN_PASSWORD`
+
+### Network / proxy
+
+- `TOOLCHAIN_PROXY` — proxy URL (example: `http://proxy.corp:3128`)
+- `TOOLCHAIN_PROXY_USERNAME` / `TOOLCHAIN_PROXY_PASSWORD` — proxy credentials
+- `TOOLCHAIN_HTTP_DISABLE_PROXY=1` — disable proxy usage
+- `TOOLCHAIN_HTTP_TIMEOUT_SECONDS` — override HTTP timeout
+- `TOOLCHAIN_TLS_INSECURE=1` — disable TLS certificate validation (only for controlled/private PKI environments)
+
+### Convenience: `.env` loading
+
+If you keep local settings in a `.env` file, you can import them into your current PowerShell session:
+
+```powershell
+.\load-env.ps1
+```
+
+See `.env.example` for supported values.
+
+## Troubleshooting
+
+- `toolchain doctor` prints diagnostics (cache path writability, registry reachability, offline repo status).
+- If `cosign` verification is enabled, ensure `cosign` is installed and on `PATH`.
+- If you see policy failures, confirm which policy file is being discovered (see `doc/toolchain-policy.md`).
+
+## Development
+
+Build the module into `build/Toolchain/`:
+
+```powershell
+.\build.ps1
+```
+
+Run unit tests (Pester + ScriptAnalyzer):
+
+```powershell
+.\test.ps1
+```
+
+Install a locally-built copy to your user module path:
+
+```powershell
+.\install.ps1
+```
+
+## License
+
+MPL-2.0. See `LICENSE.md`.

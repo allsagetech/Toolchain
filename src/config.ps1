@@ -1,3 +1,10 @@
+<#
+Toolchains
+Copyright (c) 2021 - 02-08-2026 U.S. Federal Government
+Copyright (c) 2026 AllSageTech
+SPDX-License-Identifier: MPL-2.0
+#>
+
 function ConvertTo-HashTable {
 	param (
 		[Parameter(ValueFromPipeline)]
@@ -10,7 +17,9 @@ function ConvertTo-HashTable {
 	$Object.PSObject.Properties | ForEach-Object {
 		$V = $_.Value
 		if ($V -is [Array]) {
-			$V = [System.Collections.ArrayList]$V
+			$alist = [System.Collections.ArrayList]::new()
+			[void]$alist.AddRange($V)
+			$V = $alist
 		} elseif ($V -is [PSCustomObject]) {
 			$V = ($V | ConvertTo-HashTable)
 		}
@@ -19,60 +28,60 @@ function ConvertTo-HashTable {
 	return $Table
 }
 
-function GetAirpowerPath {
-	if ($AirpowerPath) {
-		$AirpowerPath
-	} elseif ($env:AirpowerPath) {
-		$env:AirpowerPath
+function GetToolchainPath {
+	if ($ToolchainPath) {
+		$ToolchainPath
+	} elseif ($env:ToolchainPath) {
+		$env:ToolchainPath
 	} else {
-		"$env:LocalAppData\Airpower"
+		"$env:LocalAppData\Toolchain"
 	}
 }
 
-function GetAirpowerRepo {
-	if ($AirpowerRepo) {
-		$AirpowerRepo
-	} elseif ($env:AirpowerRepo) {
-		$env:AirpowerRepo
+function GetToolchainRepo {
+	if ($ToolchainRepo) {
+		$ToolchainRepo
+	} elseif ($env:ToolchainRepo) {
+		$env:ToolchainRepo
 	}
 }
 
-function GetAirpowerPullPolicy {
-	if ($AirpowerPullPolicy) {
-		$AirpowerPullPolicy
-	} elseif ($env:AirpowerPullPolicy) {
-		$env:AirpowerPullPolicy
+function GetToolchainPullPolicy {
+	if ($ToolchainPullPolicy) {
+		$ToolchainPullPolicy
+	} elseif ($env:ToolchainPullPolicy) {
+		$env:ToolchainPullPolicy
 	} else {
 		"IfNotPresent"
 	}
 }
 
-function GetAirpowerAutoprune {
-	if ($AirpowerAutoprune) {
-		$AirpowerAutoprune
-	} elseif ($env:AirpowerAutoprune) {
-		$env:AirpowerAutoprune
+function GetToolchainAutoprune {
+	if ($ToolchainAutoprune) {
+		$ToolchainAutoprune
+	} elseif ($env:ToolchainAutoprune) {
+		$env:ToolchainAutoprune
 	}
 }
 
-function GetAirpowerAutoupdate {
-	if ($AirpowerAutoupdate) {
-		$AirpowerAutoupdate
-	} elseif ($env:AirpowerAutoupdate) {
-		$env:AirpowerAutoupdate
+function GetToolchainAutoupdate {
+	if ($ToolchainAutoupdate) {
+		$ToolchainAutoupdate
+	} elseif ($env:ToolchainAutoupdate) {
+		$env:ToolchainAutoupdate
 	}
 }
 
 function GetPwrDBPath {
-	"$(GetAirpowerPath)\cache"
+	"$(GetToolchainPath)\cache"
 }
 
 function GetPwrTempPath {
-	"$(GetAirpowerPath)\temp"
+	"$(GetToolchainPath)\temp"
 }
 
 function GetPwrContentPath {
-	"$(GetAirpowerPath)\content"
+	"$(GetToolchainPath)\content"
 }
 
 function ResolvePackagePath {
@@ -93,11 +102,16 @@ function MakeDirIfNotExist {
 
 function FindConfig {
 	$path = (Get-Location).Path
-	while ($path -ne '') {
-		$cfg = "$path\Airpower.ps1"
-		if (Test-Path $cfg -PathType Leaf) {
+	while ($true) {
+		$cfg = Join-Path $path 'Toolchain.ps1'
+		if (Test-Path -LiteralPath $cfg -PathType Leaf) {
 			return $cfg
 		}
-		$path = $path | Split-Path -Parent
+		$parent = Split-Path $path -Parent
+		if (-not $parent -or $parent -eq $path) {
+			return $null
+		}
+		$path = $parent
 	}
 }
+

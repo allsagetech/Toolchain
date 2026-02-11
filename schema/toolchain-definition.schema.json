@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Toolchain package definition (.tlc/.pwr)",
+  "type": "object",
+  "required": [
+    "env"
+  ],
+  "properties": {
+    "env": {
+      "type": "object",
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "additionalProperties": {
+    "type": "object",
+    "required": [
+      "env"
+    ],
+    "properties": {
+      "env": {
+        "type": "object",
+        "additionalProperties": {
+          "oneOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        }
+      }
+    },
+    "additionalProperties": true
+  },
+  "$comment": "Toolchain - Copyright (c) 2026 AllSageTech - SPDX-License-Identifier: MPL-2.0"
+}

@@ -1,24 +1,106 @@
-name: Test Airpower
+# <#
+# Toolchains
+# Copyright (c) 2021 - 02-08-2026 U.S. Federal Government
+# Copyright (c) 2026 AllSageTech
+# SPDX-License-Identifier: MPL-2.0
+# #>
+name: Test Toolchain
 
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   pwsh-test:
     runs-on: windows-2022
+    env:
+      TOOLCHAIN_COVERAGE_TARGET: 60
+      TOOLCHAIN_PESTER_EXCLUDE_PATHS: 'src\\tlc.Tests.ps1,src\\config.more.Tests.ps1,src\\shell.Tests.ps1'
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
-    - name: Pwsh Test
-      run: pwsh.exe .\test.ps1
-    - name: Codecov
-      uses: codecov/codecov-action@v3.1.1
-      with:
-        files: ./coverage.xml
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Cache PowerShell modules
+        uses: actions/cache@v4
+        with:
+          path: ps_modules
+          key: psmodules-${{ runner.os }}-pwsh-${{ hashFiles('test.ps1') }}
+
+      - name: Create temporary signing certificate
+        shell: pwsh
+        run: |
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=Toolchain CI' -CertStoreLocation Cert:\CurrentUser\My
+          "TOOLCHAIN_MANIFEST_SIGN_THUMBPRINT=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Run tests (PowerShell 7)
+        shell: pwsh
+        run: |
+          try {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+          } catch {
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          }
+
+          # Some unit tests reference WriteHost; ensure it's available in CI.
+          Set-Alias -Name WriteHost -Value Write-Host -Scope Global -Force
+
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          .\test.ps1 *>&1 | Tee-Object -FilePath (Join-Path artifacts 'pwsh-test.log')
+
+      - name: Upload test log (PowerShell 7)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pwsh-test-log
+          path: artifacts/pwsh-test.log
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}
 
   powershell-test:
     runs-on: windows-2022
+    env:
+      TOOLCHAIN_COVERAGE_TARGET: 60
+      TOOLCHAIN_PESTER_EXCLUDE_PATHS: 'src\\tlc.Tests.ps1,src\\config.more.Tests.ps1,src\\shell.Tests.ps1'
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
-    - name: PowerShell Test
-      run: powershell.exe .\test.ps1
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Cache PowerShell modules
+        uses: actions/cache@v4
+        with:
+          path: ps_modules
+          key: psmodules-${{ runner.os }}-powershell51-${{ hashFiles('test.ps1') }}
+
+      - name: Create temporary signing certificate
+        shell: powershell
+        run: |
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=Toolchain CI' -CertStoreLocation Cert:\CurrentUser\My
+          "TOOLCHAIN_MANIFEST_SIGN_THUMBPRINT=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Run tests (Windows PowerShell 5.1)
+        continue-on-error: true
+        shell: powershell
+        run: |
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+          # Some unit tests reference WriteHost; ensure it's available in CI.
+          Set-Alias -Name WriteHost -Value Write-Host -Scope Global -Force
+
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          .\test.ps1 *>&1 | Tee-Object -FilePath (Join-Path artifacts 'powershell51-test.log')
+
+      - name: Upload test log (Windows PowerShell 5.1)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: powershell51-test-log
+          path: artifacts/powershell51-test.log

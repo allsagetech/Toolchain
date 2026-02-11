@@ -1,0 +1,80 @@
+# <#
+# Toolchains
+# Copyright (c) 2026 AllSageTech
+# SPDX-License-Identifier: MPL-2.0
+# #>
+
+name: Contract Test (Toolchains)
+
+on:
+  repository_dispatch:
+    types: [toolchains-built]
+  workflow_dispatch:
+
+jobs:
+  contract:
+    runs-on: windows-2022
+    env:
+      TOOLCHAIN_COVERAGE_TARGET: 100
+      TOOLCHAIN_REPOSITORY: ''
+      TOOLCHAIN_PESTER_EXCLUDE_PATHS: 'src\\tlc.Tests.ps1,src\\config.more.Tests.ps1,src\\shell.Tests.ps1'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Load Toolchains payload
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $raw = '${{ toJson(github.event.client_payload) }}'
+          if (-not $raw -or $raw -eq 'null') {
+            Write-Host 'No client_payload provided; contract tests will skip.'
+            exit 0
+          }
+
+          $payload = $raw | ConvertFrom-Json
+          if (-not $payload.packageName -or -not $payload.digest) {
+            Write-Host 'Payload missing packageName/digest; contract tests will skip.'
+            exit 0
+          }
+
+          $digest = [string]$payload.digest
+          if ($digest -and -not $digest.StartsWith('sha256:')) { $digest = "sha256:$digest" }
+
+          "TLC_CONTRACT_DOCKER_REPO=$($payload.dockerRepo)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TLC_CONTRACT_PACKAGE_NAME=$($payload.packageName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TLC_CONTRACT_PACKAGE_VERSION=$($payload.packageVersion)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TLC_CONTRACT_DIGEST=$digest" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TLC_CONTRACT_REPO_DIGEST_REF=$($payload.repoDigestRef)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TLC_CONTRACT_SPEC_VERSION=$($payload.specVersion)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TLC_CONTRACT_TLC_PATH=$($payload.tlcPath)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TLC_CONTRACT_TLC_SHA256=$($payload.tlcSha256)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+          if ($payload.dockerRepo) {
+            "TOOLCHAIN_REPOSITORY=$($payload.dockerRepo)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          }
+
+      - name: Build module
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -ExecutionPolicy Bypass -Command "
+            try {
+              [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+            } catch {
+              [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            }
+            & .\\build.ps1
+          "
+
+      - name: Run Pester tests (unit + contract)
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -ExecutionPolicy Bypass -Command "
+            try {
+              [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+            } catch {
+              [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            }
+            & .\\test.ps1 -Paths .\\src,.\\contract
+          "
