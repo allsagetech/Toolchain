@@ -10,6 +10,12 @@ Loads packages into the PowerShell session.
 
 A package exports one or more environment variables which are defined for the PowerShell session. If the package defines a `$env:Path` variable, it is prepended to the existing value.
 
+Repeated `toolchain load` calls are safe:
+
+- Loading the same package reference again is idempotent and does not duplicate PATH entries.
+- If a package reference resolves to a newer digest, Toolchain removes PATH entries from the previously loaded digest before applying the new one.
+- Different `::config` selections for the same package/tag are tracked independently within the session.
+
 An array of packages are accepted as input.
 
 ## Usage

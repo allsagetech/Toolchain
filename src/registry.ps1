@@ -347,7 +347,12 @@ function GetTagsList {
 		$ub.Query = "n=$n" + $(if ($last) { "&last=$([uri]::EscapeDataString($last))" } else { "" })
 
 		$endpoint = $ub.Uri.AbsoluteUri
-		$currentTags = InvokeIndexRegistryRequest -Url $endpoint -Accept 'application/json' | GetJsonResponse
+		$resp = InvokeIndexRegistryRequest -Url $endpoint -Accept 'application/json'
+		try {
+			$currentTags = $resp | GetJsonResponse
+		} finally {
+			if ($resp) { $resp.Dispose() }
+		}
 
 		if ($allTags) {
 			$allTags.tags += $currentTags.tags
@@ -631,7 +636,12 @@ function GetDigestForRef {
 		[Parameter(Mandatory, ValueFromPipeline)]
 		[string]$Ref
 	)
-	return $Ref | GetManifest -Method HEAD | GetDigest
+	$resp = $Ref | GetManifest -Method HEAD
+	try {
+		return ($resp | GetDigest)
+	} finally {
+		if ($resp) { $resp.Dispose() }
+	}
 }
 
 function GetDigest {

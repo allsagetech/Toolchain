@@ -200,7 +200,7 @@ function Invoke-ToolchainPull {
 		Write-Error "no packages provided"
 		return
 	}
-	TryEachPackage $Packages { $Input | AsPackage | PullPackage | Out-Null } -ActionDescription 'pull'
+	TryEachPackage $Packages { Invoke-PullPackageWithRetry -PackageRef $Input | Out-Null } -ActionDescription 'pull'
 }
 
 function Invoke-ToolchainRun {
@@ -292,7 +292,7 @@ function Invoke-ToolchainSave {
 		return
 	}
 	MakeDirIfNotExist $Output | Out-Null
-	$results = TryEachPackage $Packages { $Input | AsPackage | PullPackage -Output $Output -Sign:$Sign } -ActionDescription 'save'
+	$results = TryEachPackage $Packages { Invoke-PullPackageWithRetry -PackageRef $Input -Output $Output -Sign:$Sign } -ActionDescription 'save'
 	if ($Index) {
 		$idxPath = Join-Path (Resolve-Path $Output) 'toolchain.index.json'
 		$idx = @{ 
@@ -396,11 +396,11 @@ Commands:
   version        Outputs the version of the module
   list           Outputs a list of installed packages
   remote list    Outputs an object of remote packages and versions
-  pull           Downloads packages
+  pull           Downloads packages (with retry behavior for transient failures)
   load           Loads packages into the PowerShell session
   exec           Runs a user-defined scriptblock in a managed PowerShell session
   run            Runs a user-defined scriptblock provided in a project file
-  update         Updates all tagged packages
+  update         Updates all tagged packages (with retry for temporary package locks)
   prune          Deletes unreferenced packages
   remove         Untags and deletes packages
   save           Downloads packages for use in an offline installation

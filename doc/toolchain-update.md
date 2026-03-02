@@ -8,6 +8,8 @@ SPDX-License-Identifier: MPL-2.0
 
 Updates all tagged packages.
 
+During update, each package pull retries brief local lock-contention failures before surfacing an error. This helps when multiple Toolchain processes run close together.
+
 ## Usage
 
 	toolchain update

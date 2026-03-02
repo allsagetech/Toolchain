@@ -113,3 +113,41 @@ Describe "Platform resolution prefers Windows manifest" {
 		$choice.digest | Should -Be 'sha256:win'
 	}
 }
+
+Describe "Response disposal in registry helpers" {
+	It "Disposes manifest response in GetDigestForRef" {
+		$script:disposed = $false
+		$resp = [pscustomobject]@{}
+		$resp | Add-Member -MemberType ScriptMethod -Name Dispose -Value { $script:disposed = $true } -Force
+		Mock GetManifest { $resp }
+		Mock GetDigest { 'sha256:abc' }
+
+		(GetDigestForRef -Ref 'somepkg:latest') | Should -Be 'sha256:abc'
+		$script:disposed | Should -BeTrue
+	}
+
+	It "Disposes tag-list response in GetTagsList" {
+		$script:disposed = $false
+		$resp = [pscustomobject]@{}
+		$resp | Add-Member -MemberType ScriptMethod -Name Dispose -Value { $script:disposed = $true } -Force
+		Mock GetToolchainRepo { return $null }
+		Mock InvokeIndexRegistryRequest { $resp }
+		Mock GetJsonResponse { [pscustomobject]@{ name='repo'; tags=@('pkg-1.0.0') } }
+
+		$t = GetTagsList
+		$t.tags | Should -Contain 'pkg-1.0.0'
+		$script:disposed | Should -BeTrue
+	}
+
+	It "Disposes tag-list response when parsing throws" {
+		$script:disposed = $false
+		$resp = [pscustomobject]@{}
+		$resp | Add-Member -MemberType ScriptMethod -Name Dispose -Value { $script:disposed = $true } -Force
+		Mock GetToolchainRepo { return $null }
+		Mock InvokeIndexRegistryRequest { $resp }
+		Mock GetJsonResponse { throw 'bad json' }
+
+		{ GetTagsList } | Should -Throw
+		$script:disposed | Should -BeTrue
+	}
+}

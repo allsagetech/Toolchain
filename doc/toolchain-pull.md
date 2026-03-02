@@ -10,6 +10,11 @@ Downloads packages.
 
 If a package is pulled whose digest exists locally, a new tag for the package is formed.
 
+For reliability, pull operations include retries for common transient failures:
+
+- Registry HTTP retries for `408`, `429`, and `5xx` responses (honoring `Retry-After` when present).
+- Local package lock contention retries (for example, when another Toolchain process is updating the same package metadata).
+
 An array of packages are accepted as input.
 
 ## Usage

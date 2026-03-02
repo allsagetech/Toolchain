@@ -81,6 +81,8 @@ Load tools into your *current* session:
 toolchain load
 ```
 
+`toolchain load` is session-safe for repeated use: loading the same reference again is idempotent, and when a reference resolves to a newer digest Toolchain removes old PATH entries before applying the new digest configuration.
+
 Or run in a clean, managed session that does not permanently modify your current shell:
 
 ```powershell

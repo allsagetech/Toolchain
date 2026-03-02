@@ -459,65 +459,73 @@ function PullPackage {
 		Invoke-ToolchainCosignVerify -RepoDigestRef $repoDigestRef
 	}
 	$k = 'metadatadb', $digest
-	if ([Db]::ContainsKey($k) -and ($m = [Db]::Get($k)) -and $m.Size -and -not $Output) {
-		$size = $m.Size
-	} else {
-		$manifest = $dockerRef | GetManifest
-		$manifest | DebugRateLimit
-		$size = $manifest | GetSize
-		if ($Output) {
-			MakeDirIfNotExist "$Output\$dockerRef" | Out-Null
-			$manifestPath = "$(Resolve-Path "$Output\$dockerRef")\manifest.json"
-			$fs = [IO.File]::Open($manifestPath, [IO.FileMode]::Create)
-			try {
-				$task = $manifest.Content.CopyToAsync($fs)
-				while (-not $task.IsCompleted) {
-					Start-Sleep -Milliseconds 125
-				}
-			} finally {
-				$fs.Close()
-			}
-			if ($Sign) {
-				$null = New-ToolchainFileCmsSignature -Path $manifestPath -SignaturePath "${manifestPath}.p7s"
-			}
-			$manifest | SavePackage -Output "$Output\$dockerRef"
-			return @{
-				Package = $Pkg.Package
-				Tag = $tagStr
-				Version = $Pkg.Version
-				Digest = $digest
-				Size = $size
-				Ref = $dockerRef
-				SavedAt = [datetime]::UtcNow.ToString('u')
-			}
-		}
-	}
-	$Pkg.Digest = $digest
-	$Pkg.Size = $size
-	$locks, $status = $Pkg | InstallPackage
+	$manifest = $null
 	try {
-		$ref = "$($Pkg.Package):$($Pkg.Tag | AsTagString)"
-		if ($status -eq 'uptodate') {
-			Write-ToolchainInfo "Status: Package is up to date for $ref"
+		if ([Db]::ContainsKey($k) -and ($m = [Db]::Get($k)) -and $m.Size -and -not $Output) {
+			$size = $m.Size
 		} else {
-			if ($status -in 'new', 'newer') {
-				$manifest | SavePackage
+			$manifest = $dockerRef | GetManifest
+			$manifest | DebugRateLimit
+			$size = $manifest | GetSize
+			if ($Output) {
+				MakeDirIfNotExist "$Output\$dockerRef" | Out-Null
+				$manifestPath = "$(Resolve-Path "$Output\$dockerRef")\manifest.json"
+				$fs = [IO.File]::Open($manifestPath, [IO.FileMode]::Create)
+				try {
+					$task = $manifest.Content.CopyToAsync($fs)
+					while (-not $task.IsCompleted) {
+						Start-Sleep -Milliseconds 125
+					}
+				} finally {
+					$fs.Close()
+				}
+				if ($Sign) {
+					$null = New-ToolchainFileCmsSignature -Path $manifestPath -SignaturePath "${manifestPath}.p7s"
+				}
+				$manifest | SavePackage -Output "$Output\$dockerRef"
+				return @{
+					Package = $Pkg.Package
+					Tag = $tagStr
+					Version = $Pkg.Version
+					Digest = $digest
+					Size = $size
+					Ref = $dockerRef
+					SavedAt = [datetime]::UtcNow.ToString('u')
+				}
 			}
-			$refpath = $Pkg | ResolvePackageRefPath
-			MakeDirIfNotExist (Split-Path $refpath) | Out-Null
-			if (Test-Path -Path $refpath -PathType Container) {
-				[IO.Directory]::Delete($refpath)
-			}
-			New-Item $refpath -ItemType Junction -Target ($Pkg.Digest | ResolvePackagePath) | Out-Null
-			Write-ToolchainInfo "Status: Downloaded newer package for $ref"
 		}
-		$locks.Unlock()
+
+		$Pkg.Digest = $digest
+		$Pkg.Size = $size
+		$locks, $status = $Pkg | InstallPackage
+		try {
+			$ref = "$($Pkg.Package):$($Pkg.Tag | AsTagString)"
+			if ($status -eq 'uptodate') {
+				Write-ToolchainInfo "Status: Package is up to date for $ref"
+			} else {
+				if ($status -in 'new', 'newer') {
+					$manifest | SavePackage
+				}
+				$refpath = $Pkg | ResolvePackageRefPath
+				MakeDirIfNotExist (Split-Path $refpath) | Out-Null
+				if (Test-Path -Path $refpath -PathType Container) {
+					[IO.Directory]::Delete($refpath)
+				}
+				New-Item $refpath -ItemType Junction -Target ($Pkg.Digest | ResolvePackagePath) | Out-Null
+				Write-ToolchainInfo "Status: Downloaded newer package for $ref"
+			}
+			$locks.Unlock()
+		} finally {
+			if ($locks) {
+				$locks.Revert()
+			}
+		}
+		return $status
 	} finally {
-		if ($locks) {
-			$locks.Revert()
+		if ($manifest) {
+			$manifest.Dispose()
 		}
 	}
-	return $status
 }
 
 function SavePackage {
@@ -744,6 +752,41 @@ function GetOutofdatePackages {
 	return $pkgs
 }
 
+function Invoke-PullPackageWithRetry {
+	param(
+		[Parameter(Mandatory)]
+		[string]$PackageRef,
+		[string]$Output,
+		[switch]$Sign,
+		[int]$MaxAttempts = 3
+	)
+	if ($MaxAttempts -lt 1) {
+		$MaxAttempts = 1
+	}
+	for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+		try {
+			$pkg = $PackageRef | AsPackage
+			$pullParams = @{}
+			if ($PSBoundParameters.ContainsKey('Output')) {
+				$pullParams.Output = $Output
+			}
+			if ($PSBoundParameters.ContainsKey('Sign')) {
+				$pullParams.Sign = $Sign
+			}
+			return ($pkg | PullPackage @pullParams)
+		} catch {
+			$msg = $_.Exception.Message
+			$isLockContention = ($msg -match 'is in use by another toolchain process')
+			if (-not $isLockContention -or $attempt -ge $MaxAttempts) {
+				throw
+			}
+			$delaySeconds = [math]::Min(5, $attempt)
+			Write-ToolchainInfo "Package busy; retrying pull for $PackageRef ($attempt/$MaxAttempts) in $delaySeconds sec"
+			Start-Sleep -Seconds $delaySeconds
+		}
+	}
+}
+
 function UpdatePackages {
 	param (
 		[switch]$Auto,
@@ -760,6 +803,7 @@ function UpdatePackages {
 	}
 	$updated = 0
 	$skipped = 0
+	$err = $null
 	$formal_pkgs = if ($Packages) { $Packages | AsPackage | ForEach-Object { "$($_.Package):$($_.Tag | AsTagString)" } }
 	foreach ($pkg in $pkgs) {
 		if ($Auto -and $pkg -notin $formal_pkgs) {
@@ -767,7 +811,7 @@ function UpdatePackages {
 			continue
 		}
 		try {
-			$status = $pkg | AsPackage | PullPackage
+			$status = Invoke-PullPackageWithRetry -PackageRef $pkg
 			if ($status -ne 'uptodate') {
 				++$updated
 			}

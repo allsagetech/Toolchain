@@ -408,6 +408,29 @@ Describe 'UpdatePackages' {
 			UpdatePackages -Auto somepkg
 			Should -Invoke -CommandName 'PullPackage' -Exactly -Times 1
 		}
+		It 'Retries lock contention once and succeeds' {
+			Mock GetOutofdatePackages { @('somepkg:latest') }
+			$script:pullCalls = 0
+			Mock PullPackage {
+				$script:pullCalls += 1
+				if ($script:pullCalls -eq 1) {
+					throw "package 'somepkg:latest' is in use by another toolchain process"
+				}
+				return 'newer'
+			}
+			Mock Start-Sleep { }
+			UpdatePackages
+			Should -Invoke -CommandName 'PullPackage' -Exactly -Times 2
+			Should -Invoke -CommandName 'Start-Sleep' -Exactly -Times 1 -ParameterFilter { $Seconds -eq 1 }
+		}
+		It 'Does not retry non-lock pull errors' {
+			Mock GetOutofdatePackages { @('somepkg:latest') }
+			Mock PullPackage { throw 'network failure' }
+			Mock Start-Sleep { }
+			{ UpdatePackages } | Should -Throw
+			Should -Invoke -CommandName 'PullPackage' -Exactly -Times 1
+			Should -Invoke -CommandName 'Start-Sleep' -Exactly -Times 0
+		}
 	}
 }
 
