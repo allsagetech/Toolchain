@@ -162,6 +162,7 @@ function Invoke-ToolchainLoad {
 	}
 	if (-not $Packages) {
 		Write-Error 'no packages provided'
+		return
 	}
 	$null = UpdatePackages -Auto -Packages $Packages
 	TryEachPackage $Packages { $Input | ResolvePackage | LoadPackage } -ActionDescription 'load'
@@ -197,6 +198,7 @@ function Invoke-ToolchainPull {
 	}
 	if (-not $Packages) {
 		Write-Error "no packages provided"
+		return
 	}
 	TryEachPackage $Packages { $Input | AsPackage | PullPackage | Out-Null } -ActionDescription 'pull'
 }
@@ -247,6 +249,7 @@ function Invoke-ToolchainExec {
 	}
 	if (-not $Packages) {
 		Write-Error "no packages provided"
+		return
 	}
 	$null = UpdatePackages -Auto -Packages $Packages
 	$resolved = TryEachPackage $Packages { $Input | ResolvePackage } -ActionDescription 'resolve'
@@ -282,9 +285,11 @@ function Invoke-ToolchainSave {
 	}
 	if (-not $Packages) {
 		Write-Error "no packages provided"
+		return
 	}
 	if (-not $Output) {
 		Write-Error "no output directory provided"
+		return
 	}
 	MakeDirIfNotExist $Output | Out-Null
 	$results = TryEachPackage $Packages { $Input | AsPackage | PullPackage -Output $Output -Sign:$Sign } -ActionDescription 'save'

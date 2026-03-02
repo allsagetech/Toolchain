@@ -162,6 +162,8 @@ Describe 'Invoke-ToolchainLoad/Pull/Remove/Exec' {
 	It 'Invoke-ToolchainLoad errors when no packages are available' {
 		Mock GetConfigPackages { return $null }
 		{ Invoke-ToolchainLoad -ErrorAction Stop } | Should -Throw
+		Should -Invoke -CommandName UpdatePackages -Times 0 -Exactly
+		Should -Invoke -CommandName TryEachPackage -Times 0 -Exactly
 	}
 
 	It 'Invoke-ToolchainPull uses config packages when none provided' {
@@ -183,6 +185,15 @@ Describe 'Invoke-ToolchainLoad/Pull/Remove/Exec' {
 	It 'Invoke-ToolchainExec errors when no packages are available' {
 		Mock GetConfigPackages { return $null }
 		{ Invoke-ToolchainExec -ErrorAction Stop } | Should -Throw
+		Should -Invoke -CommandName UpdatePackages -Times 0 -Exactly
+		Should -Invoke -CommandName TryEachPackage -Times 0 -Exactly
+		Should -Invoke -CommandName ExecuteScript -Times 0 -Exactly
+	}
+
+	It 'Invoke-ToolchainPull errors when no packages are available' {
+		Mock GetConfigPackages { return $null }
+		{ Invoke-ToolchainPull -ErrorAction Stop } | Should -Throw
+		Should -Invoke -CommandName TryEachPackage -Times 0 -Exactly
 	}
 }
 
@@ -249,6 +260,16 @@ Describe 'Invoke-ToolchainSave' {
 
 	It 'Errors when no output directory is provided' {
 		{ Invoke-ToolchainSave -Packages @('a') -ErrorAction Stop } | Should -Throw
+		Should -Invoke -CommandName MakeDirIfNotExist -Times 0 -Exactly
+		Should -Invoke -CommandName TryEachPackage -Times 0 -Exactly
+	}
+
+	It 'Errors when no packages are available and does not continue' {
+		Mock GetConfigPackages { return $null }
+		$out = Join-Path $TestDrive 'no-pkgs'
+		{ Invoke-ToolchainSave -Output $out -ErrorAction Stop } | Should -Throw
+		Should -Invoke -CommandName MakeDirIfNotExist -Times 0 -Exactly
+		Should -Invoke -CommandName TryEachPackage -Times 0 -Exactly
 	}
 
 	It 'Writes an index in offline mode' {
