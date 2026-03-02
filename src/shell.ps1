@@ -273,12 +273,6 @@ function LoadPackage {
 	$Pkg.Digest = $digest
 	Write-ToolchainInfo "Digest: $digest"
 
-	$loadedDigests = @(
-		$env:ToolchainLoadedPackages -split ';' |
-			Where-Object { $_ -and $_.Trim() } |
-			ForEach-Object { $_.Trim() }
-	)
-
 	$refKey = Get-ToolchainLoadedRefKey -Pkg $Pkg
 	$loadedRefMap = Get-ToolchainLoadedRefMap
 	$previousDigest = if ($loadedRefMap.ContainsKey($refKey)) { [string]$loadedRefMap[$refKey] } else { $null }
@@ -290,12 +284,11 @@ function LoadPackage {
 		} catch {
 			Write-Debug "failed to remove previous path entries for ${ref}: $($_.Exception.Message)"
 		}
-		$loadedDigests = @($loadedDigests | Where-Object { $_ -ne $previousDigest })
 	}
 
-	if ($digest -notin $loadedDigests) {
+	$shouldConfigure = (-not $previousDigest -or $previousDigest -ne $digest)
+	if ($shouldConfigure) {
 		$Pkg | ConfigurePackage
-		$loadedDigests += $digest
 		Write-ToolchainInfo "Status: Session configured for $ref"
 	} else {
 		Write-ToolchainInfo "Status: Session is up to date for $ref"
@@ -304,7 +297,13 @@ function LoadPackage {
 	$loadedRefMap[$refKey] = $digest
 	Set-ToolchainLoadedRefMap -Map $loadedRefMap
 
-	$loadedDigests = @($loadedDigests | Select-Object -Unique)
+	$loadedDigests = @(
+		$loadedRefMap.Values |
+			ForEach-Object { [string]$_ } |
+			Where-Object { $_ -and $_.Trim() } |
+			ForEach-Object { $_.Trim() } |
+			Select-Object -Unique
+	)
 	$loadedJoined = ($loadedDigests -join ';')
 	if ($loadedJoined) {
 		$env:ToolchainLoadedPackages = $loadedJoined

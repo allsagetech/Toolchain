@@ -100,6 +100,20 @@ Describe 'ConfigurePackage and LoadPackage' {
 		Should -Invoke ConfigurePackage -Exactly -Times 1
 	}
 
+	It 'configures same digest when loaded under a different config' {
+		Mock ConfigurePackage { }
+		$d = 'sha256:' + ('b' * 64)
+		Mock ResolvePackageDigest { $d }
+		$p1 = @{ Package='p'; Tag=@{ Latest=$true }; Config='default' }
+		$p2 = @{ Package='p'; Tag=@{ Latest=$true }; Config='alt' }
+		LoadPackage $p1
+		LoadPackage $p2
+		Should -Invoke ConfigurePackage -Exactly -Times 2
+		$env:ToolchainLoadedPackages | Should -Be $d
+		$env:ToolchainLoadedPackageRefs | Should -Match 'p:latest::default='
+		$env:ToolchainLoadedPackageRefs | Should -Match 'p:latest::alt='
+	}
+
 	It 'replaces previous PATH entries when digest changes between loads' {
 		$origPath = $env:Path
 		$script:d1 = 'sha256:' + ('1' * 64)
@@ -133,6 +147,60 @@ Describe 'ConfigurePackage and LoadPackage' {
 		} finally {
 			$env:Path = $origPath
 			Remove-Item env:FOO -ErrorAction SilentlyContinue
+			Remove-Item env:ToolchainLoadedPackageRefs -ErrorAction SilentlyContinue
+		}
+	}
+
+	It 'keeps other ref digests tracked when one ref updates' {
+		$origPath = $env:Path
+		$script:d1 = 'sha256:' + ('1' * 64)
+		$script:d2 = 'sha256:' + ('2' * 64)
+		try {
+			$env:Path = 'BASE'
+			$script:defaultCalls = 0
+			Mock ResolvePackageDigest {
+				param([Parameter(ValueFromPipeline)][Collections.Hashtable]$Pkg)
+				if ($Pkg.Config -eq 'alt') { return $script:d1 }
+				$script:defaultCalls += 1
+				if ($script:defaultCalls -eq 1) { return $script:d1 }
+				return $script:d2
+			}
+			Mock GetPackageDefinition {
+				param([Parameter(ValueFromPipeline)][string]$Digest)
+				if ($Digest -eq $script:d1) {
+					return @{
+						env = @{ Path = 'C:\pkg\v1\bin'; FOO = 'one' }
+						alt = @{ env = @{ Path = 'C:\pkg\v1\alt'; BAR = 'altone' } }
+					}
+				}
+				return @{
+					env = @{ Path = 'C:\pkg\v2\bin'; FOO = 'two' }
+					alt = @{ env = @{ Path = 'C:\pkg\v2\alt'; BAR = 'alttwo' } }
+				}
+			}
+
+			$pDefault = @{ Package='p'; Tag=@{ Latest=$true }; Config='default' }
+			$pAlt = @{ Package='p'; Tag=@{ Latest=$true }; Config='alt' }
+
+			LoadPackage $pDefault
+			LoadPackage $pAlt
+			LoadPackage $pDefault
+
+			$loaded = @(
+				$env:ToolchainLoadedPackages -split ';' |
+					Where-Object { $_ -and $_.Trim() } |
+					ForEach-Object { $_.Trim() }
+			) | Sort-Object
+			$loaded | Should -Be @($script:d1, $script:d2)
+			$env:ToolchainLoadedPackageRefs | Should -Match ([Regex]::Escape("p:latest::alt=$script:d1"))
+			$env:ToolchainLoadedPackageRefs | Should -Match ([Regex]::Escape("p:latest::default=$script:d2"))
+			$env:Path | Should -Match ([Regex]::Escape('C:\pkg\v2\bin'))
+			$env:Path | Should -Match ([Regex]::Escape('C:\pkg\v1\alt'))
+			$env:Path | Should -Not -Match ([Regex]::Escape('C:\pkg\v1\bin'))
+		} finally {
+			$env:Path = $origPath
+			Remove-Item env:FOO -ErrorAction SilentlyContinue
+			Remove-Item env:BAR -ErrorAction SilentlyContinue
 			Remove-Item env:ToolchainLoadedPackageRefs -ErrorAction SilentlyContinue
 		}
 	}
