@@ -43,18 +43,79 @@ $coveragePaths = Get-ChildItem -Path $srcRoot -Recurse -File -Filter '*.ps1' |
     ForEach-Object { $_.FullName }
 
 
-$modules = 'ps_modules'
+$modules = Join-Path $PSScriptRoot 'ps_modules'
 
 if (-not (Test-Path $modules)) {
 	New-Item -Path $modules -ItemType Directory | Out-Null
 }
 
-foreach ($name in 'Pester', 'PSScriptAnalyzer') {
-	if (-not (Test-Path "$modules\$name")) {
-		Save-Module -Name $name -Path $modules
+function Import-DevModule {
+	param(
+		[Parameter(Mandatory)]
+		[string]$Name,
+		[Parameter(Mandatory)]
+		[Version]$MinimumVersion
+	)
+
+	$localModuleDir = Join-Path $modules $Name
+	if (-not (Test-Path $localModuleDir)) {
+		try {
+			Save-Module -Name $Name -Path $modules -ErrorAction Stop
+		} catch {
+			Write-Warning "Could not download module '$Name' from PowerShell Gallery. Falling back to installed modules."
+		}
 	}
-	Remove-Module -Name $name -ErrorAction SilentlyContinue
-	Import-Module (Get-ChildItem -Path "$modules\$name" -Recurse -Include "$name.psd1").Fullname
+
+	$candidates = @()
+
+	if (Test-Path $localModuleDir) {
+		$manifests = Get-ChildItem -Path $localModuleDir -Recurse -File -Filter "$Name.psd1" -ErrorAction SilentlyContinue
+		foreach ($manifest in $manifests) {
+			try {
+				$info = Test-ModuleManifest -Path $manifest.FullName -ErrorAction Stop
+				if ($info.Version -ge $MinimumVersion) {
+					$candidates += [PSCustomObject]@{
+						Version = $info.Version
+						Path = $manifest.FullName
+					}
+				}
+			} catch {
+				Write-Debug "Skipping invalid module manifest '$($manifest.FullName)': $($_.Exception.Message)"
+			}
+		}
+	}
+
+	$globalCandidates = Get-Module -ListAvailable -Name $Name |
+		Where-Object { $_.Version -ge $MinimumVersion } |
+		ForEach-Object {
+			[PSCustomObject]@{
+				Version = $_.Version
+				Path = $_.Path
+			}
+		}
+	$candidates += $globalCandidates
+
+	if (-not $candidates -or $candidates.Count -eq 0) {
+		$highestFound = Get-Module -ListAvailable -Name $Name | Sort-Object Version -Descending | Select-Object -First 1
+		if ($highestFound) {
+			throw "$Name $MinimumVersion or newer is required. Highest installed version is $($highestFound.Version) at '$($highestFound.Path)'."
+		}
+		throw "$Name $MinimumVersion or newer is required but not available. Ensure internet access to PowerShell Gallery or pre-populate '$modules'."
+	}
+
+	$selected = $candidates | Sort-Object Version -Descending | Select-Object -First 1
+
+	Remove-Module -Name $Name -ErrorAction SilentlyContinue
+	Import-Module -Name $selected.Path -Force -ErrorAction Stop
+}
+
+$requiredModules = [ordered]@{
+	Pester = [Version]'5.0.0'
+	PSScriptAnalyzer = [Version]'1.20.0'
+}
+
+foreach ($kv in $requiredModules.GetEnumerator()) {
+	Import-DevModule -Name $kv.Key -MinimumVersion $kv.Value
 }
 
 foreach ($path in $Paths) {

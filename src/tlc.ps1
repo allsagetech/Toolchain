@@ -28,43 +28,44 @@ function Invoke-Toolchain {
 	)
 	try {
 		switch ($Command) {
-			{$_ -in 'v', 'version'} {
+			{ $_ -in 'v', 'version' } {
 				Invoke-ToolchainVersion
 			}
-		'remote' {
-			Invoke-ToolchainRemote @ArgumentList
-		}
-'list' {
+			'remote' {
+				Invoke-ToolchainRemote @ArgumentList
+			}
+			'list' {
 				Invoke-ToolchainList
 			}
 			'load' {
-			$pkgs = @($ArgumentList) | ForEach-Object { [string]$_ }
-			Invoke-ToolchainLoad -Packages $pkgs
-		}
+				$pkgs = @($ArgumentList) | ForEach-Object { [string]$_ }
+				Invoke-ToolchainLoad -Packages $pkgs
+			}
 			'pull' {
-			$pkgs = @($ArgumentList) | ForEach-Object { [string]$_ }
-			Invoke-ToolchainPull -Packages $pkgs
-		}
+				$pkgs = @($ArgumentList) | ForEach-Object { [string]$_ }
+				Invoke-ToolchainPull -Packages $pkgs
+			}
 			'prune' {
 				Invoke-ToolchainPrune
 			}
 			'update' {
 				Invoke-ToolchainUpdate
 			}
-			{$_ -in 'remove', 'rm'} {
-			$pkgs = @($ArgumentList) | ForEach-Object { [string]$_ }
-			Invoke-ToolchainRemove -Packages $pkgs
-		}
+			{ $_ -in 'remove', 'rm' } {
+				$pkgs = @($ArgumentList) | ForEach-Object { [string]$_ }
+				Invoke-ToolchainRemove -Packages $pkgs
+			}
 			'save' {
 				$params, $remaining = ResolveParameters 'Invoke-ToolchainSave' $ArgumentList
 				Invoke-ToolchainSave @params @remaining
-			}			'exec' {
+			}
+			'exec' {
 				$params, $remaining = ResolveParameters 'Invoke-ToolchainExec' $ArgumentList
 				if (-not $params.ScriptBlock -and $null -ne $remaining -and $remaining.Count -gt 0) {
 					if ($remaining[-1] -is [scriptblock]) {
 						$params.ScriptBlock = $remaining[-1]
 						if ($remaining.Count -gt 1) {
-							$params.Packages += @($remaining[0..($remaining.Count-2)]) | ForEach-Object { [string]$_ }
+							$params.Packages += @($remaining[0..($remaining.Count - 2)]) | ForEach-Object { [string]$_ }
 						}
 						$remaining = @()
 					} else {
@@ -75,12 +76,15 @@ function Invoke-Toolchain {
 				Invoke-ToolchainExec @params @remaining
 			}
 			'run' {
-			$args = @($ArgumentList)
-			$fnName = if ($args.Count -ge 1) { [string]$args[0] } else { $null }
-			$rest = if ($args.Count -gt 1) { $args[1..($args.Count - 1)] } else { @() }
-			Invoke-ToolchainRun -FnName $fnName -ArgumentList $rest
-		}
-
+				$args = @($ArgumentList)
+				if ($args.Count -lt 1) {
+					Write-Error "run requires a function name (example: toolchain run build)"
+					break
+				}
+				$fnName = [string]$args[0]
+				$rest = if ($args.Count -gt 1) { $args[1..($args.Count - 1)] } else { @() }
+				Invoke-ToolchainRun -FnName $fnName -ArgumentList $rest
+			}
 			'init' {
 				$params, $remaining = ResolveParameters 'Invoke-ToolchainInit' $ArgumentList
 				Invoke-ToolchainInit @params @remaining
@@ -89,8 +93,7 @@ function Invoke-Toolchain {
 				$params, $remaining = ResolveParameters 'Invoke-ToolchainDoctor' $ArgumentList
 				Invoke-ToolchainDoctor @params @remaining
 			}
-
-			{$_ -in 'help', 'h'} {
+			{ $_ -in 'help', 'h' } {
 				Invoke-ToolchainHelp
 			}
 		}
@@ -201,24 +204,35 @@ function Invoke-ToolchainPull {
 function Invoke-ToolchainRun {
 	[CmdletBinding()]
 	param (
-		[Parameter(Mandatory)]
 		[string]$FnName,
 		[Parameter(ValueFromRemainingArguments)]
 		[object[]]$ArgumentList
 	)
-	$cfg = FindConfig
-	if ($cfg) {
-		. $cfg
+	if (-not $FnName) {
+		Write-Error "function name is required"
+		return
 	}
-	$fn = Get-Item "function:Toolchain$FnName"
-	if ($fn) {
-		$params, $remaining = ResolveParameters "Toolchain$FnName" $ArgumentList
-		$script = { & $fn @params @remaining }
-		if ($ToolchainPackages) {
-			Invoke-ToolchainExec -Packages $ToolchainPackages -ScriptBlock $script
-		} else {
-			& $script
-		}
+
+	$cfg = FindConfig
+	if (-not $cfg) {
+		Write-Error "Toolchain.ps1 not found from current directory upward"
+		return
+	}
+	. $cfg
+
+	$toolchainFnName = "Toolchain$FnName"
+	$fn = Get-Command -Name $toolchainFnName -CommandType Function -ErrorAction SilentlyContinue
+	if (-not $fn) {
+		Write-Error "function '$toolchainFnName' not found in '$cfg'"
+		return
+	}
+
+	$params, $remaining = ResolveParameters $toolchainFnName $ArgumentList
+	$script = { & $fn @params @remaining }
+	if ($ToolchainPackages) {
+		Invoke-ToolchainExec -Packages $ToolchainPackages -ScriptBlock $script
+	} else {
+		& $script
 	}
 }
 

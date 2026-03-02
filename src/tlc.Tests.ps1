@@ -86,6 +86,14 @@ Describe 'Invoke-Toolchain dispatcher' {
 		@($r) | Should -Be @('build','-X',1)
 	}
 
+	It 'Writes an error when run is missing a function name' {
+		Mock Write-Error { }
+		$r = Invoke-Toolchain -Command run -ArgumentList @()
+		$r | Should -Be $null
+		Should -Invoke -CommandName Invoke-ToolchainRun -Times 0 -Exactly
+		Should -Invoke -CommandName Write-Error -Times 1 -Exactly -ParameterFilter { $Message -match 'run requires a function name' }
+	}
+
 	It 'Routes other commands' {
 		(Invoke-Toolchain -Command prune) | Should -Be 'prune'
 		(Invoke-Toolchain -Command update) | Should -Be 'update'
@@ -128,11 +136,11 @@ Describe 'Invoke-ToolchainLoad/Pull/Remove/Exec' {
 	BeforeEach {
 		Mock UpdatePackages { }
 		Mock GetConfigPackages { return @('a','b') }
-		Mock ResolvePackage { param([Parameter(ValueFromPipeline)]$Ref) return [pscustomobject]@{ Package = [string]$Ref } }
-		Mock LoadPackage { }
-		Mock AsPackage { param([Parameter(ValueFromPipeline)]$Ref) return [pscustomobject]@{ Package = [string]$Ref } }
-		Mock PullPackage { param([Parameter(ValueFromPipeline)]$Pkg) return @{ Package=$Pkg.Package; Digest='sha256:x' } }
-		Mock RemovePackage { }
+		Mock ResolvePackage { param([Parameter(ValueFromPipeline)][string]$Ref) return @{ Package = [string]$Ref } }
+		Mock LoadPackage { param([Parameter(ValueFromPipeline)][Collections.Hashtable]$Pkg) return $Pkg }
+		Mock AsPackage { param([Parameter(ValueFromPipeline)][string]$Pkg) return @{ Package = [string]$Pkg } }
+		Mock PullPackage { param([Parameter(ValueFromPipeline)][Collections.Hashtable]$Pkg) return @{ Package=$Pkg.Package; Digest='sha256:x' } }
+		Mock RemovePackage { param([Parameter(ValueFromPipeline)][Collections.Hashtable]$Pkg) return $Pkg }
 		Mock ExecuteScript { return 'ran' }
 
 		Mock TryEachPackage {
@@ -200,19 +208,34 @@ function ToolchainHello { return 'ok' }
 		Should -Invoke -CommandName Invoke-ToolchainExec -Times 1 -Exactly -ParameterFilter { $Packages[0] -eq 'git' }
 	}
 
-	It 'No-ops when the requested Toolchain function does not exist' {
+	It 'Writes an error when the requested Toolchain function does not exist' {
 		$cfg = Join-Path $TestDrive 'Toolchain3.ps1'
 		Set-Content -LiteralPath $cfg -Value "# empty" -Encoding utf8
 		Mock FindConfig { return $cfg }
+		Mock Write-Error { }
 		(Invoke-ToolchainRun -FnName 'Missing') | Should -Be $null
+		Should -Invoke -CommandName Write-Error -Times 1 -Exactly -ParameterFilter { $Message -match "ToolchainMissing" }
+	}
+
+	It 'Writes an error when Toolchain.ps1 cannot be found' {
+		Mock FindConfig { return $null }
+		Mock Write-Error { }
+		(Invoke-ToolchainRun -FnName 'Build') | Should -Be $null
+		Should -Invoke -CommandName Write-Error -Times 1 -Exactly -ParameterFilter { $Message -match 'Toolchain\.ps1 not found' }
+	}
+
+	It 'Writes an error when FnName is empty' {
+		Mock Write-Error { }
+		(Invoke-ToolchainRun -FnName '') | Should -Be $null
+		Should -Invoke -CommandName Write-Error -Times 1 -Exactly -ParameterFilter { $Message -match 'function name is required' }
 	}
 }
 
 Describe 'Invoke-ToolchainSave' {
 	BeforeEach {
 		Mock MakeDirIfNotExist { param($Path) New-Item -ItemType Directory -Path $Path -Force | Out-Null; return $Path }
-		Mock AsPackage { param([Parameter(ValueFromPipeline)]$Ref) return [pscustomobject]@{ Package = [string]$Ref } }
-		Mock PullPackage { param([Parameter(ValueFromPipeline)]$Pkg,[string]$Output,[switch]$Sign) return @{ package=$Pkg.Package; digest='sha256:x' } }
+		Mock AsPackage { param([Parameter(ValueFromPipeline)][string]$Pkg) return @{ Package = [string]$Pkg } }
+		Mock PullPackage { param([Parameter(ValueFromPipeline)][Collections.Hashtable]$Pkg,[string]$Output,[switch]$Sign) return @{ package=$Pkg.Package; digest='sha256:x' } }
 		Mock TryEachPackage {
 			param($Packages, $ScriptBlock, $ActionDescription)
 			$res=@()
@@ -257,7 +280,7 @@ Describe 'Invoke-ToolchainInit' {
 			Set-Content -LiteralPath $cfg -Value 'x' -Encoding utf8
 			Mock Write-ToolchainInfo { }
 			Invoke-ToolchainInit
-			(Get-Content -LiteralPath $cfg -Raw) | Should -Be 'x'
+			((Get-Content -LiteralPath $cfg -Raw).TrimEnd("`r","`n")) | Should -Be 'x'
 		} finally { Set-Location $cwd }
 	}
 

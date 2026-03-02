@@ -887,20 +887,53 @@ class Tag : IComparable {
 
 }
 
+function ParseLocalPackageRef {
+	param (
+		[Parameter(Mandatory, ValueFromPipeline)]
+		[string]$Ref
+	)
+	if (-not $Ref.StartsWith('file:///')) {
+		throw "not a local package reference: $Ref"
+	}
+	$raw = $Ref.Substring('file:///'.Length).Trim()
+	if (-not $raw) {
+		throw "invalid local package reference: missing path in '$Ref'"
+	}
+	$cfg = 'default'
+	$root = $raw
+	$i = $raw.IndexOf('<')
+	if ($i -ne -1) {
+		$root = $raw.Substring(0, $i).Trim()
+		$cfgRaw = $raw.Substring($i + 1).Trim()
+		if ($cfgRaw.EndsWith('>')) {
+			$cfgRaw = $cfgRaw.Substring(0, $cfgRaw.Length - 1).Trim()
+		}
+		if ($cfgRaw) {
+			$cfg = $cfgRaw
+		}
+	}
+	if (-not $root) {
+		throw "invalid local package reference: missing path in '$Ref'"
+	}
+	try {
+		$root = [Uri]::UnescapeDataString($root)
+	} catch {
+	}
+	return @{
+		Root = $root
+		Config = $cfg
+	}
+}
+
 function ResolvePackage {
 	param (
 		[Parameter(Mandatory, ValueFromPipeline)]
 		[string]$Ref
 	)
 	if ($Ref.StartsWith('file:///')) {
-		$root = $Ref.Substring('file:///'.Length)
-		$i = $root.IndexOf('<')
-		$cfg = 'default'
-		if ($i -ne -1) {
-			$cfg = $root.Substring($i + 1).Trim()
-			if (-not $cfg) { $cfg = 'default' }
-			$root = $root.Substring(0, $i).Trim()
-		}
+		$local = $Ref | ParseLocalPackageRef
+		$root = $local.Root
+		$cfg = $local.Config
 		$name = Split-Path -Path $root -Leaf
 		if (-not $name) { $name = $root }
 		return @{

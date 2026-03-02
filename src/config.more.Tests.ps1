@@ -18,7 +18,7 @@ Describe 'ConvertTo-HashTable' {
 		$ht = $obj | ConvertTo-HashTable
 		$ht.A | Should -Be 1
 		$ht.B.C | Should -Be 'x'
-		$ht.D | Should -BeOfType 'System.Collections.ArrayList'
+		,$ht.D | Should -BeOfType 'System.Collections.ArrayList'
 		$ht.D.Count | Should -Be 2
 	}
 }

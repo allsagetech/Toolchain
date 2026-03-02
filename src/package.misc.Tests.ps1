@@ -93,6 +93,27 @@ Describe 'AsPackage parsing' {
 	}
 }
 
+Describe 'Local file package refs' {
+	It 'parses root and trims config wrapper' {
+		$r = 'file:///C:/toolchains/git<dev>' | ParseLocalPackageRef
+		$r.Root | Should -Be 'C:/toolchains/git'
+		$r.Config | Should -Be 'dev'
+	}
+
+	It 'defaults config and unescapes encoded paths' {
+		$r = 'file:///C:/Program%20Files/Toolchain/git' | ParseLocalPackageRef
+		$r.Root | Should -Match 'Program Files'
+		$r.Config | Should -Be 'default'
+	}
+
+	It 'resolves local refs with clean config names' {
+		$p = 'file:///C:/toolchains/git<ci>' | ResolvePackage
+		$p.Package | Should -Be 'git'
+		$p.Config | Should -Be 'ci'
+		$p.Tag.Latest | Should -BeTrue
+	}
+}
+
 Describe 'ResolvePackageRefPath and digest helpers' {
 	BeforeEach {
 		$global:ToolchainPath = 'C:\toolchain'

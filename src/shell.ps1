@@ -75,10 +75,8 @@ function GetPackageDefinition {
   )
   if (-not $Digest) { return $null }
 
-  if ($digest.StartsWith('file:///')) {
-    $root = $digest.Substring(8)
-    $i = $root.IndexOf('<')
-    if ($i -ne -1) { $root = $root.Substring(0, $i).Trim() }
+  if ($Digest.StartsWith('file:///')) {
+    $root = ($Digest | ParseLocalPackageRef).Root
   } else {
     $root = ResolvePackagePath -Digest $Digest
   }

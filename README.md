@@ -140,7 +140,7 @@ A definition **must** have a top-level `env` object. Values may be strings or ar
 
 The `${.}` token expands to the package’s extracted root directory (so packages can reference their own files).
 
-Schema reference: `schema/Toolchain.PackageDefinition.schema.json`.
+Schema reference: `schema/toolchain-definition.schema.json`.
 
 ## Offline / air‑gapped workflow
 
