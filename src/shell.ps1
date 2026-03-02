@@ -51,6 +51,7 @@ function ClearSessionState {
 		}
 	}
 	Remove-Item 'env:ToolchainLoadedPackages' -Force -ErrorAction SilentlyContinue
+	Remove-Item 'env:ToolchainLoadedPackageRefs' -Force -ErrorAction SilentlyContinue
 }
 
 function RestoreSessionState {
@@ -106,6 +107,111 @@ function GetPackageDefinition {
     Replace('${.}', $root.Replace('\','\\')) |
     ConvertFrom-Json |
     ConvertTo-HashTable
+}
+
+function Get-ToolchainLoadedRefKey {
+	param(
+		[Parameter(Mandatory)]
+		[Collections.Hashtable]$Pkg
+	)
+	$cfg = if ($Pkg.Config) { [string]$Pkg.Config } else { 'default' }
+	return "$($Pkg.Package):$($Pkg.Tag | AsTagString)::${cfg}"
+}
+
+function Get-ToolchainLoadedRefMap {
+	$map = @{}
+	$raw = $env:ToolchainLoadedPackageRefs
+	if (-not $raw) {
+		return $map
+	}
+	foreach ($entry in ($raw -split ';')) {
+		if (-not $entry) { continue }
+		$i = $entry.IndexOf('=')
+		if ($i -le 0) { continue }
+		$k = $entry.Substring(0, $i)
+		$v = $entry.Substring($i + 1)
+		if ($k -and $v) {
+			$map[$k] = $v
+		}
+	}
+	return $map
+}
+
+function Set-ToolchainLoadedRefMap {
+	param(
+		[Parameter(Mandatory)]
+		[Collections.Hashtable]$Map
+	)
+	$parts = @()
+	foreach ($k in ($Map.Keys | Sort-Object)) {
+		$parts += "$k=$($Map[$k])"
+	}
+	$raw = ($parts -join ';')
+	if ($raw) {
+		$env:ToolchainLoadedPackageRefs = $raw
+	} else {
+		Remove-Item 'env:ToolchainLoadedPackageRefs' -Force -ErrorAction SilentlyContinue
+	}
+}
+
+function Get-ToolchainPathEntriesFromPackageDefinition {
+	param(
+		[Parameter(Mandatory)]
+		[Collections.Hashtable]$Pkg,
+		[Parameter(Mandatory)]
+		[string]$Digest
+	)
+	$defn = $Digest | GetPackageDefinition
+	$cfgName = if ($Pkg.Config) { [string]$Pkg.Config } else { 'default' }
+	$cfg = if ($cfgName -eq 'default') { $defn } else { $defn.$cfgName }
+	if (-not $cfg -or -not $cfg.env -or -not $cfg.env.ContainsKey('Path')) {
+		return @()
+	}
+	$joined = $cfg.env.Path | ConvertTo-SemicolonString
+	if (-not $joined) {
+		return @()
+	}
+	return @(
+		$joined -split ';' |
+			Where-Object { $_ -and $_.Trim() } |
+			ForEach-Object { $_.Trim() }
+	)
+}
+
+function Remove-ToolchainPathEntries {
+	param(
+		[string[]]$Entries
+	)
+	if (-not $Entries -or -not $env:Path) {
+		return
+	}
+	$toRemove = @(
+		$Entries |
+			Where-Object { $_ -and $_.Trim() } |
+			ForEach-Object { $_.Trim() }
+	)
+	if (-not $toRemove -or $toRemove.Count -eq 0) {
+		return
+	}
+	$current = @(
+		$env:Path -split ';' |
+			Where-Object { $_ -and $_.Trim() } |
+			ForEach-Object { $_.Trim() }
+	)
+	$filtered = [System.Collections.Generic.List[string]]::new()
+	foreach ($entry in $current) {
+		$drop = $false
+		foreach ($r in $toRemove) {
+			if ([string]::Equals($entry, $r, [StringComparison]::OrdinalIgnoreCase)) {
+				$drop = $true
+				break
+			}
+		}
+		if (-not $drop) {
+			[void]$filtered.Add($entry)
+		}
+	}
+	$env:Path = ($filtered.ToArray() -join ';')
 }
 
 
@@ -166,12 +272,44 @@ function LoadPackage {
 	}
 	$Pkg.Digest = $digest
 	Write-ToolchainInfo "Digest: $digest"
-	if ($digest -notin ($env:ToolchainLoadedPackages -split ';')) {
+
+	$loadedDigests = @(
+		$env:ToolchainLoadedPackages -split ';' |
+			Where-Object { $_ -and $_.Trim() } |
+			ForEach-Object { $_.Trim() }
+	)
+
+	$refKey = Get-ToolchainLoadedRefKey -Pkg $Pkg
+	$loadedRefMap = Get-ToolchainLoadedRefMap
+	$previousDigest = if ($loadedRefMap.ContainsKey($refKey)) { [string]$loadedRefMap[$refKey] } else { $null }
+
+	if ($previousDigest -and $previousDigest -ne $digest) {
+		try {
+			$oldPathEntries = Get-ToolchainPathEntriesFromPackageDefinition -Pkg $Pkg -Digest $previousDigest
+			Remove-ToolchainPathEntries -Entries $oldPathEntries
+		} catch {
+			Write-Debug "failed to remove previous path entries for ${ref}: $($_.Exception.Message)"
+		}
+		$loadedDigests = @($loadedDigests | Where-Object { $_ -ne $previousDigest })
+	}
+
+	if ($digest -notin $loadedDigests) {
 		$Pkg | ConfigurePackage
-		$env:ToolchainLoadedPackages += "$(if ($env:ToolchainLoadedPackages) { ';' })$digest"
+		$loadedDigests += $digest
 		Write-ToolchainInfo "Status: Session configured for $ref"
 	} else {
 		Write-ToolchainInfo "Status: Session is up to date for $ref"
+	}
+
+	$loadedRefMap[$refKey] = $digest
+	Set-ToolchainLoadedRefMap -Map $loadedRefMap
+
+	$loadedDigests = @($loadedDigests | Select-Object -Unique)
+	$loadedJoined = ($loadedDigests -join ';')
+	if ($loadedJoined) {
+		$env:ToolchainLoadedPackages = $loadedJoined
+	} else {
+		Remove-Item 'env:ToolchainLoadedPackages' -Force -ErrorAction SilentlyContinue
 	}
 }
 

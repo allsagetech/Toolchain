@@ -60,6 +60,7 @@ Describe 'GetPackageDefinition' {
 Describe 'ConfigurePackage and LoadPackage' {
 	BeforeEach {
 		$env:ToolchainLoadedPackages = ''
+		Remove-Item env:ToolchainLoadedPackageRefs -ErrorAction SilentlyContinue
 		Mock Assert-ToolchainPolicyAllowed { }
 		Mock Assert-ToolchainDefinition { }
 	}
@@ -97,5 +98,42 @@ Describe 'ConfigurePackage and LoadPackage' {
 		LoadPackage $p
 		LoadPackage $p
 		Should -Invoke ConfigurePackage -Exactly -Times 1
+	}
+
+	It 'replaces previous PATH entries when digest changes between loads' {
+		$origPath = $env:Path
+		$script:d1 = 'sha256:' + ('1' * 64)
+		$script:d2 = 'sha256:' + ('2' * 64)
+		try {
+			$env:Path = 'BASE'
+			$script:resolveCall = 0
+			Mock ResolvePackageDigest {
+				$script:resolveCall += 1
+				if ($script:resolveCall -eq 1) { return $script:d1 }
+				return $script:d2
+			}
+			Mock GetPackageDefinition {
+				param([Parameter(ValueFromPipeline)][string]$Digest)
+				if ($Digest -eq $script:d1) {
+					return @{ env = @{ Path = 'C:\pkg\v1\bin'; FOO = 'one' } }
+				}
+				return @{ env = @{ Path = 'C:\pkg\v2\bin'; FOO = 'two' } }
+			}
+
+			$p = @{ Package='p'; Tag=@{ Latest=$true }; Config='default' }
+			LoadPackage $p
+			$env:Path | Should -Be 'C:\pkg\v1\bin;BASE'
+
+			LoadPackage $p
+			$env:Path | Should -Be 'C:\pkg\v2\bin;BASE'
+			$env:Path | Should -Not -Match ([Regex]::Escape('C:\pkg\v1\bin'))
+			$env:FOO | Should -Be 'two'
+			$env:ToolchainLoadedPackages | Should -Be $script:d2
+			$env:ToolchainLoadedPackageRefs | Should -Match 'p:latest::default='
+		} finally {
+			$env:Path = $origPath
+			Remove-Item env:FOO -ErrorAction SilentlyContinue
+			Remove-Item env:ToolchainLoadedPackageRefs -ErrorAction SilentlyContinue
+		}
 	}
 }
