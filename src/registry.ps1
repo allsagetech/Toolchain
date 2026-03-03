@@ -376,7 +376,7 @@ function GetManifest {
 
 	$repoPath = (GetToolchainRepo)
 	if ($repoPath) {
-		$file = Get-Item -LiteralPath (Join-Path "$repoPath\$Ref" 'manifest.json') -ErrorAction SilentlyContinue
+		$file = Get-Item -LiteralPath (Join-Path (Join-Path $repoPath $Ref) 'manifest.json') -ErrorAction SilentlyContinue
 			if (-not $file -or -not $file.Exists) {
 				return [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::NotFound)
 			}
@@ -612,7 +612,9 @@ function GetBlob {
 	)
 	$repoPath = (GetToolchainRepo)
 	if ($repoPath) {
-		$file = Get-ChildItem $repoPath -Depth 1 -Recurse "$($Ref.Substring('sha256:'.Length)).tar.gz"
+		$blobName = "$($Ref.Substring('sha256:'.Length)).tar.gz"
+		$files = @(Get-ChildItem -Path $repoPath -Recurse -File -Filter $blobName -ErrorAction SilentlyContinue)
+		$file = $files | Select-Object -First 1
 		if (-not $file -or -not $file.Exists -or $file.Length -le $StartByte) {
 			return [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::NotFound)
 		}
@@ -728,7 +730,8 @@ function SaveBlob {
 		[String]$Output
 	)
 	$sha256 = $Digest.Substring('sha256:'.Length)
-	$path = "$(if ($Output) { Resolve-Path $Output } else { GetPwrTempPath })\$sha256.tar.gz"
+	$basePath = if ($Output) { (Resolve-Path $Output).Path } else { GetPwrTempPath }
+	$path = Join-Path $basePath "$sha256.tar.gz"
 	if ((Test-Path $path) -and (Get-FileHash $path).Hash -eq $sha256) {
 		return $path
 	}

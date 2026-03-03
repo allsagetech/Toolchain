@@ -121,6 +121,21 @@ function ExtractTar {
 		[string]$LayerId
 	)
 
+	$isWindowsPlatform = $false
+	if ($PSVersionTable.PSEdition -eq 'Desktop') {
+		$isWindowsPlatform = $true
+	} elseif (Get-Variable -Name IsWindows -ErrorAction SilentlyContinue) {
+		$isWindowsPlatform = [bool]$IsWindows
+	}
+
+	function Get-PlatformPath {
+		param([string]$Path)
+		if ($isWindowsPlatform -and $Path -and $Path.Length -ge 248) {
+			return "\\?\$Path"
+		}
+		return $Path
+	}
+
 	$root = ResolvePackagePath -Digest $Digest
 	MakeDirIfNotExist -Path $root | Out-Null
 
@@ -168,11 +183,11 @@ function ExtractTar {
 			$size = if ($xhdr -and $xhdr.Size) { [int64]$xhdr.Size } else { [int64]$hdr.Size }
 			$filename = if ($xhdr -and $xhdr.Path) { [string]$xhdr.Path } else { [string]$hdr.Filename }
 
-			$file = ($filename -split '/' | Select-Object -Skip 1) -join '\'
+			$file = ($filename -split '/' | Select-Object -Skip 1) -join ([IO.Path]::DirectorySeparatorChar)
 
 			if ($hdr.Type -eq [char]53 -and $file -ne '') {
 				$dest = Get-SafeDest $file
-				New-Item -Path ("\\?\$dest") -ItemType Directory -Force -ErrorAction Ignore | Out-Null
+				New-Item -Path (Get-PlatformPath $dest) -ItemType Directory -Force -ErrorAction Ignore | Out-Null
 				$xhdr = $null
 			} elseif ($hdr.Type -in [char]103, [char]120) {
 				$xhdr = ParsePaxHeader -Source $Source -Header $hdr
@@ -184,10 +199,10 @@ function ExtractTar {
 				} else {
 					$parent = Split-Path $dest -Parent
 					if ($parent) {
-						New-Item -Path ("\\?\$parent") -ItemType Directory -Force -ErrorAction Ignore | Out-Null
+						New-Item -Path (Get-PlatformPath $parent) -ItemType Directory -Force -ErrorAction Ignore | Out-Null
 					}
 
-					$fs = [IO.File]::Open("\\?\$dest", [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)
+					$fs = [IO.File]::Open((Get-PlatformPath $dest), [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)
 					try {
 						$remaining = $size
 						while ($remaining -gt 0) {

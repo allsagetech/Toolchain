@@ -33,8 +33,12 @@ function GetToolchainPath {
 		$ToolchainPath
 	} elseif ($env:ToolchainPath) {
 		$env:ToolchainPath
+	} elseif ($env:LocalAppData) {
+		Join-Path $env:LocalAppData 'Toolchain'
+	} elseif ($HOME) {
+		Join-Path $HOME '.toolchain'
 	} else {
-		"$env:LocalAppData\Toolchain"
+		Join-Path ([IO.Path]::GetTempPath()) 'Toolchain'
 	}
 }
 
@@ -73,15 +77,15 @@ function GetToolchainAutoupdate {
 }
 
 function GetPwrDBPath {
-	"$(GetToolchainPath)\cache"
+	Join-Path (GetToolchainPath) 'cache'
 }
 
 function GetPwrTempPath {
-	"$(GetToolchainPath)\temp"
+	Join-Path (GetToolchainPath) 'temp'
 }
 
 function GetPwrContentPath {
-	"$(GetToolchainPath)\content"
+	Join-Path (GetToolchainPath) 'content'
 }
 
 function ResolvePackagePath {
@@ -89,7 +93,8 @@ function ResolvePackagePath {
 		[Parameter(Mandatory, ValueFromPipeline)]
 		[string]$Digest
 	)
-	return "$(GetPwrContentPath)\$($digest.Substring('sha256:'.Length).Substring(0, 12))"
+	$shortDigest = $digest.Substring('sha256:'.Length).Substring(0, 12)
+	return (Join-Path (GetPwrContentPath) $shortDigest)
 }
 
 function MakeDirIfNotExist {

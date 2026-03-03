@@ -176,7 +176,23 @@ function ResolvePackageRefPath {
 		[Parameter(Mandatory, ValueFromPipeline)]
 		[Collections.Hashtable]$Pkg
 	)
-	return "$(GetToolchainPath)\ref\$($Pkg.Package)$(if (-not $Pkg.Tag.Latest) { "-$($Pkg.Tag | AsTagString)" })"
+	$refName = "$($Pkg.Package)$(if (-not $Pkg.Tag.Latest) { "-$($Pkg.Tag | AsTagString)" })"
+	return (Join-Path (Join-Path (GetToolchainPath) 'ref') $refName)
+}
+
+function GetToolchainLinkItemType {
+	$isWindowsPlatform = $false
+	if ($PSVersionTable.PSEdition -eq 'Desktop') {
+		$isWindowsPlatform = $true
+	} elseif (Get-Variable -Name IsWindows -ErrorAction SilentlyContinue) {
+		$isWindowsPlatform = [bool]$IsWindows
+	}
+
+	if ($isWindowsPlatform) {
+		return 'Junction'
+	}
+
+	return 'SymbolicLink'
 }
 
 function ResolveDockerRef {
@@ -468,8 +484,9 @@ function PullPackage {
 			$manifest | DebugRateLimit
 			$size = $manifest | GetSize
 			if ($Output) {
-				MakeDirIfNotExist "$Output\$dockerRef" | Out-Null
-				$manifestPath = "$(Resolve-Path "$Output\$dockerRef")\manifest.json"
+				$outputRefPath = Join-Path $Output $dockerRef
+				MakeDirIfNotExist $outputRefPath | Out-Null
+				$manifestPath = Join-Path (Resolve-Path $outputRefPath).Path 'manifest.json'
 				$fs = [IO.File]::Open($manifestPath, [IO.FileMode]::Create)
 				try {
 					$task = $manifest.Content.CopyToAsync($fs)
@@ -482,7 +499,7 @@ function PullPackage {
 				if ($Sign) {
 					$null = New-ToolchainFileCmsSignature -Path $manifestPath -SignaturePath "${manifestPath}.p7s"
 				}
-				$manifest | SavePackage -Output "$Output\$dockerRef"
+				$manifest | SavePackage -Output $outputRefPath
 				return @{
 					Package = $Pkg.Package
 					Tag = $tagStr
@@ -508,10 +525,10 @@ function PullPackage {
 				}
 				$refpath = $Pkg | ResolvePackageRefPath
 				MakeDirIfNotExist (Split-Path $refpath) | Out-Null
-				if (Test-Path -Path $refpath -PathType Container) {
-					[IO.Directory]::Delete($refpath)
+				if (Test-Path -LiteralPath $refpath) {
+					Remove-Item -LiteralPath $refpath -Recurse -Force
 				}
-				New-Item $refpath -ItemType Junction -Target ($Pkg.Digest | ResolvePackagePath) | Out-Null
+				New-Item -Path $refpath -ItemType (GetToolchainLinkItemType) -Target ($Pkg.Digest | ResolvePackagePath) | Out-Null
 				Write-ToolchainInfo "Status: Downloaded newer package for $ref"
 			}
 			$locks.Unlock()
@@ -633,8 +650,8 @@ function RemovePackage {
 			Write-ToolchainInfo "Deleted: $digest"
 		}
 		$refpath = $Pkg | ResolvePackageRefPath
-		if (Test-Path -Path $refpath -PathType Container) {
-			[IO.Directory]::Delete($refpath)
+		if (Test-Path -LiteralPath $refpath) {
+			Remove-Item -LiteralPath $refpath -Recurse -Force
 		}
 		$locks.Unlock()
 	} finally {

@@ -151,3 +151,30 @@ Describe "Response disposal in registry helpers" {
 		$script:disposed | Should -BeTrue
 	}
 }
+
+Describe "Offline blob lookup" {
+	It "Selects a single blob when duplicate digest files exist in offline package folders" {
+		$repo = Join-Path $TestDrive 'repo'
+		$pkgA = Join-Path $repo 'codex-0.1.0'
+		$pkgB = Join-Path $repo 'git-0.1.0'
+		New-Item -ItemType Directory -Path $pkgA, $pkgB -Force | Out-Null
+
+		$digestHex = 'a' * 64
+		$blobName = "${digestHex}.tar.gz"
+		$blobA = Join-Path $pkgA $blobName
+		$blobB = Join-Path $pkgB $blobName
+		[IO.File]::WriteAllBytes($blobA, [byte[]](1, 2, 3, 4))
+		[IO.File]::WriteAllBytes($blobB, [byte[]](5, 6, 7, 8))
+
+		Mock GetToolchainRepo { return $repo }
+
+		$resp = GetBlob -Ref ("sha256:${digestHex}") -StartByte 0
+		try {
+			$resp.IsSuccessStatusCode | Should -BeTrue
+			$bytes = $resp.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult()
+			$bytes.Length | Should -Be 4
+		} finally {
+			$resp.Dispose()
+		}
+	}
+}
