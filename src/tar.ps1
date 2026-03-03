@@ -147,6 +147,8 @@ function ExtractTar {
 	$buffer = New-Object byte[] 512
 	$ioBuf  = New-Object byte[] 65536
 	$xhdr = $null
+	$gnuLongPath = $null
+	$gnuLongLink = $null
 
 	function Skip-Byte([int64]$count) {
 		$remaining = $count
@@ -171,6 +173,19 @@ function ExtractTar {
 			throw "tar path escapes root: '$relativePath'"
 		}
 		return $dest
+	}
+
+	function Parse-GnuLongString([int64]$sizeBytes) {
+		if ($sizeBytes -gt 1048576) {
+			throw "gnu long header too large ($sizeBytes bytes)"
+		}
+		if ($sizeBytes -le 0) {
+			return ''
+		}
+		$buf = New-Object byte[] $sizeBytes
+		[void]([Util]::GzipRead($Source, $buf, [int]$sizeBytes))
+		$str = [Text.Encoding]::UTF8.GetString($buf)
+		return $str.Trim([char]0).TrimEnd("`r", "`n")
 	}
 
 	function Get-LayerRelativePath([string]$tarPath) {
@@ -205,15 +220,66 @@ function ExtractTar {
 
 			$hdr = ParseTarHeader $buffer
 			$size = if ($xhdr -and $xhdr.Size) { [int64]$xhdr.Size } else { [int64]$hdr.Size }
-			$filename = if ($xhdr -and $xhdr.Path) { [string]$xhdr.Path } else { [string]$hdr.Filename }
+			$filename = if ($gnuLongPath) {
+				[string]$gnuLongPath
+			} elseif ($xhdr -and $xhdr.Path) {
+				[string]$xhdr.Path
+			} else {
+				$headerName = [string]$hdr.Filename
+				if ($hdr.FilenamePrefix) {
+					$prefix = [string]$hdr.FilenamePrefix
+					$headerName = if ($prefix.EndsWith('/')) { "$prefix$headerName" } else { "$prefix/$headerName" }
+				}
+				$headerName
+			}
 			$relativePath = Get-LayerRelativePath -tarPath $filename
 
-			if ($hdr.Type -eq [char]53 -and $relativePath) {
+			if ($hdr.Type -eq [char]76 -or $hdr.Type -eq [char]75) {
+				$longVal = Parse-GnuLongString -sizeBytes $size
+				if ($hdr.Type -eq [char]76) {
+					$gnuLongPath = $longVal
+				} else {
+					$gnuLongLink = $longVal
+				}
+				$xhdr = $null
+			} elseif ($hdr.Type -eq [char]53 -and $relativePath) {
 				$dest = Get-SafeDest $relativePath
 				New-Item -Path (Get-PlatformPath $dest) -ItemType Directory -Force -ErrorAction Ignore | Out-Null
 				$xhdr = $null
 			} elseif ($hdr.Type -in [char]103, [char]120) {
 				$xhdr = ParsePaxHeader -Source $Source -Header $hdr
+			} elseif ($hdr.Type -eq [char]50) {
+				$dest = Get-SafeDest $relativePath
+				if ($null -eq $dest) {
+					$xhdr = $null
+				} else {
+					$linkTarget = if ($gnuLongLink) {
+						[string]$gnuLongLink
+					} elseif ($xhdr -and $xhdr.Linkpath) {
+						[string]$xhdr.Linkpath
+					} else {
+						[string]$hdr.Link
+					}
+					if ($linkTarget) {
+						$parent = Split-Path $dest -Parent
+						if ($parent) {
+							New-Item -Path (Get-PlatformPath $parent) -ItemType Directory -Force -ErrorAction Ignore | Out-Null
+						}
+						if (Test-Path -LiteralPath $dest) {
+							Remove-Item -LiteralPath $dest -Recurse -Force -ErrorAction SilentlyContinue
+						}
+						if ($isWindowsPlatform) {
+							try {
+								New-Item -Path (Get-PlatformPath $dest) -ItemType SymbolicLink -Target $linkTarget -Force -ErrorAction Stop | Out-Null
+							} catch {
+								Write-Debug "Skipping symlink '$relativePath' on Windows: $($_.Exception.Message)"
+							}
+						} else {
+							New-Item -Path (Get-PlatformPath $dest) -ItemType SymbolicLink -Target $linkTarget -Force | Out-Null
+						}
+					}
+					$xhdr = $null
+				}
 			} elseif ($hdr.Type -in [char]0, [char]48, [char]55) {
 				$dest = Get-SafeDest $relativePath
 				if ($null -eq $dest) {
@@ -225,7 +291,11 @@ function ExtractTar {
 						New-Item -Path (Get-PlatformPath $parent) -ItemType Directory -Force -ErrorAction Ignore | Out-Null
 					}
 
-					$fs = [IO.File]::Open((Get-PlatformPath $dest), [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)
+					try {
+						$fs = [IO.File]::Open((Get-PlatformPath $dest), [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)
+					} catch {
+						throw "failed to open tar entry '$filename' (type '$($hdr.Type)', relative '$relativePath', size $size) at '$dest': $($_.Exception.Message)"
+					}
 					try {
 						$remaining = $size
 						while ($remaining -gt 0) {
@@ -242,6 +312,11 @@ function ExtractTar {
 			} else {
 				if ($size -gt 0) { Skip-Byte $size }
 				$xhdr = $null
+			}
+
+			if ($hdr.Type -ne [char]76 -and $hdr.Type -ne [char]75) {
+				$gnuLongPath = $null
+				$gnuLongLink = $null
 			}
 
 			$leftover = $size % 512
