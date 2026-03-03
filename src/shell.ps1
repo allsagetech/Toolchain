@@ -37,7 +37,7 @@ function ClearSessionState {
 		}
 	}
 	$defaultEnv = @(
-		'TEMP','TMP','Path','PATHEXT','PSModulePath',
+		'TEMP','TMP','Path','PATH','PATHEXT','PSModulePath',
 		'ComSpec','SystemRoot','windir',
 		'USERNAME','USERPROFILE','HOMEDRIVE','HOMEPATH',
 		'APPDATA','LOCALAPPDATA','ProgramData','PUBLIC',
@@ -67,6 +67,56 @@ function RestoreSessionState {
 		Set-Item -Path "env:$($e.name)" -Value $e.value -Force -ErrorAction SilentlyContinue
 	}
 	Remove-Variable "ToolchainSaveState_$GUID" -Force -Scope Global -ErrorAction SilentlyContinue
+}
+
+function Get-ToolchainPathEnvName {
+	$isWindowsHost = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)
+	if ($isWindowsHost) { return 'Path' }
+	return 'PATH'
+}
+
+function Get-ToolchainPathValue {
+	$name = Get-ToolchainPathEnvName
+	$item = Get-Item -LiteralPath "env:$name" -ErrorAction SilentlyContinue
+	if ($item) { return [string]$item.Value }
+	return ''
+}
+
+function Set-ToolchainPathValue {
+	param(
+		[AllowNull()]
+		[string]$Value
+	)
+	$name = Get-ToolchainPathEnvName
+	Set-Item -LiteralPath "env:$name" -Value $Value
+}
+
+function Split-ToolchainPath {
+	param(
+		[AllowNull()]
+		[string]$Value
+	)
+	if ([string]::IsNullOrWhiteSpace($Value)) { return @() }
+	$sepPattern = [regex]::Escape([string][System.IO.Path]::PathSeparator)
+	return @(
+		$Value -split $sepPattern |
+			Where-Object { $_ -and $_.Trim() } |
+			ForEach-Object { $_.Trim() }
+	)
+}
+
+function Join-ToolchainPath {
+	param(
+		[string[]]$Entries
+	)
+	$sep = [string][System.IO.Path]::PathSeparator
+	return (
+		$Entries |
+			Where-Object { $_ -and $_.Trim() } |
+			ForEach-Object { $_.Trim() } |
+			Where-Object { $_ } |
+			ForEach-Object { $_ }
+	) -join $sep
 }
 
 function GetPackageDefinition {
@@ -167,22 +217,20 @@ function Get-ToolchainPathEntriesFromPackageDefinition {
 	if (-not $cfg -or -not $cfg.env -or -not $cfg.env.ContainsKey('Path')) {
 		return @()
 	}
-	$joined = $cfg.env.Path | ConvertTo-SemicolonString
+	$sep = [string][System.IO.Path]::PathSeparator
+	$joined = $cfg.env.Path | ConvertTo-SemicolonString -Separator $sep
 	if (-not $joined) {
 		return @()
 	}
-	return @(
-		$joined -split ';' |
-			Where-Object { $_ -and $_.Trim() } |
-			ForEach-Object { $_.Trim() }
-	)
+	return @(Split-ToolchainPath -Value $joined)
 }
 
 function Remove-ToolchainPathEntries {
 	param(
 		[string[]]$Entries
 	)
-	if (-not $Entries -or -not $env:Path) {
+	$currentPath = Get-ToolchainPathValue
+	if (-not $Entries -or -not $currentPath) {
 		return
 	}
 	$toRemove = @(
@@ -193,11 +241,7 @@ function Remove-ToolchainPathEntries {
 	if (-not $toRemove -or $toRemove.Count -eq 0) {
 		return
 	}
-	$current = @(
-		$env:Path -split ';' |
-			Where-Object { $_ -and $_.Trim() } |
-			ForEach-Object { $_.Trim() }
-	)
+	$current = @(Split-ToolchainPath -Value $currentPath)
 	$filtered = [System.Collections.Generic.List[string]]::new()
 	foreach ($entry in $current) {
 		$drop = $false
@@ -211,7 +255,7 @@ function Remove-ToolchainPathEntries {
 			[void]$filtered.Add($entry)
 		}
 	}
-	$env:Path = ($filtered.ToArray() -join ';')
+	Set-ToolchainPathValue (Join-ToolchainPath -Entries $filtered.ToArray())
 }
 
 
@@ -242,17 +286,23 @@ function ConfigurePackage {
 
 	foreach ($k in $cfg.env.keys) {
 		$isPath = ($k -ieq 'Path')
-		$val = $cfg.env.$k | ConvertTo-SemicolonString
+		$sep = [string][System.IO.Path]::PathSeparator
+		$val = if ($isPath) {
+			$cfg.env.$k | ConvertTo-SemicolonString -Separator $sep
+		} else {
+			$cfg.env.$k | ConvertTo-SemicolonString
+		}
 
 		if ($isPath) {
+			$currentPath = Get-ToolchainPathValue
 			if ($AppendPath) {
-				$pre = "$env:Path$(if ($env:Path -and -not $env:Path.EndsWith(';')) { ';' })"
+				$pre = "$currentPath$(if ($currentPath -and -not $currentPath.EndsWith($sep)) { $sep })"
 				$post = ''
 			} else {
 				$pre = ''
-				$post = "$(if ($env:Path) { ';' })$env:Path"
+				$post = "$(if ($currentPath) { $sep })$currentPath"
 			}
-			Set-Item "env:Path" "$pre$val$post"
+			Set-ToolchainPathValue "$pre$val$post"
 		} else {
 			Set-Item "env:$k" "$val"
 		}
@@ -323,7 +373,8 @@ function ExecuteScript {
 	SaveSessionState $GUID
 	try {
 		ClearSessionState $GUID
-		$env:Path = ''
+		$basePath = Get-ToolchainPathValue
+		Set-ToolchainPathValue ''
 		foreach ($pkg in $Pkgs) {
 			$pkg.digest = $pkg | ResolvePackageDigest
 			$ref = "$($Pkg.Package):$($Pkg.Tag | AsTagString)"
@@ -332,7 +383,15 @@ function ExecuteScript {
 			}
 			$pkg | ConfigurePackage -AppendPath
 		}
-		$env:Path = "$(if ($env:Path) { "$env:Path;" })$env:SYSTEMROOT;$env:SYSTEMROOT\System32;$PSHOME"
+		$currentPath = Get-ToolchainPathValue
+		$sep = [string][System.IO.Path]::PathSeparator
+		if ($basePath) {
+			if ($currentPath) {
+				Set-ToolchainPathValue "$currentPath$sep$basePath"
+			} else {
+				Set-ToolchainPathValue $basePath
+			}
+		}
 		& $ScriptBlock
 	} finally {
 		RestoreSessionState $GUID
