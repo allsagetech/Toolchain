@@ -67,7 +67,8 @@ function Assert-ToolchainEnvMap {
 function ConvertTo-SemicolonString {
 	[CmdletBinding()]
 	param(
-		[Parameter(ValueFromPipeline)][object]$Value
+		[Parameter(ValueFromPipeline)][object]$Value,
+		[string]$Separator = ';'
 	)
 	begin {
 		$parts = [System.Collections.Generic.List[string]]::new()
@@ -88,6 +89,6 @@ function ConvertTo-SemicolonString {
 		if ($s) { $parts.Add($s) }
 	}
 	end {
-		return ($parts.ToArray() -join ';')
+		return ($parts.ToArray() -join $Separator)
 	}
 }
