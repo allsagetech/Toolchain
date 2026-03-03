@@ -16,7 +16,11 @@ function FromOctalString {
 	if (-not $ASCII) {
 		return $null
 	}
-	return [Convert]::ToInt64($ASCII, 8)
+	$normalized = $ASCII.Replace([string][char]0, '').Trim()
+	if (-not $normalized) {
+		return $null
+	}
+	return [Convert]::ToInt64($normalized, 8)
 }
 
 function ParseTarHeader {

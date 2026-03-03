@@ -9,6 +9,13 @@ BeforeAll {
 	. $PSCommandPath.Replace('.Tests.ps1', '.ps1')
 }
 
+Describe "FromOctalString" {
+	It "parses tar-padded numeric fields" {
+		FromOctalString ("000777 " + [char]0) | Should -Be 511
+		FromOctalString ("00000000000 " + [char]0) | Should -Be 0
+	}
+}
+
 Describe "Untargz" {
 	BeforeAll {
 		$script:root = (Resolve-Path "$PSScriptRoot\..\test").Path
