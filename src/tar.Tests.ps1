@@ -30,4 +30,31 @@ Describe "Untargz" {
 		Get-Content "$pkg\empty.txt" -Raw | Should -Be $null
 		[IO.File]::ReadAllText("\\?\$pkg\nested\Some-Really-Long-Folder-Name----------------------------------------------------------------------------------------------------\Some-Really-Long-Folder-Name-----------------------------------------------------\a.txt") | Should -Be 'xyz'
 	}
+
+	It "Extracts OCI paths without Files prefix" {
+		$work = Join-Path $root ("oci-" + [Guid]::NewGuid().ToString('N'))
+		$layer = Join-Path $work 'layer'
+		$etcDir = Join-Path $layer 'etc'
+		New-Item -ItemType Directory -Path $etcDir -Force | Out-Null
+		'{"env":{"PATH":"${.}/bin"}}' | Set-Content -LiteralPath (Join-Path $layer '.tlc') -NoNewline
+		'ok' | Set-Content -LiteralPath (Join-Path $etcDir 'marker.txt') -NoNewline
+
+		$tgzPath = Join-Path $work 'layer.tar.gz'
+		try {
+			tar -czf $tgzPath -C $layer . | Out-Null
+			$hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $tgzPath).Hash.ToLower()
+			$hashedTgz = Join-Path $work "$hash.tar.gz"
+			Move-Item -LiteralPath $tgzPath -Destination $hashedTgz -Force
+
+			$hashedTgz | ExtractTarGz -Digest '1234567890ab'
+			$pkg = ResolvePackagePath '_'
+			Test-Path -LiteralPath (Join-Path $pkg '.tlc') | Should -BeTrue
+			(Get-Content -LiteralPath (Join-Path $pkg '.tlc') -Raw) | Should -Match '"env"'
+			(Get-Content -LiteralPath (Join-Path $pkg 'etc\marker.txt') -Raw) | Should -Be 'ok'
+		} finally {
+			if (Test-Path -LiteralPath $work) {
+				Remove-Item -LiteralPath $work -Recurse -Force
+			}
+		}
+	}
 }

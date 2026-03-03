@@ -173,6 +173,30 @@ function ExtractTar {
 		return $dest
 	}
 
+	function Get-LayerRelativePath([string]$tarPath) {
+		if (-not $tarPath) { return $null }
+		$path = $tarPath.Trim()
+		if ($path.StartsWith('./')) {
+			$path = $path.Substring(2)
+		}
+		if (-not $path -or $path -eq '.') {
+			return $null
+		}
+		if ($path -eq 'Files' -or $path -eq 'Files/') {
+			return $null
+		}
+		if ($path.StartsWith('Files/')) {
+			$path = $path.Substring('Files/'.Length)
+		}
+		if ($path.EndsWith('/')) {
+			$path = $path.Substring(0, $path.Length - 1)
+		}
+		if (-not $path) {
+			return $null
+		}
+		return $path.Replace('/', [IO.Path]::DirectorySeparatorChar)
+	}
+
 	try {
 		while ($true) {
 			{ $LayerId.Substring(0, 12) + ': Extracting ' + (GetProgress -Current $Source.BaseStream.Position -Total $Source.BaseStream.Length) + '   ' } | WritePeriodicConsole
@@ -182,17 +206,16 @@ function ExtractTar {
 			$hdr = ParseTarHeader $buffer
 			$size = if ($xhdr -and $xhdr.Size) { [int64]$xhdr.Size } else { [int64]$hdr.Size }
 			$filename = if ($xhdr -and $xhdr.Path) { [string]$xhdr.Path } else { [string]$hdr.Filename }
+			$relativePath = Get-LayerRelativePath -tarPath $filename
 
-			$file = ($filename -split '/' | Select-Object -Skip 1) -join ([IO.Path]::DirectorySeparatorChar)
-
-			if ($hdr.Type -eq [char]53 -and $file -ne '') {
-				$dest = Get-SafeDest $file
+			if ($hdr.Type -eq [char]53 -and $relativePath) {
+				$dest = Get-SafeDest $relativePath
 				New-Item -Path (Get-PlatformPath $dest) -ItemType Directory -Force -ErrorAction Ignore | Out-Null
 				$xhdr = $null
 			} elseif ($hdr.Type -in [char]103, [char]120) {
 				$xhdr = ParsePaxHeader -Source $Source -Header $hdr
-			} elseif ($hdr.Type -in [char]0, [char]48, [char]55 -and $filename.StartsWith('Files')) {
-				$dest = Get-SafeDest $file
+			} elseif ($hdr.Type -in [char]0, [char]48, [char]55) {
+				$dest = Get-SafeDest $relativePath
 				if ($null -eq $dest) {
 					Skip-Byte $size
 					$xhdr = $null
