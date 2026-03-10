@@ -264,6 +264,7 @@ function InvokeIndexRegistryRequest {
 		if ($resp.StatusCode -eq [Net.HttpStatusCode]::Unauthorized -and $resp.Headers.WwwAuthenticate) {
 			$challenge = $resp.Headers.WwwAuthenticate | Select-Object -First 1
 			$resp.Dispose()
+			$null = $script:RegistryAuthHeaderCache.Remove($cacheKey)
 			$authHeader = GetRegistryIndexAuthHeader -Repo $repo -WwwAuthenticate $challenge
 			$reqParams = @{ URL = $Url; Method = $Method; Accept = $Accept; AuthHeader = $authHeader }
 			if ($Range) { $reqParams.Range = $Range }
@@ -310,6 +311,7 @@ function InvokeRegistryBaseRequest {
 		if ($resp.StatusCode -eq [Net.HttpStatusCode]::Unauthorized -and $resp.Headers.WwwAuthenticate) {
 			$challenge = $resp.Headers.WwwAuthenticate | Select-Object -First 1
 			$resp.Dispose()
+			$null = $script:RegistryAuthHeaderCache.Remove($cacheKey)
 			$authHeader = GetRegistryBaseAuthHeader -Repo $repo -WwwAuthenticate $challenge
 			$reqParams = @{ URL = $Url; Method = $Method; Accept = $Accept; AuthHeader = $authHeader }
 			if ($Range) { $reqParams.Range = $Range }

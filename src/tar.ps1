@@ -157,7 +157,7 @@ function ExtractTar {
 	function Skip-Byte([int64]$count) {
 		$remaining = $count
 		while ($remaining -gt 0) {
-			$n = [int][Math]::Min($ioBuf.Length, $remaining)
+			$n = [int][Math]::Min([int64]$ioBuf.Length, [int64]$remaining)
 			[void]([Util]::GzipRead($Source, $ioBuf, $n))
 			$remaining -= $n
 		}
@@ -303,7 +303,7 @@ function ExtractTar {
 					try {
 						$remaining = $size
 						while ($remaining -gt 0) {
-							$n = [int][Math]::Min($ioBuf.Length, $remaining)
+							$n = [int][Math]::Min([int64]$ioBuf.Length, [int64]$remaining)
 							[void]([Util]::GzipRead($Source, $ioBuf, $n))
 							$fs.Write($ioBuf, 0, $n)
 							$remaining -= $n
