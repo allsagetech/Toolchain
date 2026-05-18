@@ -36,6 +36,23 @@ Describe 'ResolveParameters' {
 		$params.Output | Should -Be 'out'
 		@($remaining) | Should -Be @('pkg1')
 	}
+
+	It 'Parses explicit switch values' {
+		$params, $remaining = ResolveParameters 'Invoke-ToolchainSave' @('-Output:out','-Sign:false','-Index:$true','pkg1')
+		$params.Output | Should -Be 'out'
+		$params.Sign | Should -Be $false
+		$params.Index | Should -Be $true
+		@($remaining) | Should -Be @('pkg1')
+	}
+
+	It 'Rejects invalid switch values' {
+		{ ResolveParameters 'Invoke-ToolchainSave' @('-Output:out','-Sign:maybe') } | Should -Throw '*invalid switch value for -Sign*'
+	}
+
+	It 'Rejects missing parameter values' {
+		{ ResolveParameters 'Invoke-ToolchainSave' @('-Output') } | Should -Throw '*missing value for -Output*'
+		{ ResolveParameters 'Invoke-ToolchainSave' @('-Output','-Sign') } | Should -Throw '*missing value for -Output*'
+	}
 }
 
 Describe 'Invoke-Toolchain dispatcher' {

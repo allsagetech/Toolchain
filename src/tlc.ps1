@@ -120,16 +120,37 @@ function ResolveParameters {
 	$params = @{}
 	$remaining = [Collections.ArrayList]@()
 	for ($i = 0; $i -lt $ArgumentList.Count; $i++) {
-		if ($fn.parameters.keys -and ($ArgumentList[$i] -match '^-([^:]+)(?::(.*))?$') -and ($Matches[1] -in $fn.parameters.keys)) {
-			$name = $Matches[1]
-			$value = $Matches[2]
-			if ($value) {
-				$params.$name = $value
-			} else {
-				if ($fn.parameters.$name.SwitchParameter -and $null -eq $value) {
-					$params.$name = $true
+		$arg = [string]$ArgumentList[$i]
+		$argMatch = [regex]::Match($arg, '^-([^:]+)(?::(.*))?$')
+		if ($fn.parameters.keys -and $argMatch.Success -and ($argMatch.Groups[1].Value -in $fn.parameters.keys)) {
+			$name = $argMatch.Groups[1].Value
+			$parameter = $fn.parameters[$name]
+			$hasInlineValue = $arg.Contains(':')
+			$value = if ($hasInlineValue) { $argMatch.Groups[2].Value } else { $null }
+
+			if ($parameter.SwitchParameter) {
+				if (-not $hasInlineValue) {
+					$params[$name] = $true
+				} elseif ($value -match '^(?i:true|1|yes|\$true)$') {
+					$params[$name] = $true
+				} elseif ($value -match '^(?i:false|0|no|\$false)$') {
+					$params[$name] = $false
 				} else {
-					$params.$name = $ArgumentList[$i+1]
+					throw "invalid switch value for -$name`: $value"
+				}
+			} else {
+				if ($hasInlineValue) {
+					$params[$name] = $value
+				} else {
+					if ($i + 1 -ge $ArgumentList.Count) {
+						throw "missing value for -$name"
+					}
+					$next = [string]$ArgumentList[$i + 1]
+					$nextMatch = [regex]::Match($next, '^-([^:]+)(?::(.*))?$')
+					if ($nextMatch.Success -and ($nextMatch.Groups[1].Value -in $fn.parameters.keys)) {
+						throw "missing value for -$name"
+					}
+					$params[$name] = $ArgumentList[$i + 1]
 					$i += 1
 				}
 			}

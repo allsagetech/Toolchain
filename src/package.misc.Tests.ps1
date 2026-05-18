@@ -169,10 +169,16 @@ Describe 'ResolveDockerRef selection logic' {
 
 Describe 'DeleteDirectory' {
 	It 'deletes a directory tree using robocopy strategy' {
+		$prevToolchainPath = $global:ToolchainPath
 		$dir = Join-Path $env:TEMP ('del-' + [Guid]::NewGuid().ToString())
-		New-Item -ItemType Directory -Path $dir | Out-Null
-		New-Item -ItemType File -Path (Join-Path $dir 'a.txt') -Value 'x' | Out-Null
-		DeleteDirectory $dir
-		(Test-Path -LiteralPath $dir) | Should -BeFalse
+		try {
+			$global:ToolchainPath = Join-Path $env:TEMP ('tc-' + [Guid]::NewGuid().ToString())
+			New-Item -ItemType Directory -Path $dir | Out-Null
+			New-Item -ItemType File -Path (Join-Path $dir 'a.txt') -Value 'x' | Out-Null
+			DeleteDirectory $dir
+			(Test-Path -LiteralPath $dir) | Should -BeFalse
+		} finally {
+			$global:ToolchainPath = $prevToolchainPath
+		}
 	}
 }

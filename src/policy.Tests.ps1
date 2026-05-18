@@ -58,20 +58,16 @@ Describe 'Toolchain policy loading and enforcement' {
 	BeforeEach {
 		$script:prevPolicy = $global:ToolchainPolicy
 		$script:prevPolicyPath = $global:ToolchainPolicyPath
-		$script:prevEnvPolicyPath = (Get-Item env:ToolchainPolicyPath -ErrorAction SilentlyContinue).Value
+		$script:prevEnvPolicyPath = [Environment]::GetEnvironmentVariable('ToolchainPolicyPath', [EnvironmentVariableTarget]::Process)
 		$global:ToolchainPolicy = $null
 		$global:ToolchainPolicyPath = $null
-		Remove-Item env:ToolchainPolicyPath -ErrorAction SilentlyContinue
-		Remove-Item env:TOOLCHAIN_REQUIRE_SIGNED_MANIFESTS -ErrorAction SilentlyContinue
+		[Environment]::SetEnvironmentVariable('ToolchainPolicyPath', $null, [EnvironmentVariableTarget]::Process)
+		[Environment]::SetEnvironmentVariable('TOOLCHAIN_REQUIRE_SIGNED_MANIFESTS', $null, [EnvironmentVariableTarget]::Process)
 	}
 	AfterEach {
 		$global:ToolchainPolicy = $script:prevPolicy
 		$global:ToolchainPolicyPath = $script:prevPolicyPath
-		if ($null -eq $script:prevEnvPolicyPath) {
-			Remove-Item env:ToolchainPolicyPath -ErrorAction SilentlyContinue
-		} else {
-			$env:ToolchainPolicyPath = $script:prevEnvPolicyPath
-		}
+		[Environment]::SetEnvironmentVariable('ToolchainPolicyPath', $script:prevEnvPolicyPath, [EnvironmentVariableTarget]::Process)
 	}
 
 	It 'resolves policy path from global, env, or config directory' {
@@ -82,7 +78,7 @@ Describe 'Toolchain policy loading and enforcement' {
 		$env:ToolchainPolicyPath = 'C:\p2.json'
 		GetToolchainPolicyPath | Should -Be 'C:\p2.json'
 
-		Remove-Item env:ToolchainPolicyPath -ErrorAction SilentlyContinue
+		[Environment]::SetEnvironmentVariable('ToolchainPolicyPath', $null, [EnvironmentVariableTarget]::Process)
 		Mock FindConfig { 'C:\work\Toolchain.ps1' }
 		GetToolchainPolicyPath | Should -Be 'C:\work\Toolchain.policy.json'
 	}
@@ -158,8 +154,8 @@ Describe 'Toolchain policy loading and enforcement' {
 
 Describe 'Cosign policy helpers' {
 	BeforeEach {
-		Remove-Item env:TOOLCHAIN_COSIGN_VERIFY -ErrorAction SilentlyContinue
-		Remove-Item env:TOOLCHAIN_COSIGN_KEY -ErrorAction SilentlyContinue
+		[Environment]::SetEnvironmentVariable('TOOLCHAIN_COSIGN_VERIFY', $null, [EnvironmentVariableTarget]::Process)
+		[Environment]::SetEnvironmentVariable('TOOLCHAIN_COSIGN_KEY', $null, [EnvironmentVariableTarget]::Process)
 	}
 
 	It 'reads requireCosign and cosignKey from policy' {

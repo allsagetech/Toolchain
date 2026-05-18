@@ -271,7 +271,7 @@ function Get-ToolchainPolicyTrustedSigner {
 }
 
 function Get-ToolchainPolicyRequireCosign {
-	$envVal = (Get-Item env:TOOLCHAIN_COSIGN_VERIFY -ErrorAction SilentlyContinue).Value
+	$envVal = [Environment]::GetEnvironmentVariable('TOOLCHAIN_COSIGN_VERIFY', [EnvironmentVariableTarget]::Process)
 	if ($null -ne $envVal) {
 		return (Test-TruthyValue $envVal)
 	}
@@ -282,7 +282,7 @@ function Get-ToolchainPolicyRequireCosign {
 }
 
 function Get-ToolchainPolicyCosignKey {
-	$envKey = (Get-Item env:TOOLCHAIN_COSIGN_KEY -ErrorAction SilentlyContinue).Value
+	$envKey = [Environment]::GetEnvironmentVariable('TOOLCHAIN_COSIGN_KEY', [EnvironmentVariableTarget]::Process)
 	if ($envKey) { return [string]$envKey }
 
 	$policy = GetToolchainPolicy

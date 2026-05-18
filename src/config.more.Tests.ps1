@@ -6,6 +6,16 @@ SPDX-License-Identifier: MPL-2.0
 
 BeforeAll {
 	. "$PSScriptRoot\config.ps1"
+
+	function Get-TestEnvironmentValue {
+		param([string]$Name)
+		[Environment]::GetEnvironmentVariable($Name, [EnvironmentVariableTarget]::Process)
+	}
+
+	function Set-TestEnvironmentValue {
+		param([string]$Name, [AllowNull()][string]$Value)
+		[Environment]::SetEnvironmentVariable($Name, $Value, [EnvironmentVariableTarget]::Process)
+	}
 }
 
 Describe 'ConvertTo-HashTable' {
@@ -33,7 +43,7 @@ Describe 'Toolchain config getters' {
 
 		$script:prevEnv = @{}
 		foreach ($k in 'ToolchainPath','ToolchainRepo','ToolchainPullPolicy','ToolchainAutoprune','ToolchainAutoupdate','LocalAppData') {
-			$script:prevEnv[$k] = (Get-Item "env:$k" -ErrorAction SilentlyContinue).Value
+			$script:prevEnv[$k] = Get-TestEnvironmentValue $k
 		}
 	}
 	AfterEach {
@@ -43,11 +53,7 @@ Describe 'Toolchain config getters' {
 		$global:ToolchainAutoprune = $script:prevAutoprune
 		$global:ToolchainAutoupdate = $script:prevAutoupdate
 		foreach ($k in $script:prevEnv.Keys) {
-			if ($null -eq $script:prevEnv[$k]) {
-				Remove-Item "env:$k" -ErrorAction SilentlyContinue
-			} else {
-				Set-Item "env:$k" $script:prevEnv[$k]
-			}
+			Set-TestEnvironmentValue $k $script:prevEnv[$k]
 		}
 	}
 
@@ -59,7 +65,7 @@ Describe 'Toolchain config getters' {
 		$global:ToolchainPath = $null
 		GetToolchainPath | Should -Be 'C:\tc2'
 
-		Remove-Item env:ToolchainPath -ErrorAction SilentlyContinue
+		Set-TestEnvironmentValue 'ToolchainPath' $null
 		$env:LocalAppData = 'C:\Local'
 		GetToolchainPath | Should -Be 'C:\Local\Toolchain'
 	}
@@ -70,13 +76,13 @@ Describe 'Toolchain config getters' {
 		GetToolchainRepo | Should -Be 'C:\repo'
 		$global:ToolchainRepo = $null
 		GetToolchainRepo | Should -Be 'C:\repo2'
-		Remove-Item env:ToolchainRepo -ErrorAction SilentlyContinue
+		Set-TestEnvironmentValue 'ToolchainRepo' $null
 		GetToolchainRepo | Should -Be $null
 	}
 
 	It 'GetToolchainPullPolicy defaults to IfNotPresent' {
 		$global:ToolchainPullPolicy = $null
-		Remove-Item env:ToolchainPullPolicy -ErrorAction SilentlyContinue
+		Set-TestEnvironmentValue 'ToolchainPullPolicy' $null
 		GetToolchainPullPolicy | Should -Be 'IfNotPresent'
 		$env:ToolchainPullPolicy = 'Always'
 		GetToolchainPullPolicy | Should -Be 'Always'

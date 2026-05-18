@@ -75,18 +75,18 @@ Describe 'ConfigurePackage and LoadPackage' {
 	}
 
 	It 'sets env vars and can append/prepend PATH' {
-		$origPath = $env:Path
+		$origPath = Get-ToolchainPathValue
 		try {
 			Mock GetPackageDefinition { @{ env=@{ Path='A;B'; FOO='BAR' } } }
-			$env:Path = 'C'
+			Set-ToolchainPathValue 'C'
 		ConfigurePackage @{ Package='p'; Tag=@{ Latest=$true }; Digest='sha256:' + ('a'*64); Config='default' }
 		$env:FOO | Should -Be 'BAR'
-		$env:Path | Should -Match '^A;B;C$'
-		$env:Path = 'C'
+		Get-ToolchainPathValue | Should -Match '^A;B;C$'
+		Set-ToolchainPathValue 'C'
 		ConfigurePackage @{ Package='p'; Tag=@{ Latest=$true }; Digest='sha256:' + ('a'*64); Config='default' } -AppendPath
-		$env:Path | Should -Match '^C;A;B$'
+		Get-ToolchainPathValue | Should -Match '^C;A;B$'
 		} finally {
-			$env:Path = $origPath
+			Set-ToolchainPathValue $origPath
 			Remove-Item env:FOO -ErrorAction SilentlyContinue
 		}
 	}
@@ -115,11 +115,11 @@ Describe 'ConfigurePackage and LoadPackage' {
 	}
 
 	It 'replaces previous PATH entries when digest changes between loads' {
-		$origPath = $env:Path
+		$origPath = Get-ToolchainPathValue
 		$script:d1 = 'sha256:' + ('1' * 64)
 		$script:d2 = 'sha256:' + ('2' * 64)
 		try {
-			$env:Path = 'BASE'
+			Set-ToolchainPathValue 'BASE'
 			$script:resolveCall = 0
 			Mock ResolvePackageDigest {
 				$script:resolveCall += 1
@@ -136,27 +136,27 @@ Describe 'ConfigurePackage and LoadPackage' {
 
 			$p = @{ Package='p'; Tag=@{ Latest=$true }; Config='default' }
 			LoadPackage $p
-			$env:Path | Should -Be 'C:\pkg\v1\bin;BASE'
+			Get-ToolchainPathValue | Should -Be 'C:\pkg\v1\bin;BASE'
 
 			LoadPackage $p
-			$env:Path | Should -Be 'C:\pkg\v2\bin;BASE'
-			$env:Path | Should -Not -Match ([Regex]::Escape('C:\pkg\v1\bin'))
+			Get-ToolchainPathValue | Should -Be 'C:\pkg\v2\bin;BASE'
+			Get-ToolchainPathValue | Should -Not -Match ([Regex]::Escape('C:\pkg\v1\bin'))
 			$env:FOO | Should -Be 'two'
 			$env:ToolchainLoadedPackages | Should -Be $script:d2
 			$env:ToolchainLoadedPackageRefs | Should -Match 'p:latest::default='
 		} finally {
-			$env:Path = $origPath
+			Set-ToolchainPathValue $origPath
 			Remove-Item env:FOO -ErrorAction SilentlyContinue
 			Remove-Item env:ToolchainLoadedPackageRefs -ErrorAction SilentlyContinue
 		}
 	}
 
 	It 'keeps other ref digests tracked when one ref updates' {
-		$origPath = $env:Path
+		$origPath = Get-ToolchainPathValue
 		$script:d1 = 'sha256:' + ('1' * 64)
 		$script:d2 = 'sha256:' + ('2' * 64)
 		try {
-			$env:Path = 'BASE'
+			Set-ToolchainPathValue 'BASE'
 			$script:defaultCalls = 0
 			Mock ResolvePackageDigest {
 				param([Parameter(ValueFromPipeline)][Collections.Hashtable]$Pkg)
@@ -194,11 +194,11 @@ Describe 'ConfigurePackage and LoadPackage' {
 			$loaded | Should -Be @($script:d1, $script:d2)
 			$env:ToolchainLoadedPackageRefs | Should -Match ([Regex]::Escape("p:latest::alt=$script:d1"))
 			$env:ToolchainLoadedPackageRefs | Should -Match ([Regex]::Escape("p:latest::default=$script:d2"))
-			$env:Path | Should -Match ([Regex]::Escape('C:\pkg\v2\bin'))
-			$env:Path | Should -Match ([Regex]::Escape('C:\pkg\v1\alt'))
-			$env:Path | Should -Not -Match ([Regex]::Escape('C:\pkg\v1\bin'))
+			Get-ToolchainPathValue | Should -Match ([Regex]::Escape('C:\pkg\v2\bin'))
+			Get-ToolchainPathValue | Should -Match ([Regex]::Escape('C:\pkg\v1\alt'))
+			Get-ToolchainPathValue | Should -Not -Match ([Regex]::Escape('C:\pkg\v1\bin'))
 		} finally {
-			$env:Path = $origPath
+			Set-ToolchainPathValue $origPath
 			Remove-Item env:FOO -ErrorAction SilentlyContinue
 			Remove-Item env:BAR -ErrorAction SilentlyContinue
 			Remove-Item env:ToolchainLoadedPackageRefs -ErrorAction SilentlyContinue

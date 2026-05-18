@@ -10,10 +10,73 @@ SPDX-License-Identifier: MPL-2.0
 . $PSScriptRoot\registry.ps1
 . $PSScriptRoot\definition.ps1
 
+$script:ToolchainEnvironmentOverrides = @{}
+
+function Get-ToolchainEnvironmentItems {
+	$vars = [Environment]::GetEnvironmentVariables([EnvironmentVariableTarget]::Process)
+	foreach ($key in $vars.Keys) {
+		[PSCustomObject]@{
+			Name = [string]$key
+			Value = [string]$vars[$key]
+		}
+	}
+}
+
+function Get-ToolchainEnvironmentValue {
+	param(
+		[Parameter(Mandatory)]
+		[string]$Name
+	)
+	$overrideKey = $Name.ToUpperInvariant()
+	if ($script:ToolchainEnvironmentOverrides.ContainsKey($overrideKey)) {
+		return $script:ToolchainEnvironmentOverrides[$overrideKey]
+	}
+
+	$vars = [Environment]::GetEnvironmentVariables([EnvironmentVariableTarget]::Process)
+	foreach ($key in $vars.Keys) {
+		if ([string]::Equals([string]$key, $Name, [StringComparison]::Ordinal)) {
+			return $vars[$key]
+		}
+	}
+	foreach ($key in $vars.Keys) {
+		if ([string]::Equals([string]$key, $Name, [StringComparison]::OrdinalIgnoreCase)) {
+			return $vars[$key]
+		}
+	}
+	return $null
+}
+
+function Set-ToolchainEnvironmentValue {
+	param(
+		[Parameter(Mandatory)]
+		[string]$Name,
+		[AllowNull()]
+		[string]$Value
+	)
+	$overrideKey = $Name.ToUpperInvariant()
+	if ($null -eq $Value) {
+		$script:ToolchainEnvironmentOverrides.Remove($overrideKey)
+	} else {
+		$script:ToolchainEnvironmentOverrides[$overrideKey] = $Value
+	}
+
+	$vars = [Environment]::GetEnvironmentVariables([EnvironmentVariableTarget]::Process)
+	$found = $false
+	foreach ($key in @($vars.Keys)) {
+		if ([string]::Equals([string]$key, $Name, [StringComparison]::OrdinalIgnoreCase)) {
+			[Environment]::SetEnvironmentVariable([string]$key, $Value, [EnvironmentVariableTarget]::Process)
+			$found = $true
+		}
+	}
+	if (-not $found -and $null -ne $Value) {
+		[Environment]::SetEnvironmentVariable($Name, $Value, [EnvironmentVariableTarget]::Process)
+	}
+}
+
 function GetSessionState {
 	return @{
 		Vars = (Get-Variable -Scope Global | ForEach-Object { [psvariable]::new($_.Name, $_.Value) })
-		Env = (Get-ChildItem Env:)
+		Env = (Get-ToolchainEnvironmentItems)
 	}
 }
 
@@ -45,13 +108,13 @@ function ClearSessionState {
 		'PROCESSOR_ARCHITECTURE','NUMBER_OF_PROCESSORS','OS',
 		'ToolchainPath'
 	)
-	foreach ($e in (Get-ChildItem Env:)) {
+	foreach ($e in (Get-ToolchainEnvironmentItems)) {
 		if ($e.Name -notin $defaultEnv) {
-			Remove-Item "env:$($e.Name)" -Force -ErrorAction SilentlyContinue
+			Set-ToolchainEnvironmentValue -Name $e.Name -Value $null
 		}
 	}
-	Remove-Item 'env:ToolchainLoadedPackages' -Force -ErrorAction SilentlyContinue
-	Remove-Item 'env:ToolchainLoadedPackageRefs' -Force -ErrorAction SilentlyContinue
+	Set-ToolchainEnvironmentValue -Name 'ToolchainLoadedPackages' -Value $null
+	Set-ToolchainEnvironmentValue -Name 'ToolchainLoadedPackageRefs' -Value $null
 }
 
 function RestoreSessionState {
@@ -64,7 +127,7 @@ function RestoreSessionState {
 		Set-Variable -Name $v.name -Value $v.value -Scope Global -Force -ErrorAction SilentlyContinue
 	}
 	foreach ($e in $state.env) {
-		Set-Item -Path "env:$($e.name)" -Value $e.value -Force -ErrorAction SilentlyContinue
+		Set-ToolchainEnvironmentValue -Name $e.name -Value $e.value
 	}
 	Remove-Variable "ToolchainSaveState_$GUID" -Force -Scope Global -ErrorAction SilentlyContinue
 }
@@ -77,8 +140,8 @@ function Get-ToolchainPathEnvName {
 
 function Get-ToolchainPathValue {
 	$name = Get-ToolchainPathEnvName
-	$item = Get-Item -LiteralPath "env:$name" -ErrorAction SilentlyContinue
-	if ($item) { return [string]$item.Value }
+	$value = Get-ToolchainEnvironmentValue -Name $name
+	if ($null -ne $value) { return [string]$value }
 	return ''
 }
 
@@ -88,7 +151,7 @@ function Set-ToolchainPathValue {
 		[string]$Value
 	)
 	$name = Get-ToolchainPathEnvName
-	Set-Item -LiteralPath "env:$name" -Value $Value
+	Set-ToolchainEnvironmentValue -Name $name -Value $Value
 }
 
 function Split-ToolchainPath {
@@ -200,7 +263,7 @@ function Set-ToolchainLoadedRefMap {
 	if ($raw) {
 		$env:ToolchainLoadedPackageRefs = $raw
 	} else {
-		Remove-Item 'env:ToolchainLoadedPackageRefs' -Force -ErrorAction SilentlyContinue
+		Set-ToolchainEnvironmentValue -Name 'ToolchainLoadedPackageRefs' -Value $null
 	}
 }
 
@@ -304,7 +367,7 @@ function ConfigurePackage {
 			}
 			Set-ToolchainPathValue "$pre$val$post"
 		} else {
-			Set-Item "env:$k" "$val"
+			Set-ToolchainEnvironmentValue -Name $k -Value "$val"
 		}
 	}
 }
@@ -358,7 +421,7 @@ function LoadPackage {
 	if ($loadedJoined) {
 		$env:ToolchainLoadedPackages = $loadedJoined
 	} else {
-		Remove-Item 'env:ToolchainLoadedPackages' -Force -ErrorAction SilentlyContinue
+		Set-ToolchainEnvironmentValue -Name 'ToolchainLoadedPackages' -Value $null
 	}
 }
 
@@ -370,10 +433,16 @@ function ExecuteScript {
 		[Collections.Hashtable[]]$Pkgs
 	)
 	$GUID = New-Guid
+	$basePathState = Get-Variable -Name 'ToolchainExecBasePath' -Scope Script -ErrorAction SilentlyContinue
+	$hadBasePath = $null -ne $basePathState
+	$previousBasePath = if ($hadBasePath) { $basePathState.Value } else { $null }
 	SaveSessionState $GUID
 	try {
 		ClearSessionState $GUID
-		$basePath = Get-ToolchainPathValue
+		if (-not $hadBasePath) {
+			$script:ToolchainExecBasePath = Get-ToolchainPathValue
+		}
+		$basePath = $script:ToolchainExecBasePath
 		Set-ToolchainPathValue ''
 		foreach ($pkg in $Pkgs) {
 			$pkg.digest = $pkg | ResolvePackageDigest
@@ -395,5 +464,10 @@ function ExecuteScript {
 		& $ScriptBlock
 	} finally {
 		RestoreSessionState $GUID
+		if ($hadBasePath) {
+			$script:ToolchainExecBasePath = $previousBasePath
+		} else {
+			Remove-Variable -Name 'ToolchainExecBasePath' -Scope Script -Force -ErrorAction SilentlyContinue
+		}
 	}
 }
