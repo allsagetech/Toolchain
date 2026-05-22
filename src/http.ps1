@@ -138,8 +138,25 @@ function GetJsonResponse {
 		[Parameter(Mandatory, ValueFromPipeline)]
 		[Net.Http.HttpResponseMessage]$Resp
 	)
-	if (($resp.Content.Headers.ContentType.MediaType -ne 'application/json') -and -not $resp.Content.Headers.ContentType.MediaType.EndsWith('+json')) {
-		throw "want application/json, got $($resp.Content.Headers.ContentType.MediaType)"
+	$body = if ($Resp.Content) { $Resp.Content.ReadAsStringAsync().GetAwaiter().GetResult() } else { '' }
+	if (-not $Resp.IsSuccessStatusCode) {
+		$snippet = if ($body.Length -gt 500) { $body.Substring(0, 500) } else { $body }
+		throw "HTTP $([int]$Resp.StatusCode) $($Resp.ReasonPhrase) while reading JSON response$(if ($snippet) { ": $snippet" })"
 	}
-	return $Resp.Content.ReadAsStringAsync().GetAwaiter().GetResult() | ConvertFrom-Json
+
+	$mediaType = $null
+	if ($Resp.Content -and $Resp.Content.Headers -and $Resp.Content.Headers.ContentType) {
+		$mediaType = $Resp.Content.Headers.ContentType.MediaType
+	}
+	if ($mediaType -and ($mediaType -ne 'application/json') -and -not $mediaType.EndsWith('+json')) {
+		throw "want application/json, got $mediaType"
+	}
+	if ([string]::IsNullOrWhiteSpace($body)) {
+		throw 'empty JSON response'
+	}
+	try {
+		return $body | ConvertFrom-Json
+	} catch {
+		throw "failed to parse JSON response: $_"
+	}
 }

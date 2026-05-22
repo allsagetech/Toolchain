@@ -356,15 +356,25 @@ function GetTagsList {
 			if ($resp) { $resp.Dispose() }
 		}
 
-		if ($allTags) {
-			$allTags.tags += $currentTags.tags
-		} else {
-			$allTags = $currentTags
+		if ($null -eq $currentTags) {
+			throw 'registry returned an empty tag list response'
 		}
-		if ($currentTags.tags.Length -lt $n) {
+		$currentTagValues = @()
+		if ($null -ne $currentTags.tags) {
+			$currentTagValues = @($currentTags.tags)
+		}
+		if ($allTags) {
+			$allTags.tags = @($allTags.tags) + $currentTagValues
+		} else {
+			$allTags = [PSCustomObject]@{
+				name = $currentTags.name
+				tags = $currentTagValues
+			}
+		}
+		if ($currentTagValues.Count -lt $n) {
 			return $allTags
 		}
-		$last = $currentTags.tags[$currentTags.tags.Length - 1]
+		$last = $currentTagValues[$currentTagValues.Count - 1]
 	}
 }
 

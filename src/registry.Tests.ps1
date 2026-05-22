@@ -150,6 +150,19 @@ Describe "Response disposal in registry helpers" {
 		{ GetTagsList } | Should -Throw
 		$script:disposed | Should -BeTrue
 	}
+
+	It "Treats a null registry tags array as an empty list" {
+		Mock GetToolchainRepo { return $null }
+		Mock InvokeIndexRegistryRequest {
+			$resp = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::OK)
+			$resp.Content = [Net.Http.StringContent]::new((ConvertTo-Json @{ name='repo'; tags=$null }))
+			$resp.Content.Headers.ContentType.MediaType = 'application/json'
+			return $resp
+		}
+
+		$t = GetTagsList
+		@($t.tags).Count | Should -Be 0
+	}
 }
 
 Describe "Offline blob lookup" {

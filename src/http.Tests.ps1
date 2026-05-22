@@ -118,4 +118,18 @@ Describe 'GetJsonResponse' {
 		$resp.Content.Headers.ContentType.MediaType = 'text/plain'
 		{ GetJsonResponse -Resp $resp } | Should -Throw
 	}
+
+	It 'parses JSON when content type is missing' {
+		$resp = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::OK)
+		$resp.Content = [Net.Http.StringContent]::new('{"A": 2}')
+		$resp.Content.Headers.ContentType = $null
+		(GetJsonResponse -Resp $resp).A | Should -Be 2
+	}
+
+	It 'throws a useful HTTP status error before checking content type' {
+		$resp = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::BadRequest)
+		$resp.Content = [Net.Http.StringContent]::new('bad request')
+		$resp.Content.Headers.ContentType = $null
+		{ GetJsonResponse -Resp $resp } | Should -Throw '*HTTP 400*bad request*'
+	}
 }
