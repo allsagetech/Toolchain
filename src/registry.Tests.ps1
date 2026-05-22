@@ -228,6 +228,7 @@ Describe "Response disposal in registry helpers" {
 		$script:hubCalls = 0
 		Mock HttpSend {
 			$script:hubCalls += 1
+			$Req.Headers.UserAgent.ToString() | Should -Match 'Toolchain'
 			$payload = if ($script:hubCalls -eq 1) {
 				@{ results=@(@{ name='first-1.0.0' }); next='https://hub.docker.com/next' }
 			} else {
@@ -243,6 +244,30 @@ Describe "Response disposal in registry helpers" {
 		$t.name | Should -Be 'allsagetech/toolchains'
 		$t.tags | Should -Contain 'first-1.0.0'
 		$t.tags | Should -Contain 'second-1.0.0'
+		$script:hubCalls | Should -Be 2
+	}
+
+	It "Tries alternate Docker Hub tag endpoints after an HTML 403" {
+		$script:hubCalls = 0
+		Mock HttpSend {
+			$script:hubCalls += 1
+			if ($script:hubCalls -eq 1) {
+				$resp = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::Forbidden)
+				$resp.Content = [Net.Http.StringContent]::new('<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN">')
+				$resp.Content.Headers.ContentType = $null
+				return $resp
+			}
+
+			$Req.RequestUri.Host | Should -Be 'hub.docker.com'
+			$Req.RequestUri.AbsolutePath | Should -Match '/v2/repositories/'
+			$resp = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::OK)
+			$resp.Content = [Net.Http.StringContent]::new((ConvertTo-Json @{ results=@(@{ name='alternate-1.0.0' }); next=$null }))
+			$resp.Content.Headers.ContentType.MediaType = 'application/json'
+			return $resp
+		}
+
+		$t = GetDockerHubRepositoryTagsList
+		$t.tags | Should -Contain 'alternate-1.0.0'
 		$script:hubCalls | Should -Be 2
 	}
 }

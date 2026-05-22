@@ -40,6 +40,10 @@ function HttpRequest {
 			$req.Headers.TryAddWithoutValidation([string]$k, [string]$Headers[$k]) | Out-Null
 		}
 	}
+	if ($req.Headers.UserAgent.Count -eq 0) {
+		$userAgent = if ($env:TOOLCHAIN_USER_AGENT) { [string]$env:TOOLCHAIN_USER_AGENT } else { 'Toolchain/1 PowerShell' }
+		$req.Headers.TryAddWithoutValidation('User-Agent', $userAgent) | Out-Null
+	}
 	if ($Accept) {
 		foreach ($a in $Accept -split '\s*,\s*') {
 			if ($a) { $req.Headers.Accept.Add([System.Net.Http.Headers.MediaTypeWithQualityHeaderValue]::Parse($a)) }

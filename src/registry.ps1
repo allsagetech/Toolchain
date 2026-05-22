@@ -423,30 +423,46 @@ function GetDockerHubRepositoryTagsList {
 	$parts = $repo.Split('/', 2)
 	$namespace = if ($parts.Count -gt 1) { $parts[0] } else { 'library' }
 	$repository = if ($parts.Count -gt 1) { $parts[1] } else { $parts[0] }
-	$url = "https://hub.docker.com/v2/namespaces/$([uri]::EscapeDataString($namespace))/repositories/$([uri]::EscapeDataString($repository))/tags?page_size=100"
-	$tags = [System.Collections.Generic.List[string]]::new()
+	$escapedNamespace = [uri]::EscapeDataString($namespace)
+	$escapedRepository = [uri]::EscapeDataString($repository)
+	$startUrls = @(
+		"https://hub.docker.com/v2/namespaces/$escapedNamespace/repositories/$escapedRepository/tags?page_size=100",
+		"https://hub.docker.com/v2/repositories/$escapedNamespace/$escapedRepository/tags?page_size=100",
+		"https://registry.hub.docker.com/v2/repositories/$escapedNamespace/$escapedRepository/tags?page_size=100"
+	)
+	$errors = [System.Collections.Generic.List[string]]::new()
 
-	while ($url) {
-		$req = HttpRequest -URL $url -Accept 'application/json'
-		$resp = HttpSend -Req $req
+	foreach ($startUrl in $startUrls) {
+		$tags = [System.Collections.Generic.List[string]]::new()
+		$url = $startUrl
 		try {
-			$page = $resp | GetJsonResponse
-		} finally {
-			if ($resp) { $resp.Dispose() }
-		}
+			while ($url) {
+				$req = HttpRequest -URL $url -Accept 'application/json'
+				$resp = HttpSend -Req $req
+				try {
+					$page = $resp | GetJsonResponse
+				} finally {
+					if ($resp) { $resp.Dispose() }
+				}
 
-		foreach ($item in @($page.results)) {
-			if ($item.name) {
-				$tags.Add([string]$item.name)
+				foreach ($item in @($page.results)) {
+					if ($item.name) {
+						$tags.Add([string]$item.name)
+					}
+				}
+				$url = if ($page.next) { [string]$page.next } else { $null }
 			}
+
+			return [PSCustomObject]@{
+				name = $repo
+				tags = @($tags)
+			}
+		} catch {
+			$errors.Add("${startUrl}: $_") | Out-Null
 		}
-		$url = if ($page.next) { [string]$page.next } else { $null }
 	}
 
-	return [PSCustomObject]@{
-		name = $repo
-		tags = @($tags)
-	}
+	throw "Docker Hub tag API fallback failed. Tried $($startUrls.Count) endpoint(s): $($errors -join ' | ')"
 }
 
 function GetTagsList {

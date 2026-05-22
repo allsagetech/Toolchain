@@ -31,11 +31,17 @@ Describe 'HttpRequest' {
 		$req.Headers.GetValues('X-Test')[0] | Should -Be '1'
 		$req.Headers.Authorization.ToString() | Should -Be 'Bearer t'
 		$req.Headers.Range.ToString() | Should -Be 'bytes=0-9'
+		$req.Headers.UserAgent.ToString() | Should -Match 'Toolchain'
 	}
 
 	It 'omits range upper bound when RangeTo is not specified' {
 		$req = HttpRequest -URL 'https://example.com/a' -Method GET -RangeFrom 5
 		$req.Headers.Range.ToString() | Should -Be 'bytes=5-'
+	}
+
+	It 'allows custom User-Agent headers' {
+		$req = HttpRequest -URL 'https://example.com/a' -Headers @{ 'User-Agent' = 'custom-agent/1.0' }
+		$req.Headers.UserAgent.ToString() | Should -Be 'custom-agent/1.0'
 	}
 }
 
