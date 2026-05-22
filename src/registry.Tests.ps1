@@ -82,6 +82,7 @@ Describe "Challenge-based auth (Bearer) in InvokeRegistryRequest" {
 		}
 
 		$env:TOOLCHAIN_REGISTRY = $null
+		$env:TOOLCHAIN_INDEX_REGISTRY = 'https://registry.example.test'
 		$env:TOOLCHAIN_REPOSITORY = $null
 		$env:TOOLCHAIN_TOKEN = $null
 		$env:TOOLCHAIN_USERNAME = $null
@@ -91,6 +92,48 @@ Describe "Challenge-based auth (Bearer) in InvokeRegistryRequest" {
 	It "Gets tags after Bearer challenge" {
 		$t = GetTagsList
 		$t.tags | Should -Contain 'pkg-1.0.0'
+	}
+}
+
+Describe "Docker Hub pre-auth" {
+	BeforeEach {
+		$script:RegistryAuthHeaderCache = @{}
+		$env:TOOLCHAIN_REGISTRY = $null
+		$env:TOOLCHAIN_INDEX_REGISTRY = $null
+		$env:TOOLCHAIN_REPOSITORY = $null
+		$env:TOOLCHAIN_TOKEN = $null
+		$env:TOOLCHAIN_USERNAME = $null
+		$env:TOOLCHAIN_PASSWORD = $null
+	}
+
+	It "recognizes Docker Hub registry endpoints" {
+		Test-DockerHubRegistryUrl -Url 'https://index.docker.io' | Should -BeTrue
+		Test-DockerHubRegistryUrl -Url 'https://registry-1.docker.io' | Should -BeTrue
+		Test-DockerHubRegistryUrl -Url 'https://registry.example.test' | Should -BeFalse
+	}
+
+	It "sends a bearer token on the first Docker Hub tag-list request" {
+		Mock GetToolchainRepo { return $null }
+		Mock GetBearerTokenFromRealm {
+			$Repo | Should -Be 'allsagetech/toolchains'
+			$Realm | Should -Be 'https://auth.docker.io/token'
+			$Service | Should -Be 'registry.docker.io'
+			$Scope | Should -Be 'repository:allsagetech/toolchains:pull'
+			return 'preauth-token'
+		}
+		Mock HttpSend {
+			param([Net.Http.HttpRequestMessage]$Req)
+			$Req.Headers.Authorization.Scheme | Should -Be 'Bearer'
+			$Req.Headers.Authorization.Parameter | Should -Be 'preauth-token'
+			$resp = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::OK)
+			$resp.Content = [Net.Http.StringContent]::new((ConvertTo-Json @{ name='repo'; tags=@('pkg-1.0.0') }))
+			$resp.Content.Headers.ContentType.MediaType = 'application/json'
+			return $resp
+		}
+
+		$t = GetTagsList
+		$t.tags | Should -Contain 'pkg-1.0.0'
+		Should -Invoke -CommandName GetBearerTokenFromRealm -Exactly -Times 1
 	}
 }
 

@@ -34,6 +34,19 @@ function GetRegistryUrl([string]$Path) {
   return ([Uri]::new($base, $Path)).AbsoluteUri
 }
 
+function Test-DockerHubRegistryUrl {
+	param(
+		[Parameter(Mandatory)][string]$Url
+	)
+
+	try {
+		$hostName = ([Uri]::new($Url)).Host
+		return $hostName -in @('index.docker.io', 'registry-1.docker.io', 'registry.hub.docker.com')
+	} catch {
+		return $false
+	}
+}
+
 function GetRegistryPlatformOs {
 	if ($env:TOOLCHAIN_OS) { return $env:TOOLCHAIN_OS }
 	return 'windows'
@@ -135,6 +148,34 @@ function GetBearerTokenFromRealm {
   } finally {
     $resp.Dispose()
   }
+}
+
+function GetDockerHubBearerAuthHeader {
+	param(
+		[Parameter(Mandatory)][string]$Repo,
+		[Parameter(Mandatory)][string]$RegistryUrl
+	)
+
+	$cacheKey = "$RegistryUrl|$Repo"
+	if ($script:RegistryAuthHeaderCache.ContainsKey($cacheKey)) {
+		return $script:RegistryAuthHeaderCache[$cacheKey]
+	}
+
+	if ($env:TOOLCHAIN_TOKEN) {
+		$hdr = "Bearer $($env:TOOLCHAIN_TOKEN)"
+		$script:RegistryAuthHeaderCache[$cacheKey] = $hdr
+		return $hdr
+	}
+
+	$token = GetBearerTokenFromRealm `
+		-Realm 'https://auth.docker.io/token' `
+		-Service 'registry.docker.io' `
+		-Scope "repository:${Repo}:pull" `
+		-Username $env:TOOLCHAIN_USERNAME `
+		-Pass $env:TOOLCHAIN_PASSWORD
+	$hdr = "Bearer $token"
+	$script:RegistryAuthHeaderCache[$cacheKey] = $hdr
+	return $hdr
 }
 
 function GetRegistryBaseAuthHeader {
@@ -254,6 +295,8 @@ function InvokeIndexRegistryRequest {
 		$authHeader = $null
 		if ($script:RegistryAuthHeaderCache.ContainsKey($cacheKey)) {
 			$authHeader = $script:RegistryAuthHeaderCache[$cacheKey]
+		} elseif (Test-DockerHubRegistryUrl -Url (GetRegistryIndexUrl)) {
+			$authHeader = GetDockerHubBearerAuthHeader -Repo $repo -RegistryUrl (GetRegistryIndexUrl)
 		}
 
 					$reqParams = @{ URL = $Url; Method = $Method; Accept = $Accept; AuthHeader = $authHeader }
@@ -301,6 +344,8 @@ function InvokeRegistryBaseRequest {
 		$authHeader = $null
 		if ($script:RegistryAuthHeaderCache.ContainsKey($cacheKey)) {
 			$authHeader = $script:RegistryAuthHeaderCache[$cacheKey]
+		} elseif (Test-DockerHubRegistryUrl -Url (GetRegistryBaseUrl)) {
+			$authHeader = GetDockerHubBearerAuthHeader -Repo $repo -RegistryUrl (GetRegistryBaseUrl)
 		}
 
 					$reqParams = @{ URL = $Url; Method = $Method; Accept = $Accept; AuthHeader = $authHeader }
