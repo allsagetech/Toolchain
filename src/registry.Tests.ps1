@@ -206,6 +206,45 @@ Describe "Response disposal in registry helpers" {
 		$t = GetTagsList
 		@($t.tags).Count | Should -Be 0
 	}
+
+	It "Falls back to Docker Hub tags API when registry tag list is forbidden" {
+		Mock GetToolchainRepo { return $null }
+		Mock InvokeIndexRegistryRequest {
+			$resp = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::Forbidden)
+			$resp.Content = [Net.Http.StringContent]::new('forbidden')
+			$resp.Content.Headers.ContentType = $null
+			return $resp
+		}
+		Mock GetDockerHubRepositoryTagsList {
+			return [pscustomobject]@{ name='repo'; tags=@('fallback-1.0.0') }
+		}
+
+		$t = GetTagsList
+		$t.tags | Should -Contain 'fallback-1.0.0'
+		Should -Invoke -CommandName GetDockerHubRepositoryTagsList -Exactly -Times 1
+	}
+
+	It "Reads paged Docker Hub repository tag results" {
+		$script:hubCalls = 0
+		Mock HttpSend {
+			$script:hubCalls += 1
+			$payload = if ($script:hubCalls -eq 1) {
+				@{ results=@(@{ name='first-1.0.0' }); next='https://hub.docker.com/next' }
+			} else {
+				@{ results=@(@{ name='second-1.0.0' }); next=$null }
+			}
+			$resp = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::OK)
+			$resp.Content = [Net.Http.StringContent]::new(($payload | ConvertTo-Json -Depth 5))
+			$resp.Content.Headers.ContentType.MediaType = 'application/json'
+			return $resp
+		}
+
+		$t = GetDockerHubRepositoryTagsList
+		$t.name | Should -Be 'allsagetech/toolchains'
+		$t.tags | Should -Contain 'first-1.0.0'
+		$t.tags | Should -Contain 'second-1.0.0'
+		$script:hubCalls | Should -Be 2
+	}
 }
 
 Describe "Offline blob lookup" {

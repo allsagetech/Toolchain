@@ -378,12 +378,7 @@ function InvokeRegistryBaseRequest {
 	}
 }
 
-function GetTagsList {
-	$repoPath = (GetToolchainRepo)
-	if ($repoPath) {
-		return [PSCustomObject]@{ Name = $repoPath; Tags = (Get-ChildItem $repoPath -Directory -Name) }
-	}
-
+function GetRegistryTagsList {
 	$api = "/v2/$(GetRegistryRepoName)/tags/list"
 	$n = 999
 	$last = $null
@@ -420,6 +415,55 @@ function GetTagsList {
 			return $allTags
 		}
 		$last = $currentTagValues[$currentTagValues.Count - 1]
+	}
+}
+
+function GetDockerHubRepositoryTagsList {
+	$repo = GetRegistryRepoName
+	$parts = $repo.Split('/', 2)
+	$namespace = if ($parts.Count -gt 1) { $parts[0] } else { 'library' }
+	$repository = if ($parts.Count -gt 1) { $parts[1] } else { $parts[0] }
+	$url = "https://hub.docker.com/v2/namespaces/$([uri]::EscapeDataString($namespace))/repositories/$([uri]::EscapeDataString($repository))/tags?page_size=100"
+	$tags = [System.Collections.Generic.List[string]]::new()
+
+	while ($url) {
+		$req = HttpRequest -URL $url -Accept 'application/json'
+		$resp = HttpSend -Req $req
+		try {
+			$page = $resp | GetJsonResponse
+		} finally {
+			if ($resp) { $resp.Dispose() }
+		}
+
+		foreach ($item in @($page.results)) {
+			if ($item.name) {
+				$tags.Add([string]$item.name)
+			}
+		}
+		$url = if ($page.next) { [string]$page.next } else { $null }
+	}
+
+	return [PSCustomObject]@{
+		name = $repo
+		tags = @($tags)
+	}
+}
+
+function GetTagsList {
+	$repoPath = (GetToolchainRepo)
+	if ($repoPath) {
+		return [PSCustomObject]@{ Name = $repoPath; Tags = (Get-ChildItem $repoPath -Directory -Name) }
+	}
+
+	try {
+		return GetRegistryTagsList
+	} catch {
+		$shouldFallback = (Test-DockerHubRegistryUrl -Url (GetRegistryIndexUrl)) -and ("$_" -match 'HTTP (401|403)')
+		if (-not $shouldFallback) {
+			throw
+		}
+		Write-Debug "Docker registry tag list failed; falling back to Docker Hub repository tags API: $_"
+		return GetDockerHubRepositoryTagsList
 	}
 }
 
