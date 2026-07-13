@@ -116,7 +116,7 @@ function AsPackage {
         $d = [string]$Matches[2]
         $cfg = if ($Matches[3]) { [string]$Matches[3] } else { 'default' }
 
-        if (-not ($d -match '^[A-Za-z0-9_+.-]+:[0-9a-fA-F]{32,}$')) {
+        if (-not ($d -match '^sha256:[0-9a-fA-F]{64}$')) {
             throw "invalid digest: $d"
         }
 
@@ -203,10 +203,8 @@ function ResolveDockerRef {
 
   if ($Pkg.ContainsKey('Digest') -and $Pkg.Digest) {
     $dg = [string]$Pkg.Digest
-    if (-not $dg.StartsWith('sha256:') -and ($dg -match '^[0-9a-fA-F]{64}$')) {
-      $dg = 'sha256:' + $dg.ToLower()
-    }
-    return $dg
+	if ($dg -match '^[0-9a-fA-F]{64}$') { $dg = 'sha256:' + $dg }
+	return ($dg | ConvertTo-CanonicalSha256Digest)
   }
   $docker = GetDockerTags
 
@@ -438,15 +436,25 @@ function PullPackage {
 		[string]$Output,
 		[switch]$Sign
 	)
-	$dockerRef = $Pkg | ResolveDockerRef
 	$tagStr = $Pkg.Tag | AsTagString
-	$digest = $dockerRef | GetDigestForRef
-	Write-ToolchainInfo "Pulling $($Pkg.Package):$($pkg.Tag | AsTagString)"
-	Write-ToolchainInfo "Digest: $($digest)"
+	$repoPath = GetToolchainRepo
+	$regBase = if ($repoPath) { $null } else { GetRegistryBaseUrl }
+	$repoName = if ($repoPath) { $null } else { GetRegistryRepoName }
+	if (-not $repoPath) {
+		Assert-ToolchainRegistryPolicyAllowed -Action $(if ($Output) { 'save' } else { 'pull' }) -RegistryBaseUrl $regBase -Repository $repoName
+	}
 
-	if (-not $Pkg.Version -and -not (GetToolchainRepo)) {
-		try {
-			$cfg = GetImageConfigJsonFromRef -Ref $dockerRef
+	$dockerRef = $Pkg | ResolveDockerRef
+	$manifest = $null
+	try {
+		$manifest = GetVerifiedManifestResponse -Ref $dockerRef
+		$manifest | DebugRateLimit
+		$digest = $manifest | GetDigest
+		Write-ToolchainInfo "Pulling $($Pkg.Package):$($pkg.Tag | AsTagString)"
+		Write-ToolchainInfo "Digest: $($digest)"
+
+		if (-not $Pkg.Version -and -not $repoPath) {
+			$cfg = GetImageConfigJsonFromRef -Ref $digest -ExpectedManifestDigest $digest
 			$labels = $null
 			if ($cfg -and $cfg.config -and $cfg.config.Labels) { $labels = $cfg.config.Labels }
 			elseif ($cfg -and $cfg.Labels) { $labels = $cfg.Labels }
@@ -455,46 +463,45 @@ function PullPackage {
 				if (-not $ver) { $ver = $labels.'toolchain.packageVersion' }
 				if ($ver) { $Pkg.Version = [string]$ver }
 			}
-		} catch {
-			Write-Debug "failed to read packageVersion label for ${dockerRef}: $($_.Exception.Message)"
 		}
-	}
 
-	$repoPath = GetToolchainRepo
-	$regBase = if ($repoPath) { $null } else { GetRegistryBaseUrl }
-	$repoName = if ($repoPath) { $null } else { GetRegistryRepoName }
-	Assert-ToolchainPolicyAllowed -Action $(if ($Output) { 'save' } else { 'pull' }) -Package $Pkg.Package -Version $Pkg.Version -Tag $tagStr -Digest $digest -RegistryBaseUrl $regBase -Repository $repoName
+		Assert-ToolchainPolicyAllowed -Action $(if ($Output) { 'save' } else { 'pull' }) -Package $Pkg.Package -Version $Pkg.Version -Tag $tagStr -Digest $digest -RegistryBaseUrl $regBase -Repository $repoName
 
-	if (-not $repoPath) {
-		try {
-			$registryHost = ([Uri]::new($regBase)).Host
-		} catch {
-			$registryHost = $regBase
+		if (-not $repoPath) {
+			try {
+				$registryHost = ([Uri]::new($regBase)).Host
+			} catch {
+				$registryHost = $regBase
+			}
+			$repoDigestRef = "${registryHost}/${repoName}@${digest}"
+			Invoke-ToolchainCosignVerify -RepoDigestRef $repoDigestRef
 		}
-		$repoDigestRef = "${registryHost}/${repoName}@${digest}"
-		Invoke-ToolchainCosignVerify -RepoDigestRef $repoDigestRef
-	}
-	$k = 'metadatadb', $digest
-	$manifest = $null
-	try {
+		$k = 'metadatadb', $digest
 		if ([Db]::ContainsKey($k) -and ($m = [Db]::Get($k)) -and $m.Size -and -not $Output) {
 			$size = $m.Size
 		} else {
-			$manifest = $dockerRef | GetManifest
-			$manifest | DebugRateLimit
 			$size = $manifest | GetSize
 			if ($Output) {
 				$outputRefPath = Join-Path $Output $dockerRef
 				MakeDirIfNotExist $outputRefPath | Out-Null
 				$manifestPath = Join-Path (Resolve-Path $outputRefPath).Path 'manifest.json'
-				$fs = [IO.File]::Open($manifestPath, [IO.FileMode]::Create)
+				$tempManifestPath = "$manifestPath.$([Guid]::NewGuid().ToString('N')).tmp"
+				$backupManifestPath = "$manifestPath.$([Guid]::NewGuid().ToString('N')).bak"
 				try {
-					$task = $manifest.Content.CopyToAsync($fs)
-					while (-not $task.IsCompleted) {
-						Start-Sleep -Milliseconds 125
+					$manifestBytes = $manifest.Content.ReadAsByteArrayAsync().GetAwaiter().GetResult()
+					$manifestDigest = Get-ToolchainBytesSha256Digest -Bytes $manifestBytes
+					if ($manifestDigest -ne $digest) {
+						throw "manifest changed after verification: expected $digest, got $manifestDigest"
+					}
+					[IO.File]::WriteAllBytes($tempManifestPath, $manifestBytes)
+					if (Test-Path -LiteralPath $manifestPath) {
+						[IO.File]::Replace($tempManifestPath, $manifestPath, $backupManifestPath)
+					} else {
+						[IO.File]::Move($tempManifestPath, $manifestPath)
 					}
 				} finally {
-					$fs.Close()
+					[IO.File]::Delete($tempManifestPath)
+					[IO.File]::Delete($backupManifestPath)
 				}
 				if ($Sign) {
 					$null = New-ToolchainFileCmsSignature -Path $manifestPath -SignaturePath "${manifestPath}.p7s"
@@ -514,13 +521,15 @@ function PullPackage {
 
 		$Pkg.Digest = $digest
 		$Pkg.Size = $size
+		$contentPath = $Pkg.Digest | ResolvePackagePath
+		$contentMissing = -not (Test-Path -LiteralPath $contentPath -PathType Container)
 		$locks, $status = $Pkg | InstallPackage
 		try {
 			$ref = "$($Pkg.Package):$($Pkg.Tag | AsTagString)"
-			if ($status -eq 'uptodate') {
+			if ($status -eq 'uptodate' -and -not $contentMissing) {
 				Write-ToolchainInfo "Status: Package is up to date for $ref"
 			} else {
-				if ($status -in 'new', 'newer') {
+				if (($status -in 'new', 'newer') -or $contentMissing) {
 					$manifest | SavePackage
 				}
 				$refpath = $Pkg | ResolvePackageRefPath
@@ -528,8 +537,9 @@ function PullPackage {
 				if (Test-Path -LiteralPath $refpath) {
 					Remove-Item -LiteralPath $refpath -Recurse -Force
 				}
-				New-Item -Path $refpath -ItemType (GetToolchainLinkItemType) -Target ($Pkg.Digest | ResolvePackagePath) | Out-Null
-				Write-ToolchainInfo "Status: Downloaded newer package for $ref"
+				New-Item -Path $refpath -ItemType (GetToolchainLinkItemType) -Target $contentPath | Out-Null
+				$message = if ($contentMissing -and $status -eq 'uptodate') { 'Restored package into full-digest content path' } else { 'Downloaded newer package' }
+				Write-ToolchainInfo "Status: $message for $ref"
 			}
 			$locks.Unlock()
 		} finally {
@@ -557,20 +567,43 @@ function SavePackage {
 		$layers = $Resp | GetPackageLayers
 		$digest = if ($Output) { $null } else { $Resp | GetDigest }
 		$temp = @()
-		foreach ($layer in $layers) {
-			try {
-				if ($Output) {
-					$layer.Digest | SaveBlob -Output $Output
-				} else {
-					$temp += $layer.Digest | SaveBlob | ExtractTarGz -Digest $digest
+		try {
+			foreach ($layer in $layers) {
+				try {
+					if ($Output) {
+						$layer.Digest | SaveBlob -Output $Output -ExpectedSize $layer.Size
+					} else {
+						$tmp = $layer.Digest | SaveBlob -ExpectedSize $layer.Size
+						$temp += $tmp
+						$tmp | ExtractTarGz -Digest $digest
+					}
+					"$($layer.Digest.Substring('sha256:'.Length).Substring(0, 12)): Pull complete" + ' ' * 60 | WriteConsole
+				} finally {
+					WriteConsole "`n"
 				}
-				"$($layer.Digest.Substring('sha256:'.Length).Substring(0, 12)): Pull complete" + ' ' * 60 | WriteConsole
-			} finally {
-				WriteConsole "`n"
 			}
-		}
-		foreach ($tmp in $temp) {
-			[IO.File]::Delete($tmp)
+		} catch {
+			if (-not $Output -and $digest) {
+				$contentPath = ResolvePackagePath -Digest $digest
+				$contentItem = Get-Item -LiteralPath $contentPath -Force -ErrorAction SilentlyContinue
+				if ($contentItem -and ($contentItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+					# Windows PowerShell 5.1's non-recursive Remove-Item throws a
+					# NullReferenceException for directory junctions. Directory.Delete
+					# removes the junction itself without traversing its target.
+					if ($PSVersionTable.PSEdition -eq 'Desktop') {
+						[IO.Directory]::Delete($contentPath)
+					} else {
+						Remove-Item -LiteralPath $contentPath -Force
+					}
+				} elseif ($contentItem -and $contentItem.PSIsContainer) {
+					DeleteDirectory $contentPath
+				}
+			}
+			throw
+		} finally {
+			foreach ($tmp in $temp) {
+				[IO.File]::Delete($tmp)
+			}
 		}
 	} finally {
 		SetCursorVisible $true

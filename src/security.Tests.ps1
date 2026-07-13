@@ -213,4 +213,12 @@ Describe 'Assert-ToolchainSignedManifest' {
 		{ Assert-ToolchainSignedManifest -ManifestPath (Join-Path $TestDrive 'm.json') } | Should -Not -Throw
 		Should -Invoke -CommandName Confirm-ToolchainFileCmsSignature -Times 1 -Exactly
 	}
+
+	It 'fails closed when signed manifests are required without configured trust' {
+		Mock Get-ToolchainPolicyRequireSignedManifest { return $true }
+		Mock Get-ToolchainPolicyTrustedSigner { return @() }
+		Mock Confirm-ToolchainFileCmsSignature { throw 'must not verify without trust configuration' }
+		{ Assert-ToolchainSignedManifest -ManifestPath (Join-Path $TestDrive 'm.json') } | Should -Throw '*no trustedSigners are configured*'
+		Should -Invoke -CommandName Confirm-ToolchainFileCmsSignature -Times 0 -Exactly
+	}
 }

@@ -93,8 +93,70 @@ function ResolvePackagePath {
 		[Parameter(Mandatory, ValueFromPipeline)]
 		[string]$Digest
 	)
-	$shortDigest = $digest.Substring('sha256:'.Length).Substring(0, 12)
-	return (Join-Path (GetPwrContentPath) $shortDigest)
+	if ($Digest -notmatch '^sha256:([0-9a-fA-F]{64})$') {
+		throw "invalid sha256 digest: $Digest"
+	}
+
+	$digestHex = $Matches[1].ToLowerInvariant()
+	$contentRoot = GetPwrContentPath
+	# Legacy releases used only the first twelve characters here. Those
+	# directories carry no authoritative ownership marker, so never assign one
+	# to a requested digest: a colliding digest could otherwise claim another
+	# package's bytes. PullPackage performs a verified re-pull into this full
+	# path when upgrading an existing installation.
+	return (Join-Path $contentRoot $digestHex)
+}
+
+function Resolve-ToolchainChildPath {
+	param(
+		[Parameter(Mandatory)][string]$Root,
+		[Parameter(Mandatory)][string]$RelativePath,
+		[switch]$RejectReparsePoints,
+		[switch]$RejectRootReparsePoint
+	)
+
+	if ([string]::IsNullOrWhiteSpace($RelativePath) -or
+		[IO.Path]::IsPathRooted($RelativePath) -or
+		$RelativePath -match '^[\\/]' -or
+		$RelativePath -match ':') {
+		throw "unsafe relative path '$RelativePath'"
+	}
+
+	$segments = @($RelativePath -split '[\\/]' | Where-Object { $_ -ne '' })
+	if ($segments.Count -eq 0 -or $segments -contains '..') {
+		throw "unsafe relative path '$RelativePath'"
+	}
+	foreach ($segment in $segments) {
+		if ($segment -eq '.' -or $segment -match '[\x00-\x1f]' -or $segment.EndsWith('.') -or $segment.EndsWith(' ')) {
+			throw "unsafe relative path '$RelativePath'"
+		}
+	}
+
+	$rootFull = [IO.Path]::GetFullPath($Root).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+	$rootPrefix = $rootFull + [IO.Path]::DirectorySeparatorChar
+	$dest = [IO.Path]::GetFullPath((Join-Path $rootFull ($segments -join [IO.Path]::DirectorySeparatorChar)))
+	if (-not $dest.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+		throw "path escapes root: '$RelativePath'"
+	}
+
+	if ($RejectReparsePoints) {
+		if ($RejectRootReparsePoint) {
+			$rootItem = Get-Item -LiteralPath $rootFull -Force -ErrorAction SilentlyContinue
+			if ($rootItem -and ($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+				throw "root path is a link or reparse point: '$rootFull'"
+			}
+		}
+		$current = $rootFull
+		foreach ($segment in $segments) {
+			$current = Join-Path $current $segment
+			$item = Get-Item -LiteralPath $current -Force -ErrorAction SilentlyContinue
+			if ($item -and ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+				throw "path traverses a link or reparse point: '$RelativePath'"
+			}
+		}
+	}
+
+	return $dest
 }
 
 function MakeDirIfNotExist {

@@ -178,6 +178,9 @@ function Assert-ToolchainSignedManifest {
 	if (-not (Get-ToolchainPolicyRequireSignedManifest)) { return }
 	$sig = "$ManifestPath.p7s"
 	$trusted = Get-ToolchainPolicyTrustedSigner
+	if (-not $trusted -or $trusted.Count -eq 0) {
+		throw 'Signed offline manifests are required, but no trustedSigners are configured in Toolchain.policy.json.'
+	}
 	$null = Confirm-ToolchainFileCmsSignature -Path $ManifestPath -SignaturePath $sig -TrustedThumbprints $trusted
 }
 

@@ -195,12 +195,11 @@ function GetPackageDefinition {
     $root = ResolvePackagePath -Digest $Digest
   }
 
-  $def = $null
-  try {
-    $def = GetToolchainDefinitionFromLabels -Ref $Digest -RootPath $root
-  } catch {
-    $def = $null
-  }
+	$def = if ($Digest.StartsWith('file:///')) {
+		$null
+	} else {
+		GetToolchainDefinitionFromLabels -Ref $Digest -RootPath $root
+	}
   if ($def) { return $def }
 
   $tlcPath = Join-Path $root ".tlc"
@@ -216,10 +215,12 @@ function GetPackageDefinition {
     throw "Package definition not found (labels/.tlc/.pwr). Digest: $Digest. Root contents: $sample"
   }
 
-  return (Get-Content -Raw -LiteralPath $defPath).
-    Replace('${.}', $root.Replace('\','\\')) |
-    ConvertFrom-Json |
-    ConvertTo-HashTable
+	$def = (Get-Content -Raw -LiteralPath $defPath) |
+		ConvertFrom-Json |
+		ConvertTo-HashTable
+	$null = Expand-ToolchainDefinitionRoot -Definition $def -RootPath $root
+	Assert-ToolchainDefinition -Definition $def -Context $defPath
+	return $def
 }
 
 function Get-ToolchainLoadedRefKey {

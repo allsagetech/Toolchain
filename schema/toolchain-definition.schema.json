@@ -1,6 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.allsagetech.com/toolchain/v1/toolchain-definition.schema.json",
   "title": "Toolchain package definition (.tlc/.pwr)",
+  "description": "Version 1 of the Toolchain package-definition contract. The OCI image label io.allsagetech.toolchain.specVersion selects this contract version.",
+  "x-toolchain-spec-version": 1,
   "type": "object",
   "required": [
     "env"
@@ -8,6 +11,9 @@
   "properties": {
     "env": {
       "type": "object",
+      "propertyNames": {
+        "pattern": "\\S"
+      },
       "additionalProperties": {
         "oneOf": [
           {
@@ -18,6 +24,9 @@
             "items": {
               "type": "string"
             }
+          },
+          {
+            "type": "null"
           }
         ]
       }
@@ -31,6 +40,9 @@
     "properties": {
       "env": {
         "type": "object",
+        "propertyNames": {
+          "pattern": "\\S"
+        },
         "additionalProperties": {
           "oneOf": [
             {
@@ -41,6 +53,9 @@
               "items": {
                 "type": "string"
               }
+            },
+            {
+              "type": "null"
             }
           ]
         }

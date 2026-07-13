@@ -256,6 +256,10 @@ Install a locally-built copy to your user module path:
 .\install.ps1
 ```
 
+Package-definition compatibility is governed by the versioned contract in `schema/`. Run the shared valid/invalid fixture corpus when changing definition parsing, labels, or environment semantics. Release automation exports that contract with `scripts/export-package-spec.ps1`.
+
+Security-sensitive changes must preserve the boundaries described in [`SECURITY.md`](SECURITY.md). Cache-layout changes and the legacy short-digest migration are documented in [`doc/cache-migration-v2.md`](doc/cache-migration-v2.md). Tag and artifact publication is documented in [`doc/release-process.md`](doc/release-process.md), and user-visible changes are recorded in [`CHANGELOG.md`](CHANGELOG.md).
+
 ## License
 
 MPL-2.0. See `LICENSE.md`.

@@ -155,6 +155,17 @@ Describe "Platform resolution prefers Windows manifest" {
 		$choice = ResolveManifestToSinglePlatform -Manifest $ml
 		$choice.digest | Should -Be 'sha256:win'
 	}
+
+	It 'fails when the requested platform is absent instead of selecting an arbitrary image' {
+		$ml = @{
+			schemaVersion = 2
+			manifests = @(
+				@{ digest=('sha256:' + ('1' * 64)); size=1; platform=@{ os='linux'; architecture='amd64' } },
+				@{ digest=('sha256:' + ('2' * 64)); size=1; platform=@{ os='linux'; architecture='arm64' } }
+			)
+		}
+		{ ResolveManifestToSinglePlatform -Manifest $ml } | Should -Throw '*requested platform windows/amd64*linux/amd64*linux/arm64*'
+	}
 }
 
 Describe "Response disposal in registry helpers" {
@@ -296,5 +307,165 @@ Describe "Offline blob lookup" {
 		} finally {
 			$resp.Dispose()
 		}
+	}
+}
+
+Describe 'OCI integrity boundaries' {
+	BeforeEach {
+		Mock WriteConsole {}
+		Mock GetToolchainRepo { return $null }
+	}
+
+	It 'rejects a manifest body that does not match its immutable digest' {
+		$expectedBytes = [Text.Encoding]::UTF8.GetBytes('{"schemaVersion":2,"layers":[]}')
+		$expected = Get-ToolchainBytesSha256Digest -Bytes $expectedBytes
+		Mock GetManifest {
+			$resp = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::OK)
+			$resp.Headers.TryAddWithoutValidation('Docker-Content-Digest', $expected) | Out-Null
+			$resp.Content = [Net.Http.StringContent]::new('{"schemaVersion":2,"layers":[{"evil":true}]}')
+			return $resp
+		}
+
+		{ GetVerifiedManifestResponse -Ref $expected } | Should -Throw '*manifest digest* mismatch*'
+	}
+
+	It 'normalizes valid digest headers and rejects non-canonical algorithms or lengths' {
+		$resp = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::OK)
+		try {
+			$resp.Headers.TryAddWithoutValidation('Docker-Content-Digest', ('sha256:' + ('A' * 64))) | Out-Null
+			($resp | GetDigest) | Should -Be ('sha256:' + ('a' * 64))
+		} finally { $resp.Dispose() }
+
+		{ 'sha512:' + ('a' * 64) | ConvertTo-CanonicalSha256Digest } | Should -Throw '*invalid sha256 digest*'
+		{ 'sha256:abc' | ConvertTo-CanonicalSha256Digest } | Should -Throw '*invalid sha256 digest*'
+	}
+
+	It 'rejects an image config body that does not match its descriptor' {
+		$good = [Text.Encoding]::UTF8.GetBytes('{"config":{}}')
+		$expected = Get-ToolchainBytesSha256Digest -Bytes $good
+		Mock GetResolvedManifestJson {
+			return [pscustomobject]@{ config = [pscustomobject]@{ digest=$expected; size=$good.Length; mediaType='application/vnd.oci.image.config.v1+json' } }
+		}
+		Mock GetBlob {
+			$resp = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::OK)
+			$resp.Content = [Net.Http.ByteArrayContent]::new([Text.Encoding]::UTF8.GetBytes('{"config":[]}'))
+			return $resp
+		}
+
+		{ GetImageConfigJsonFromRef -Ref ('sha256:' + ('c' * 64)) } | Should -Throw '*image config digest mismatch*'
+	}
+
+	It 'rejects non-canonical layer descriptors before downloading blobs' {
+		$manifest = '{"schemaVersion":2,"layers":[{"mediaType":"application/vnd.oci.image.layer.v1.tar+gzip","digest":"sha256:short","size":10}]}'
+		$resp = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::OK)
+		try {
+			$resp.Content = [Net.Http.StringContent]::new($manifest)
+			$resp.Content.Headers.ContentType = [Net.Http.Headers.MediaTypeHeaderValue]::new('application/json')
+			{ $resp | GetPackageLayers } | Should -Throw '*invalid sha256 digest*'
+		} finally { $resp.Dispose() }
+	}
+
+	It 'deletes a completed blob whose bytes do not match the layer digest' {
+		$temp = Join-Path $TestDrive 'blob-digest'
+		New-Item -ItemType Directory -Path $temp | Out-Null
+		$good = [Text.Encoding]::UTF8.GetBytes('good')
+		$digest = Get-ToolchainBytesSha256Digest -Bytes $good
+		Mock GetPwrTempPath { $temp }
+		Mock GetBlob {
+			$resp = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::OK)
+			$resp.Content = [Net.Http.ByteArrayContent]::new([Text.Encoding]::UTF8.GetBytes('evil'))
+			return $resp
+		}
+
+		{ SaveBlob -Digest $digest -ExpectedSize 4 } | Should -Throw '*blob digest mismatch*'
+		Test-Path -LiteralPath (Join-Path $temp ($digest.Substring(7) + '.tar.gz')) | Should -BeFalse
+	}
+
+	It 'restarts safely when a server ignores a resume Range request' {
+		$temp = Join-Path $TestDrive 'blob-resume'
+		New-Item -ItemType Directory -Path $temp | Out-Null
+		$bytes = [Text.Encoding]::UTF8.GetBytes('good')
+		$digest = Get-ToolchainBytesSha256Digest -Bytes $bytes
+		$path = Join-Path $temp ($digest.Substring(7) + '.tar.gz')
+		[IO.File]::WriteAllBytes($path, [Text.Encoding]::UTF8.GetBytes('go'))
+		Mock GetPwrTempPath { $temp }
+		$script:starts = @()
+		Mock GetBlob {
+			$script:starts += $StartByte
+			$resp = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::OK)
+			$resp.Content = [Net.Http.ByteArrayContent]::new($bytes)
+			return $resp
+		}
+
+		(SaveBlob -Digest $digest -ExpectedSize 4) | Should -Be $path
+		$script:starts | Should -Be @(2, 0)
+		(Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant() | Should -Be $digest.Substring(7)
+	}
+
+	It 'denies a disallowed registry before any HTTP request is sent' {
+		Mock GetToolchainPolicy { @{ allowedRegistries = @('allowed.example') } }
+		Mock GetRegistryBaseUrl { 'https://denied.example' }
+		Mock GetRegistryRepoName { 'owner/repo' }
+		Mock HttpSend { throw 'must not contact registry' }
+
+		{ GetManifest -Ref 'pkg:latest' } | Should -Throw '*policy denied*registry not allowed*'
+		Should -Invoke -CommandName HttpSend -Exactly -Times 0
+	}
+}
+
+Describe 'Definition label integrity' {
+	BeforeEach {
+		Mock GetToolchainRepo { return $null }
+	}
+
+	It 'fails closed for unsupported or malformed specVersion labels' {
+		Mock GetImageConfigJsonFromRef { [pscustomobject]@{ config = [pscustomobject]@{ Labels = [pscustomobject]@{ 'io.allsagetech.toolchain.specVersion'='2' } } } }
+		{ GetToolchainDefinitionFromLabels -Ref ('sha256:' + ('d' * 64)) -RootPath $TestDrive } | Should -Throw '*newer than this Toolchain supports*'
+
+		Mock GetImageConfigJsonFromRef { [pscustomobject]@{ config = [pscustomobject]@{ Labels = [pscustomobject]@{ 'io.allsagetech.toolchain.specVersion'='garbage' } } } }
+		{ GetToolchainDefinitionFromLabels -Ref ('sha256:' + ('d' * 64)) -RootPath $TestDrive } | Should -Throw '*invalid specVersion*'
+	}
+
+	It 'rejects a definition label path that escapes the package root' {
+		Mock GetImageConfigJsonFromRef { [pscustomobject]@{ config = [pscustomobject]@{ Labels = [pscustomobject]@{ 'io.allsagetech.toolchain.tlcPath'='../outside.tlc' } } } }
+		{ GetToolchainDefinitionFromLabels -Ref ('sha256:' + ('e' * 64)) -RootPath $TestDrive } | Should -Throw '*unsafe toolchain definition path*'
+	}
+
+	It 'rejects a definition label path that traverses an in-root junction' {
+		$rootPath = Join-Path $TestDrive 'label-root'
+		$outside = Join-Path $TestDrive 'label-outside'
+		New-Item -ItemType Directory -Path $rootPath, $outside -Force | Out-Null
+		'{"env":{"ESCAPE":"no"}}' | Set-Content -LiteralPath (Join-Path $outside 'definition.tlc') -NoNewline
+		$linkType = if ([Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT) { 'Junction' } else { 'SymbolicLink' }
+		New-Item -ItemType $linkType -Path (Join-Path $rootPath 'metadata') -Target $outside | Out-Null
+		Mock GetImageConfigJsonFromRef { [pscustomobject]@{ config = [pscustomobject]@{ Labels = [pscustomobject]@{ 'io.allsagetech.toolchain.tlcPath'='metadata/definition.tlc' } } } }
+
+		{ GetToolchainDefinitionFromLabels -Ref ('sha256:' + ('e' * 64)) -RootPath $rootPath } | Should -Throw '*traverses a link or reparse point*'
+	}
+
+	It 'expands a Windows package root safely in an inline JSON label' {
+		Mock GetImageConfigJsonFromRef { [pscustomobject]@{ config = [pscustomobject]@{ Labels = [pscustomobject]@{
+			'io.allsagetech.toolchain.specVersion'='1'
+			'io.allsagetech.toolchain.tlc'='{"env":{"BIN":"${.}/bin"}}'
+		} } } }
+
+		$definition = GetToolchainDefinitionFromLabels -Ref ('sha256:' + ('1' * 64)) -RootPath $TestDrive
+		$definition.env.BIN | Should -Be "$TestDrive/bin"
+	}
+
+	It 'accepts a safe in-root definition path with the matching sha256' {
+		$definitionPath = Join-Path $TestDrive 'metadata\package.tlc'
+		New-Item -ItemType Directory -Path (Split-Path $definitionPath) -Force | Out-Null
+		'{"env":{"SAFE":"yes","PATH":"${.}/bin"}}' | Set-Content -LiteralPath $definitionPath -NoNewline
+		$hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $definitionPath).Hash.ToLowerInvariant()
+		Mock GetImageConfigJsonFromRef { [pscustomobject]@{ config = [pscustomobject]@{ Labels = [pscustomobject]@{
+			'io.allsagetech.toolchain.specVersion'='1'
+			'io.allsagetech.toolchain.tlcPath'='metadata/package.tlc'
+			'io.allsagetech.toolchain.tlcSha256'=$hash
+		} } } }
+
+		$definition = GetToolchainDefinitionFromLabels -Ref ('sha256:' + ('f' * 64)) -RootPath $TestDrive
+		$definition.env.SAFE | Should -Be 'yes'
+		$definition.env.PATH | Should -Be "$TestDrive/bin"
 	}
 }

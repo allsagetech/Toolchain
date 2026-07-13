@@ -6,6 +6,38 @@ SPDX-License-Identifier: MPL-2.0
 
 . $PSScriptRoot\log.ps1
 
+function Expand-ToolchainDefinitionRoot {
+	param(
+		[Parameter(Mandatory)][object]$Definition,
+		[Parameter(Mandatory)][string]$RootPath
+	)
+
+	function Expand-ValueInPlace([object]$Value) {
+		if ($Value -is [Collections.IDictionary]) {
+			foreach ($key in @($Value.Keys)) {
+				$child = $Value[$key]
+				if ($child -is [string]) {
+					$Value[$key] = $child.Replace('${.}', $RootPath)
+				} elseif ($null -ne $child) {
+					Expand-ValueInPlace $child
+				}
+			}
+		} elseif ($Value -is [Collections.IList]) {
+			for ($i = 0; $i -lt $Value.Count; $i++) {
+				$child = $Value[$i]
+				if ($child -is [string]) {
+					$Value[$i] = $child.Replace('${.}', $RootPath)
+				} elseif ($null -ne $child) {
+					Expand-ValueInPlace $child
+				}
+			}
+		}
+	}
+
+	Expand-ValueInPlace $Definition
+	return $Definition
+}
+
 function Assert-ToolchainDefinition {
 	param(
 		[Parameter(Mandatory)][Collections.Hashtable]$Definition,

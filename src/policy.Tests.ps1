@@ -124,6 +124,27 @@ Describe 'Toolchain policy loading and enforcement' {
 		$reason | Should -Match 'repository not allowed'
 	}
 
+	It 'matches registry allowlists by exact scheme, host, and effective port' {
+		$policy = @{ allowedRegistries = @('example.com') }
+		$ok, $reason = Test-ToolchainPolicyAllowsRegistry -Policy $policy -RegistryBaseUrl 'https://example.com:443' -Repository 'repo'
+		$ok | Should -BeTrue
+
+		$ok, $reason = Test-ToolchainPolicyAllowsRegistry -Policy $policy -RegistryBaseUrl 'http://example.com' -Repository 'repo'
+		$ok | Should -BeFalse
+		$ok, $reason = Test-ToolchainPolicyAllowsRegistry -Policy $policy -RegistryBaseUrl 'https://example.com:444' -Repository 'repo'
+		$ok | Should -BeFalse
+
+		$alternate = @{ allowedRegistries = @('https://example.com:444') }
+		$ok, $reason = Test-ToolchainPolicyAllowsRegistry -Policy $alternate -RegistryBaseUrl 'https://example.com:444/' -Repository 'repo'
+		$ok | Should -BeTrue
+	}
+
+	It 'rejects registry origins containing credentials or paths' {
+		$policy = @{ allowedRegistries = @('https://example.com') }
+		{ Test-ToolchainPolicyAllowsRegistry -Policy $policy -RegistryBaseUrl 'https://user:pass@example.com' -Repository 'repo' } | Should -Throw '*without credentials or a path*'
+		{ Test-ToolchainPolicyAllowsRegistry -Policy $policy -RegistryBaseUrl 'https://example.com/v2' -Repository 'repo' } | Should -Throw '*without credentials or a path*'
+	}
+
 	It 'enforces per-package allow/deny and defaultAction' {
 		$policy = @{ defaultAction='deny'; packages = @{ foo = @{ allow = @('1.*') } } }
 		$ok, $reason = Test-ToolchainPolicyAllowsPackage -Policy $policy -Package 'foo' -Version '1.2.3' -Tag '' -Digest ''

@@ -31,8 +31,9 @@ Describe 'GetPackageDefinition' {
 	It 'returns definition from labels when present' {
 		$root = Join-Path $env:TEMP ('pkg-' + [Guid]::NewGuid())
 		New-Item -ItemType Directory -Path $root | Out-Null
+		Mock ResolvePackagePath { $root }
 		Mock GetToolchainDefinitionFromLabels { @{ env = @{ FOO = 'BAR' } } }
-		$def = GetPackageDefinition -Digest ("file:///$root")
+		$def = GetPackageDefinition -Digest ('sha256:' + ('a' * 64))
 		$def.env.FOO | Should -Be 'BAR'
 		Remove-Item -Recurse -Force $root
 	}
@@ -40,7 +41,6 @@ Describe 'GetPackageDefinition' {
 	It 'reads .tlc when label definition is absent' {
 		$root = Join-Path $env:TEMP ('pkg-' + [Guid]::NewGuid())
 		New-Item -ItemType Directory -Path $root | Out-Null
-		Mock GetToolchainDefinitionFromLabels { throw 'no labels' }
 		'{"env":{"ROOT":"${.}"}}' | Set-Content -LiteralPath (Join-Path $root '.tlc')
 		$def = GetPackageDefinition -Digest ("file:///$root<ignored>")
 		$def.env.ROOT | Should -Match ([Regex]::Escape($root))
@@ -51,9 +51,21 @@ Describe 'GetPackageDefinition' {
 		$root = Join-Path $env:TEMP ('pkg-' + [Guid]::NewGuid())
 		New-Item -ItemType Directory -Path $root | Out-Null
 		New-Item -ItemType File -Path (Join-Path $root 'a.txt') | Out-Null
-		Mock GetToolchainDefinitionFromLabels { throw 'no labels' }
 		{ GetPackageDefinition -Digest ("file:///$root") } | Should -Throw '*Package definition not found*Root contents*'
 		Remove-Item -Recurse -Force $root
+	}
+
+	It 'does not fall back to .tlc when OCI label integrity validation fails' {
+		$root = Join-Path $env:TEMP ('pkg-' + [Guid]::NewGuid())
+		New-Item -ItemType Directory -Path $root | Out-Null
+		try {
+			'{"env":{"FALLBACK":"must-not-load"}}' | Set-Content -LiteralPath (Join-Path $root '.tlc')
+			Mock ResolvePackagePath { $root }
+			Mock GetToolchainDefinitionFromLabels { throw 'toolchain definition sha256 mismatch' }
+			{ GetPackageDefinition -Digest ('sha256:' + ('b' * 64)) } | Should -Throw '*sha256 mismatch*'
+		} finally {
+			Remove-Item -Recurse -Force $root
+		}
 	}
 }
 

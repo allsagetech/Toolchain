@@ -1,0 +1,14 @@
+{
+  "env": {
+    "Path": [
+      "${.}/bin",
+      "${.}/tools"
+    ],
+    "TOOLCHAIN_OPTIONAL_VALUE": null
+  },
+  "debug": {
+    "env": {
+      "TOOLCHAIN_MODE": "debug"
+    }
+  }
+}

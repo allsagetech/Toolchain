@@ -161,19 +161,12 @@ function Test-ToolchainPolicyAllowsRegistry {
 	if (-not $Policy) { return $true, $null }
 
 	if ($Policy.allowedRegistries -and $RegistryBaseUrl) {
-		$registryHost = $null
-		try {
-			$u = [Uri]::new($RegistryBaseUrl)
-			$registryHost = $u.Host
-		} catch {
-			$registryHost = $RegistryBaseUrl
-		}
+		$registryOrigin = ConvertTo-ToolchainRegistryOrigin -Value $RegistryBaseUrl -Context 'registry URL'
 		$ok = $false
 		foreach ($r in $Policy.allowedRegistries) {
 			if (-not $r) { continue }
-			$rHost = $null
-			try { $rHost = ([Uri]::new([string]$r)).Host } catch { $rHost = [string]$r }
-			if ($registryHost -ieq $rHost -or $RegistryBaseUrl.TrimEnd('/') -ieq ([string]$r).TrimEnd('/')) { $ok = $true; break }
+			$allowedOrigin = ConvertTo-ToolchainRegistryOrigin -Value ([string]$r) -Context 'allowedRegistries entry'
+			if ($registryOrigin -ceq $allowedOrigin) { $ok = $true; break }
 		}
 		if (-not $ok) { return $false, "registry not allowed by policy: $RegistryBaseUrl" }
 	}
@@ -253,6 +246,40 @@ function Assert-ToolchainPolicyAllowed {
 
 	$ok, $reason = Test-ToolchainPolicyAllowsPackage -Policy $policy -Package $Package -Version $Version -Tag $Tag -Digest $Digest
 	if (-not $ok) { throw "Toolchain policy denied $Action for $($Package): $reason" }
+}
+
+function ConvertTo-ToolchainRegistryOrigin {
+	param(
+		[Parameter(Mandatory)][string]$Value,
+		[string]$Context = 'registry'
+	)
+	$raw = $Value.Trim()
+	if ($raw -notmatch '^[A-Za-z][A-Za-z0-9+.-]*://') { $raw = "https://$raw" }
+	$uri = $null
+	if (-not [Uri]::TryCreate($raw, [UriKind]::Absolute, [ref]$uri) -or
+		$uri.Scheme -notin @('http', 'https') -or
+		-not $uri.Host -or
+		$uri.UserInfo -or
+		($uri.AbsolutePath -and $uri.AbsolutePath -ne '/') -or
+		$uri.Query -or
+		$uri.Fragment) {
+		throw "invalid $Context '$Value' (expected an HTTP(S) origin without credentials or a path)"
+	}
+	$scheme = $uri.Scheme.ToLowerInvariant()
+	$hostName = $uri.DnsSafeHost.ToLowerInvariant()
+	$port = if ($uri.IsDefaultPort) { if ($scheme -eq 'https') { 443 } else { 80 } } else { $uri.Port }
+	return "${scheme}://${hostName}:${port}"
+}
+
+function Assert-ToolchainRegistryPolicyAllowed {
+	param(
+		[Parameter(Mandatory)][string]$Action,
+		[Parameter(Mandatory)][string]$RegistryBaseUrl,
+		[Parameter(Mandatory)][string]$Repository
+	)
+	$policy = GetToolchainPolicy
+	$ok, $reason = Test-ToolchainPolicyAllowsRegistry -Policy $policy -RegistryBaseUrl $RegistryBaseUrl -Repository $Repository
+	if (-not $ok) { throw "Toolchain policy denied ${Action}: $reason" }
 }
 
 function Get-ToolchainPolicyRequireSignedManifest {
