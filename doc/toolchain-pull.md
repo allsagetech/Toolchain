@@ -26,14 +26,19 @@ the range causes a safe restart from byte zero. Completed temporary layer archiv
 are removed after extraction.
 
 Extraction rejects absolute or escaping paths, link traversal, truncated tar
-records, hard links, and OCI whiteout entries. Package images must use layers that
-do not depend on whiteout deletion semantics; whiteouts fail explicitly rather
-than producing a silently incorrect merged filesystem. Resource limits can be lowered for constrained hosts with
+records, unsafe or unresolved hard links, and OCI whiteout entries. Regular-file
+hard links are confined to the package root and may refer forward to later archive
+members. Directory and symbolic-link hard-link targets fail closed because their
+semantics cannot be reproduced safely and consistently across supported filesystems.
+Package images must use layers that do not depend on whiteout deletion semantics;
+whiteouts fail explicitly rather than producing a silently incorrect merged
+filesystem. Resource limits can be lowered for constrained hosts with
 `TOOLCHAIN_MAX_MANIFEST_BYTES`, `TOOLCHAIN_MAX_CONFIG_BYTES`,
 `TOOLCHAIN_MAX_LAYER_BYTES`, `TOOLCHAIN_MAX_PACKAGE_BYTES`,
-`TOOLCHAIN_MAX_EXTRACTED_LAYER_BYTES`, `TOOLCHAIN_MAX_ARCHIVE_ENTRIES`, and
-`TOOLCHAIN_MAX_BLOB_SEGMENTS`; every value is a positive integer byte or count
-limit.
+`TOOLCHAIN_MAX_EXTRACTED_LAYER_BYTES`, `TOOLCHAIN_MAX_ARCHIVE_ENTRIES`,
+`TOOLCHAIN_MAX_PENDING_HARD_LINKS`, and `TOOLCHAIN_MAX_BLOB_SEGMENTS`; every value
+is a positive integer byte or count limit. The unresolved hard-link limit defaults
+to 10,000; backward links to files already extracted do not consume this quota.
 
 Extracted content is stored under the complete SHA-256 digest. Historical
 12-character content directories have no trustworthy ownership marker and are
