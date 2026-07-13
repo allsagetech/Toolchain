@@ -51,8 +51,11 @@ function Set-ToolchainEnvironmentValue {
 		[Parameter(Mandatory)]
 		[string]$Name,
 		[AllowNull()]
-		[string]$Value
+		[object]$Value
 	)
+	# PowerShell 7 coerces $null bound to a [string] parameter into an empty
+	# string. Preserve null through binding so callers can request removal.
+	if ($null -ne $Value) { $Value = [string]$Value }
 	$overrideKey = $Name.ToUpperInvariant()
 	if ($null -eq $Value) {
 		$script:ToolchainEnvironmentOverrides.Remove($overrideKey)
