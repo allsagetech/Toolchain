@@ -9,7 +9,8 @@ BeforeAll {
 
   $script:hasPayload = ($env:TLC_CONTRACT_PACKAGE_NAME -and $env:TLC_CONTRACT_DIGEST)
 
-  $global:ToolchainPath = Join-Path $env:RUNNER_TEMP "toolchain-contract"
+  $contractTemp = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [IO.Path]::GetTempPath() }
+  $global:ToolchainPath = Join-Path $contractTemp "toolchain-contract"
   Remove-Item -LiteralPath $global:ToolchainPath -Recurse -Force -ErrorAction SilentlyContinue
   New-Item -ItemType Directory -Path $global:ToolchainPath -Force | Out-Null
 

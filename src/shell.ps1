@@ -51,8 +51,11 @@ function Set-ToolchainEnvironmentValue {
 		[Parameter(Mandatory)]
 		[string]$Name,
 		[AllowNull()]
-		[string]$Value
+		[object]$Value
 	)
+	# PowerShell 7 coerces $null bound to a [string] parameter into an empty
+	# string. Preserve null through binding so callers can request removal.
+	if ($null -ne $Value) { $Value = [string]$Value }
 	$overrideKey = $Name.ToUpperInvariant()
 	if ($null -eq $Value) {
 		$script:ToolchainEnvironmentOverrides.Remove($overrideKey)
@@ -64,7 +67,11 @@ function Set-ToolchainEnvironmentValue {
 	$found = $false
 	foreach ($key in @($vars.Keys)) {
 		if ([string]::Equals([string]$key, $Name, [StringComparison]::OrdinalIgnoreCase)) {
-			[Environment]::SetEnvironmentVariable([string]$key, $Value, [EnvironmentVariableTarget]::Process)
+			if ($null -eq $Value) {
+				Remove-Item -LiteralPath "Env:$key" -Force -ErrorAction SilentlyContinue
+			} else {
+				[Environment]::SetEnvironmentVariable([string]$key, $Value, [EnvironmentVariableTarget]::Process)
+			}
 			$found = $true
 		}
 	}
@@ -195,12 +202,11 @@ function GetPackageDefinition {
     $root = ResolvePackagePath -Digest $Digest
   }
 
-  $def = $null
-  try {
-    $def = GetToolchainDefinitionFromLabels -Ref $Digest -RootPath $root
-  } catch {
-    $def = $null
-  }
+	$def = if ($Digest.StartsWith('file:///')) {
+		$null
+	} else {
+		GetToolchainDefinitionFromLabels -Ref $Digest -RootPath $root
+	}
   if ($def) { return $def }
 
   $tlcPath = Join-Path $root ".tlc"
@@ -216,10 +222,12 @@ function GetPackageDefinition {
     throw "Package definition not found (labels/.tlc/.pwr). Digest: $Digest. Root contents: $sample"
   }
 
-  return (Get-Content -Raw -LiteralPath $defPath).
-    Replace('${.}', $root.Replace('\','\\')) |
-    ConvertFrom-Json |
-    ConvertTo-HashTable
+	$def = (Get-Content -Raw -LiteralPath $defPath) |
+		ConvertFrom-Json |
+		ConvertTo-HashTable
+	$null = Expand-ToolchainDefinitionRoot -Definition $def -RootPath $root
+	Assert-ToolchainDefinition -Definition $def -Context $defPath
+	return $def
 }
 
 function Get-ToolchainLoadedRefKey {

@@ -57,6 +57,102 @@ function GetRegistryPlatformArch {
 	return 'amd64'
 }
 
+function ConvertTo-CanonicalSha256Digest {
+	param([Parameter(Mandatory, ValueFromPipeline)][string]$Digest)
+	if ($Digest -notmatch '^sha256:([0-9a-fA-F]{64})$') {
+		throw "invalid sha256 digest: $Digest"
+	}
+	return 'sha256:' + $Matches[1].ToLowerInvariant()
+}
+
+function Get-ToolchainBytesSha256Digest {
+	param([Parameter(Mandatory)][byte[]]$Bytes)
+	$sha = [Security.Cryptography.SHA256]::Create()
+	try {
+		$hash = $sha.ComputeHash($Bytes)
+	} finally {
+		$sha.Dispose()
+	}
+	return 'sha256:' + [BitConverter]::ToString($hash).Replace('-', '').ToLowerInvariant()
+}
+
+function Read-ToolchainBoundedResponseBytes {
+	param(
+		[Parameter(Mandatory)][Net.Http.HttpResponseMessage]$Response,
+		[Parameter(Mandatory)][long]$MaximumBytes,
+		[Nullable[long]]$ExpectedSize,
+		[string]$Context = 'response body'
+	)
+	if (-not $Response.Content) { throw "$Context is missing" }
+	if ($Response.Content.Headers.ContentLength -and $Response.Content.Headers.ContentLength -gt $MaximumBytes) {
+		throw "$Context exceeds limit of $MaximumBytes bytes"
+	}
+
+	$input = $Response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
+	$output = [IO.MemoryStream]::new()
+	$buffer = New-Object byte[] 65536
+	try {
+		while ($true) {
+			$read = $input.Read($buffer, 0, $buffer.Length)
+			if ($read -eq 0) { break }
+			if (($output.Length + $read) -gt $MaximumBytes) {
+				throw "$Context exceeds limit of $MaximumBytes bytes"
+			}
+			$output.Write($buffer, 0, $read)
+		}
+		if ($null -ne $ExpectedSize -and $output.Length -ne [long]$ExpectedSize) {
+			throw "$Context size mismatch: expected $([long]$ExpectedSize), got $($output.Length)"
+		}
+		return $output.ToArray()
+	} finally {
+		$output.Dispose()
+		$input.Dispose()
+	}
+}
+
+function Get-ToolchainResponseDigestHeader {
+	param([Parameter(Mandatory)][Net.Http.HttpResponseMessage]$Response)
+	$values = $null
+	if (-not $Response.Headers.TryGetValues('Docker-Content-Digest', [ref]$values)) {
+		return $null
+	}
+	$all = @($values)
+	if ($all.Count -ne 1) { throw 'registry returned multiple Docker-Content-Digest headers' }
+	return ([string]$all[0] | ConvertTo-CanonicalSha256Digest)
+}
+
+function Set-ToolchainBufferedResponseContent {
+	param(
+		[Parameter(Mandatory)][Net.Http.HttpResponseMessage]$Response,
+		[Parameter(Mandatory)][byte[]]$Bytes
+	)
+	$mediaType = $null
+	if ($Response.Content -and $Response.Content.Headers.ContentType) {
+		$mediaType = $Response.Content.Headers.ContentType.MediaType
+	}
+	if ($Response.Content) { $Response.Content.Dispose() }
+	$Response.Content = [Net.Http.ByteArrayContent]::new($Bytes)
+	if ($mediaType) {
+		$Response.Content.Headers.ContentType = [Net.Http.Headers.MediaTypeHeaderValue]::new($mediaType)
+	}
+}
+
+function Assert-ToolchainDescriptor {
+	param(
+		[Parameter(Mandatory)][object]$Descriptor,
+		[Parameter(Mandatory)][string]$Context,
+		[Parameter(Mandatory)][long]$MaximumSize
+	)
+	if (-not $Descriptor.digest) { throw "$Context is missing digest" }
+	$digest = [string]$Descriptor.digest | ConvertTo-CanonicalSha256Digest
+	$size = 0L
+	if ($null -eq $Descriptor.size -or -not [long]::TryParse([string]$Descriptor.size, [ref]$size) -or $size -lt 0) {
+		throw "$Context has invalid size '$($Descriptor.size)'"
+	}
+	if ($size -gt $MaximumSize) { throw "$Context exceeds size limit of $MaximumSize bytes" }
+	return [PSCustomObject]@{ Digest = $digest; Size = $size; MediaType = [string]$Descriptor.mediaType }
+}
+
 $script:RegistryAuthHeaderCache = @{}
 
 function GetBasicAuthHeader {
@@ -470,6 +566,7 @@ function GetTagsList {
 	if ($repoPath) {
 		return [PSCustomObject]@{ Name = $repoPath; Tags = (Get-ChildItem $repoPath -Directory -Name) }
 	}
+	Assert-ToolchainRegistryPolicyAllowed -Action 'list remote packages' -RegistryBaseUrl (GetRegistryBaseUrl) -Repository (GetRegistryRepoName)
 
 	try {
 		return GetRegistryTagsList
@@ -493,10 +590,15 @@ function GetManifest {
 
 	$repoPath = (GetToolchainRepo)
 	if ($repoPath) {
-		$file = Get-Item -LiteralPath (Join-Path (Join-Path $repoPath $Ref) 'manifest.json') -ErrorAction SilentlyContinue
-			if (-not $file -or -not $file.Exists) {
-				return [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::NotFound)
-			}
+		try {
+			$manifestPath = Resolve-ToolchainChildPath -Root $repoPath -RelativePath "$Ref/manifest.json" -RejectReparsePoints
+		} catch {
+			throw "unsafe offline manifest reference '$Ref': $($_.Exception.Message)"
+		}
+		$file = Get-Item -LiteralPath $manifestPath -ErrorAction SilentlyContinue
+		if (-not $file -or -not $file.Exists) {
+			return [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::NotFound)
+		}
 		Assert-ToolchainSignedManifest -ManifestPath $file.FullName
 		$response = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::OK)
 		$response.Headers.Add('Docker-Content-Digest', "sha256:$((Get-FileHash $file).Hash.ToLower())")
@@ -506,6 +608,7 @@ function GetManifest {
 		}
 		return $response
 	}
+	Assert-ToolchainRegistryPolicyAllowed -Action 'fetch manifest' -RegistryBaseUrl (GetRegistryBaseUrl) -Repository (GetRegistryRepoName)
 
 	$api = "/v2/$(GetRegistryRepoName)/manifests/$Ref"
 	$url = GetRegistryUrl $api
@@ -518,6 +621,44 @@ function GetManifest {
 	) -join ', '
 
 	return InvokeRegistryBaseRequest -Url $url -Method $Method -Accept $accept
+}
+
+function GetVerifiedManifestResponse {
+	param(
+		[Parameter(Mandatory)][string]$Ref,
+		[string]$ExpectedDigest,
+		[Nullable[long]]$ExpectedSize
+	)
+	$expected = $null
+	if ($ExpectedDigest) {
+		$expected = $ExpectedDigest | ConvertTo-CanonicalSha256Digest
+	} elseif ($Ref -match '^sha256:') {
+		$expected = $Ref | ConvertTo-CanonicalSha256Digest
+	}
+
+	$resp = GetManifest -Ref $Ref -Method GET
+	try {
+		if (-not $resp.IsSuccessStatusCode) {
+			throw "cannot fetch manifest for ${Ref}: $($resp.ReasonPhrase)"
+		}
+		$maxManifestBytes = Get-ToolchainArchiveLimit -EnvironmentName 'TOOLCHAIN_MAX_MANIFEST_BYTES' -Default 16777216
+		$bytes = Read-ToolchainBoundedResponseBytes -Response $resp -MaximumBytes $maxManifestBytes -ExpectedSize $ExpectedSize -Context "manifest '$Ref'"
+		$actual = Get-ToolchainBytesSha256Digest -Bytes $bytes
+		$headerDigest = Get-ToolchainResponseDigestHeader -Response $resp
+		if ($headerDigest -and $headerDigest -ne $actual) {
+			throw "manifest digest header mismatch for ${Ref}: header $headerDigest, content $actual"
+		}
+		if ($expected -and $expected -ne $actual) {
+			throw "manifest digest mismatch for ${Ref}: expected $expected, got $actual"
+		}
+		Set-ToolchainBufferedResponseContent -Response $resp -Bytes $bytes
+		$null = $resp.Headers.Remove('Docker-Content-Digest')
+		$null = $resp.Headers.TryAddWithoutValidation('Docker-Content-Digest', $actual)
+		return $resp
+	} catch {
+		$resp.Dispose()
+		throw
+	}
 }
 
 function ResolveManifestToSinglePlatform {
@@ -538,7 +679,16 @@ function ResolveManifestToSinglePlatform {
 	} | Select-Object -First 1
 
 	if (-not $candidate) {
-		$candidate = $manifests | Select-Object -First 1
+		$available = @(
+			$manifests | ForEach-Object {
+				if ($_.platform -and $_.platform.os -and $_.platform.architecture) {
+					"$($_.platform.os)/$($_.platform.architecture)"
+				} else {
+					'<unknown>'
+				}
+			} | Sort-Object -Unique
+		) -join ', '
+		throw "no manifest for requested platform ${wantOs}/${wantArch}; available platforms: $available"
 	}
 	return $candidate
 }
@@ -547,11 +697,8 @@ function GetManifestJson {
 	param(
 		[Parameter(Mandatory)][string]$Ref
 	)
-	$resp = GetManifest -Ref $Ref -Method GET
+	$resp = GetVerifiedManifestResponse -Ref $Ref
 	try {
-		if (-not $resp.IsSuccessStatusCode) {
-			throw "cannot fetch manifest for ${Ref}: $($resp.ReasonPhrase)"
-		}
 		return $resp | GetJsonResponse
 	} finally {
 		$resp.Dispose()
@@ -561,21 +708,31 @@ function GetManifestJson {
 function GetResolvedManifestResponse {
 	param(
 		[Parameter(Mandatory)][string]$Ref,
-		[ValidateSet('GET','HEAD')][string]$Method='GET'
+		[ValidateSet('GET','HEAD')][string]$Method='GET',
+		[string]$ExpectedDigest
 	)
 
 	if ($Method -eq 'HEAD') {
 		return (GetManifest -Ref $Ref -Method HEAD)
 	}
 
-	$manifest = GetManifestJson -Ref $Ref
-	$choice = ResolveManifestToSinglePlatform -Manifest $manifest
-
-	if ($choice.digest) {
-		return (GetManifest -Ref $choice.digest -Method GET)
+	$rootResponse = GetVerifiedManifestResponse -Ref $Ref -ExpectedDigest $ExpectedDigest
+	try {
+		$manifest = $rootResponse | GetJsonResponse
+		$choice = ResolveManifestToSinglePlatform -Manifest $manifest
+		if ($choice.digest) {
+			$maxManifestBytes = Get-ToolchainArchiveLimit -EnvironmentName 'TOOLCHAIN_MAX_MANIFEST_BYTES' -Default 16777216
+			$descriptor = Assert-ToolchainDescriptor -Descriptor $choice -Context 'platform manifest descriptor' -MaximumSize $maxManifestBytes
+			$rootResponse.Dispose()
+			$rootResponse = $null
+			return (GetVerifiedManifestResponse -Ref $descriptor.Digest -ExpectedDigest $descriptor.Digest -ExpectedSize $descriptor.Size)
+		}
+		$response = $rootResponse
+		$rootResponse = $null
+		return $response
+	} finally {
+		if ($rootResponse) { $rootResponse.Dispose() }
 	}
-
-	return (GetManifest -Ref $Ref -Method GET)
 }
 
 function GetJsonFromResponse {
@@ -585,9 +742,12 @@ function GetJsonFromResponse {
 }
 
 function GetResolvedManifestJson {
-  param([Parameter(Mandatory)][string]$Ref)
+  param(
+    [Parameter(Mandatory)][string]$Ref,
+    [string]$ExpectedDigest
+  )
 
-  $resp = GetResolvedManifestResponse -Ref $Ref -Method GET
+  $resp = GetResolvedManifestResponse -Ref $Ref -Method GET -ExpectedDigest $ExpectedDigest
   try {
     if (-not $resp.IsSuccessStatusCode) {
       throw "cannot fetch manifest for ${Ref}: $($resp.ReasonPhrase)"
@@ -599,23 +759,33 @@ function GetResolvedManifestJson {
 }
 
 function GetImageConfigJsonFromRef {
-  param([Parameter(Mandatory)][string]$Ref)
+  param(
+    [Parameter(Mandatory)][string]$Ref,
+    [string]$ExpectedManifestDigest
+  )
 
-  $manifest = GetResolvedManifestJson -Ref $Ref
+  $manifest = GetResolvedManifestJson -Ref $Ref -ExpectedDigest $ExpectedManifestDigest
   if (-not $manifest.config -or -not $manifest.config.digest) {
     return $null
   }
 
-  $cfgDigest = [string]$manifest.config.digest
-  $api = "/v2/$(GetRegistryRepoName)/blobs/$cfgDigest"
-  $url = GetRegistryUrl $api
-
-  $resp = InvokeRegistryBaseRequest -Url $url -Method GET -Accept 'application/json'
+	$maxConfigBytes = Get-ToolchainArchiveLimit -EnvironmentName 'TOOLCHAIN_MAX_CONFIG_BYTES' -Default 16777216
+	$descriptor = Assert-ToolchainDescriptor -Descriptor $manifest.config -Context 'image config descriptor' -MaximumSize $maxConfigBytes
+	$resp = GetBlob -Ref $descriptor.Digest -StartByte 0
   try {
     if (-not $resp.IsSuccessStatusCode) {
-      throw "cannot fetch image config blob ${cfgDigest}: $($resp.ReasonPhrase)"
+		throw "cannot fetch image config blob $($descriptor.Digest): $($resp.ReasonPhrase)"
     }
-    return (GetJsonFromResponse -Resp $resp)
+		$bytes = Read-ToolchainBoundedResponseBytes -Response $resp -MaximumBytes $maxConfigBytes -ExpectedSize $descriptor.Size -Context 'image config blob'
+		$actual = Get-ToolchainBytesSha256Digest -Bytes $bytes
+		if ($actual -ne $descriptor.Digest) {
+			throw "image config digest mismatch: expected $($descriptor.Digest), got $actual"
+		}
+		try {
+			return ([Text.Encoding]::UTF8.GetString($bytes) | ConvertFrom-Json)
+		} catch {
+			throw "failed to parse image config JSON: $_"
+		}
   } finally {
     $resp.Dispose()
   }
@@ -626,6 +796,10 @@ function GetToolchainDefinitionFromLabels {
     [Parameter(Mandatory)][string]$Ref,
     [Parameter(Mandatory)][string]$RootPath
   )
+	# Offline bundles intentionally contain the verified manifest and package
+	# layers, not the image config blob. Definitions therefore come from the
+	# extracted .tlc/.pwr file in offline mode.
+	if (GetToolchainRepo) { return $null }
 
   $cfg = GetImageConfigJsonFromRef -Ref $Ref
   if (-not $cfg) { return $null }
@@ -641,7 +815,9 @@ function GetToolchainDefinitionFromLabels {
   if (-not $spec) { $spec = $labels.'toolchain.specVersion' }
   if ($spec) {
     $want = 0
-    try { $want = [int]$spec } catch { $want = 0 }
+		if (-not [int]::TryParse([string]$spec, [ref]$want) -or $want -lt 1) {
+			throw "package has invalid specVersion '$spec'"
+		}
     $supported = 1
     if ($want -gt $supported) {
       throw "package specVersion $want is newer than this Toolchain supports ($supported). Update Toolchain."
@@ -653,8 +829,8 @@ function GetToolchainDefinitionFromLabels {
 
   if ($tlcLabel) {
     $json = [string]$tlcLabel
-    $json = $json.Replace('${.}', $RootPath)
     $def = ($json | ConvertFrom-Json | ConvertTo-HashTable)
+	$null = Expand-ToolchainDefinitionRoot -Definition $def -RootPath $RootPath
     Assert-ToolchainDefinition -Definition $def -Context "labels($Ref)"
     return $def
   }
@@ -668,23 +844,30 @@ function GetToolchainDefinitionFromLabels {
   if ($tlcPathLabel) {
     $rel = ([string]$tlcPathLabel).Trim()
     if ($rel.StartsWith('/')) { $rel = $rel.Substring(1) }
-    $tlcFile = Join-Path $RootPath $rel
+		try {
+			$tlcFile = Resolve-ToolchainChildPath -Root $RootPath -RelativePath $rel -RejectReparsePoints -RejectRootReparsePoint
+		} catch {
+			throw "unsafe toolchain definition path '$tlcPathLabel': $($_.Exception.Message)"
+		}
 
-    if (-not (Test-Path $tlcFile)) {
+		if (-not (Test-Path -LiteralPath $tlcFile -PathType Leaf)) {
       throw "toolchain definition file not found at '$tlcFile' (label: $tlcPathLabel)"
     }
 
     if ($tlcSha256Label) {
       $expected = ([string]$tlcSha256Label).Trim().ToLower()
-      $actual   = (Get-FileHash -Algorithm SHA256 -Path $tlcFile).Hash.ToLower()
+		if ($expected -notmatch '^[0-9a-f]{64}$') {
+			throw "invalid toolchain definition sha256 '$tlcSha256Label'"
+		}
+		$actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $tlcFile).Hash.ToLower()
       if ($actual -ne $expected) {
         throw "toolchain definition sha256 mismatch for '$tlcFile': expected $expected, got $actual"
       }
     }
 
-    $json = (Get-Content -Path $tlcFile -Raw)
-    $json = $json.Replace('${.}', $RootPath)
+		$json = (Get-Content -LiteralPath $tlcFile -Raw)
     $def = ($json | ConvertFrom-Json | ConvertTo-HashTable)
+		$null = Expand-ToolchainDefinitionRoot -Definition $def -RootPath $RootPath
     $ctx = ("file({0}:{1})" -f $Ref, $tlcPathLabel)
     Assert-ToolchainDefinition -Definition $def -Context $ctx
     return $def
@@ -727,23 +910,41 @@ function GetBlob {
 		[string]$Ref,
 		[long]$StartByte
 	)
+	$Ref = $Ref | ConvertTo-CanonicalSha256Digest
+	if ($StartByte -lt 0) { throw 'blob range start cannot be negative' }
 	$repoPath = (GetToolchainRepo)
 	if ($repoPath) {
 		$blobName = "$($Ref.Substring('sha256:'.Length)).tar.gz"
-		$files = @(Get-ChildItem -Path $repoPath -Recurse -File -Filter $blobName -ErrorAction SilentlyContinue)
+		$repoFull = [IO.Path]::GetFullPath($repoPath).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+		$repoPrefix = $repoFull + [IO.Path]::DirectorySeparatorChar
+		$files = @(
+			foreach ($candidate in @(Get-ChildItem -LiteralPath $repoPath -Recurse -File -Filter $blobName -ErrorAction SilentlyContinue)) {
+				$candidateFull = [IO.Path]::GetFullPath($candidate.FullName)
+				if (-not $candidateFull.StartsWith($repoPrefix, [StringComparison]::OrdinalIgnoreCase)) { continue }
+				$relative = $candidateFull.Substring($repoPrefix.Length)
+				try {
+					$safePath = Resolve-ToolchainChildPath -Root $repoFull -RelativePath $relative -RejectReparsePoints
+					if ($safePath -eq $candidateFull) { $candidate }
+				} catch {
+					Write-Debug "Skipping unsafe offline blob candidate '$candidateFull': $($_.Exception.Message)"
+				}
+			}
+		)
 		$file = $files | Select-Object -First 1
 		if (-not $file -or -not $file.Exists -or $file.Length -le $StartByte) {
 			return [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::NotFound)
 		}
 		$fs = [IO.File]::Open($file.FullName, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
 		$fs.Seek($StartByte, [IO.SeekOrigin]::Begin) | Out-Null
-		$response = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::OK)
+		$status = if ($StartByte -gt 0) { [Net.HttpStatusCode]::PartialContent } else { [Net.HttpStatusCode]::OK }
+		$response = [Net.Http.HttpResponseMessage]::new($status)
 		$response.Headers.Add('Docker-Content-Digest', "sha256:$((Get-FileHash $file.FullName).Hash.ToLower())")
 		$response.Content = [Net.Http.StreamContent]::new($fs)
 		$response.Content.Headers.ContentType = [Net.Http.Headers.MediaTypeHeaderValue]::new('application/octet-stream')
 		$response.Content.Headers.ContentRange = [Net.Http.Headers.ContentRangeHeaderValue]::new($StartByte, $file.Length - 1, $file.Length)
 		return $response
 	}
+	Assert-ToolchainRegistryPolicyAllowed -Action 'fetch blob' -RegistryBaseUrl (GetRegistryBaseUrl) -Repository (GetRegistryRepoName)
 
 	$api = "/v2/$(GetRegistryRepoName)/blobs/$Ref"
 	$url = GetRegistryUrl $api
@@ -768,20 +969,9 @@ function GetDigest {
 		[Parameter(Mandatory, ValueFromPipeline)]
 		[Net.Http.HttpResponseMessage]$Resp
 	)
-	$values = $null
-	if ($Resp.Headers.TryGetValues('Docker-Content-Digest', [ref]$values)) {
-		return $values
-	}
-	if ($Resp.Headers.TryGetValues('docker-content-digest', [ref]$values)) {
-		return $values
-	}
-	foreach ($k in $Resp.Headers.Keys) {
-		if ($k -ieq 'Docker-Content-Digest') {
-			[void]$Resp.Headers.TryGetValues($k, [ref]$values)
-			return $values
-		}
-	}
-	throw "Missing Docker-Content-Digest header in registry response."
+	$digest = Get-ToolchainResponseDigestHeader -Response $Resp
+	if (-not $digest) { throw 'Missing Docker-Content-Digest header in registry response.' }
+	return $digest
 }
 
 
@@ -809,7 +999,9 @@ function GetPackageLayers {
 
 	$layerResp = $null
 	if ($choice.digest) {
-		$layerResp = GetManifest -Ref $choice.digest -Method GET
+		$maxManifestBytes = Get-ToolchainArchiveLimit -EnvironmentName 'TOOLCHAIN_MAX_MANIFEST_BYTES' -Default 16777216
+		$descriptor = Assert-ToolchainDescriptor -Descriptor $choice -Context 'platform manifest descriptor' -MaximumSize $maxManifestBytes
+		$layerResp = GetVerifiedManifestResponse -Ref $descriptor.Digest -ExpectedDigest $descriptor.Digest -ExpectedSize $descriptor.Size
 		try {
 			$manifest = $layerResp | GetJsonResponse
 		} finally {
@@ -818,11 +1010,22 @@ function GetPackageLayers {
 	}
 
 	$layers = $manifest.layers
+	if (-not $layers) { throw 'resolved image manifest does not contain layers' }
 	$packageLayers = [System.Collections.Generic.List[PSObject]]::new()
+	$maxLayerBytes = Get-ToolchainArchiveLimit -EnvironmentName 'TOOLCHAIN_MAX_LAYER_BYTES' -Default 8589934592
+	$maxPackageBytes = Get-ToolchainArchiveLimit -EnvironmentName 'TOOLCHAIN_MAX_PACKAGE_BYTES' -Default 17179869184
+	$totalPackageBytes = 0L
 	for ($i = 0; $i -lt $layers.Length; $i++) {
 		$mt = $layers[$i].mediaType
 		$isLayer = ($mt -eq 'application/vnd.docker.image.rootfs.diff.tar.gzip') -or ($mt -eq 'application/vnd.oci.image.layer.v1.tar+gzip')
-		if ($isLayer) { $packageLayers.Add($layers[$i]) }
+		if ($isLayer) {
+			$descriptor = Assert-ToolchainDescriptor -Descriptor $layers[$i] -Context "layer descriptor $i" -MaximumSize $maxLayerBytes
+			$totalPackageBytes += $descriptor.Size
+			if ($totalPackageBytes -gt $maxPackageBytes) {
+				throw "package layers exceed TOOLCHAIN_MAX_PACKAGE_BYTES ($maxPackageBytes bytes)"
+			}
+			$packageLayers.Add($descriptor)
+		}
 	}
 	return $packageLayers
 }
@@ -844,37 +1047,99 @@ function SaveBlob {
 	param (
 		[Parameter(Mandatory, ValueFromPipeline)]
 		[string]$Digest,
-		[String]$Output
+		[String]$Output,
+		[Nullable[long]]$ExpectedSize
 	)
+	$Digest = $Digest | ConvertTo-CanonicalSha256Digest
 	$sha256 = $Digest.Substring('sha256:'.Length)
+	$maxLayerBytes = Get-ToolchainArchiveLimit -EnvironmentName 'TOOLCHAIN_MAX_LAYER_BYTES' -Default 8589934592
+	if ($null -ne $ExpectedSize -and ([long]$ExpectedSize -lt 0 -or [long]$ExpectedSize -gt $maxLayerBytes)) {
+		throw "blob size $([long]$ExpectedSize) exceeds limit of $maxLayerBytes bytes"
+	}
 	$basePath = if ($Output) { (Resolve-Path $Output).Path } else { GetPwrTempPath }
 	$path = Join-Path $basePath "$sha256.tar.gz"
-	if ((Test-Path $path) -and (Get-FileHash $path).Hash -eq $sha256) {
-		return $path
+	if (Test-Path -LiteralPath $path) {
+		$existing = Get-Item -LiteralPath $path
+		if ($existing.Length -le $maxLayerBytes -and
+			($null -eq $ExpectedSize -or $existing.Length -eq [long]$ExpectedSize) -and
+			(Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash -ieq $sha256) {
+			return $path
+		}
 	}
 	MakeDirIfNotExist (Split-Path $path) | Out-Null
-	$fs = [IO.File]::Open($path, [IO.FileMode]::OpenOrCreate)
+	$fs = [IO.File]::Open($path, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+	if ($fs.Length -gt $maxLayerBytes -or ($null -ne $ExpectedSize -and $fs.Length -ge [long]$ExpectedSize)) {
+		$fs.SetLength(0)
+	}
 	$fs.Seek(0, [IO.SeekOrigin]::End) | Out-Null
+	$totalSize = if ($null -ne $ExpectedSize) { [long]$ExpectedSize } else { $null }
+	$maxSegments = Get-ToolchainArchiveLimit -EnvironmentName 'TOOLCHAIN_MAX_BLOB_SEGMENTS' -Default 1024
+	$segments = 0L
 	try {
 		do {
-			$resp = GetBlob -Ref $Digest -StartByte $fs.Length
+			$segments += 1
+			if ($segments -gt $maxSegments) { throw "blob download exceeded TOOLCHAIN_MAX_BLOB_SEGMENTS ($maxSegments requests)" }
+			$startByte = $fs.Length
+			$resp = GetBlob -Ref $Digest -StartByte $startByte
 			try {
 				if (-not $resp.IsSuccessStatusCode) {
 					throw "cannot download blob $($Digest): $($resp.ReasonPhrase)"
 				}
-				$size = if ($resp.Content.Headers.ContentRange.HasLength) { $resp.Content.Headers.ContentRange.Length } else { $resp.Content.Headers.ContentLength + $fs.Length }
-				$task = $resp.Content.CopyToAsync($fs)
-				while (-not $task.IsCompleted) {
-					$sha256.Substring(0, 12) + ': Downloading ' + (GetProgress -Current $fs.Length -Total $size) + '  ' | WriteConsole
-					Start-Sleep -Milliseconds 125
+				if ($startByte -gt 0 -and $resp.StatusCode -ne [Net.HttpStatusCode]::PartialContent) {
+					$fs.SetLength(0)
+					continue
+				}
+
+				$contentRange = $resp.Content.Headers.ContentRange
+				if ($contentRange) {
+					if (-not $contentRange.HasRange -or $contentRange.From -ne $startByte) {
+						throw "invalid Content-Range for blob ${Digest}: $contentRange"
+					}
+					if ($contentRange.HasLength) {
+						if ($null -ne $totalSize -and $totalSize -ne $contentRange.Length) {
+							throw "blob size mismatch: descriptor $totalSize, response $($contentRange.Length)"
+						}
+						$totalSize = [long]$contentRange.Length
+					}
+				}
+				if ($null -eq $totalSize) {
+					if ($null -eq $resp.Content.Headers.ContentLength) { throw 'blob response did not include a total size' }
+					$totalSize = $startByte + [long]$resp.Content.Headers.ContentLength
+				}
+				if ($totalSize -gt $maxLayerBytes) { throw "blob exceeds limit of $maxLayerBytes bytes" }
+				if ($startByte -gt $totalSize) { throw "blob range starts beyond expected size $totalSize" }
+
+				$stream = $resp.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
+				$buffer = New-Object byte[] 65536
+				try {
+					while ($true) {
+						$read = $stream.Read($buffer, 0, $buffer.Length)
+						if ($read -eq 0) { break }
+						if (($fs.Length + $read) -gt $totalSize -or ($fs.Length + $read) -gt $maxLayerBytes) {
+							throw "blob response exceeded expected size $totalSize"
+						}
+						$fs.Write($buffer, 0, $read)
+						$sha256.Substring(0, 12) + ': Downloading ' + (GetProgress -Current $fs.Length -Total $totalSize) + '  ' | WriteConsole
+					}
+				} finally {
+					$stream.Dispose()
+				}
+				if ($fs.Length -eq $startByte -and $fs.Length -lt $totalSize) {
+					throw "blob download made no progress at byte $startByte"
 				}
 			} finally {
 				$resp.Dispose()
 			}
-		} while ($fs.Length -lt $size)
-		$sha256.Substring(0, 12) + ': Downloading ' + (GetProgress -Current $fs.Length -Total $size) + '  ' | WriteConsole
+		} while ($fs.Length -lt $totalSize)
+		if ($fs.Length -ne $totalSize) { throw "blob size mismatch: expected $totalSize, got $($fs.Length)" }
+		$sha256.Substring(0, 12) + ': Downloading ' + (GetProgress -Current $fs.Length -Total $totalSize) + '  ' | WriteConsole
 	} finally {
 		$fs.Close()
+	}
+	$actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash.ToLowerInvariant()
+	if ($actual -ne $sha256) {
+		[IO.File]::Delete($path)
+		throw "blob digest mismatch: expected sha256:$sha256, got sha256:$actual"
 	}
 	return $path
 }

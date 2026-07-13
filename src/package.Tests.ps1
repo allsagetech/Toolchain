@@ -505,16 +505,21 @@ Describe 'PullPackage' {
 		$script:testRoot = (Resolve-Path "$PSScriptRoot\..\test").Path
 		$script:testPath = "$testRoot\pull_package_test"
 		BeforeAll {
+			$script:pullDigest = 'sha256:' + ('0' * 64)
 			Mock ResolveDockerRef { 'none' }
-
-			Mock GetManifest { [Net.Http.HttpResponseMessage]::new() }
-			Mock GetDigest { 'sha256:00000000000000000000' }
+			Mock GetVerifiedManifestResponse {
+				$response = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::OK)
+				$response.Headers.TryAddWithoutValidation('Docker-Content-Digest', $script:pullDigest) | Out-Null
+				$response.Content = [Net.Http.StringContent]::new('{"schemaVersion":2,"layers":[]}')
+				return $response
+			}
+			Mock GetImageConfigJsonFromRef { $null }
 			Mock DebugRateLimit {}
 			Mock GetSize {}
 			Mock Write-ToolchainInfo {}
 			Mock InstallPackage { @(New-MockObject -Type 'System.Object' -Methods @{Unlock = {}; Revert = {}}), 'new' }
 			Mock SavePackage {
-				$pkgPath = (@{} | ResolveDockerRef |GetManifest | GetDigest) | ResolvePackagePath
+				$pkgPath = $script:pullDigest | ResolvePackagePath
 				MakeDirIfNotExist $pkgPath | Out-Null
 				Set-Content -Path "$pkgPath\file.txt" -Value 'abc123'
 			}
@@ -523,8 +528,8 @@ Describe 'PullPackage' {
 			}
 		}
 		AfterEach {
-			[IO.Directory]::Delete("$testPath\ref\somepkg")
-			[IO.Directory]::Delete($testPath, $true)
+			if (Test-Path -LiteralPath "$testPath\ref\somepkg") { [IO.Directory]::Delete("$testPath\ref\somepkg") }
+			if (Test-Path -LiteralPath $testPath) { [IO.Directory]::Delete($testPath, $true) }
 		}
 		It 'No Exist Creates New' {
 			$pkg = @{
@@ -532,7 +537,7 @@ Describe 'PullPackage' {
 				Tag = @{ Latest = $true }
 			}
 			$pkg | PullPackage
-			$want = (Get-FileHash "$testPath\content\000000000000\file.txt").Hash
+			$want = (Get-FileHash (Join-Path (Join-Path "$testPath\content" ('0' * 64)) 'file.txt')).Hash
 			$got = (Get-FileHash "$testPath\ref\somepkg\file.txt").Hash
 			$got | Should -Be $want
 		}
@@ -546,26 +551,34 @@ Describe 'PullPackage' {
 				Tag = @{ Latest = $true }
 			}
 			$pkg | PullPackage
-			$want = (Get-FileHash "$testPath\content\000000000000\file.txt").Hash
+			$want = (Get-FileHash (Join-Path (Join-Path "$testPath\content" ('0' * 64)) 'file.txt')).Hash
 			$got = (Get-FileHash "$testPath\ref\somepkg\file.txt").Hash
 			$got | Should -Be $want
 		}
 	}
 	Context 'DB Contains Key' {
 		BeforeAll {
+			$script:cachedDigest = 'sha256:' + ('f' * 64)
 			New-Item -ItemType Directory -Path "$root\toolchain\cache" -ErrorAction Ignore | Out-Null
 
 			$script:oldDbDir = [Db]::Dir
 			[Db]::Dir = "$root\toolchain\cache"
 			[Db]::Init()
-			[Db]::Put(@('metadatadb','f12345'), @{ Size = 123 })
+			[Db]::Put(@('metadatadb',$script:cachedDigest), @{ Size = 123 })
 			Mock ResolveDockerRef { 'none' }
-			Mock GetDigestForRef { 'f12345' }
+			Mock GetVerifiedManifestResponse {
+				$response = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::OK)
+				$response.Headers.TryAddWithoutValidation('Docker-Content-Digest', $script:cachedDigest) | Out-Null
+				$response.Content = [Net.Http.StringContent]::new('{"schemaVersion":2,"layers":[]}')
+				return $response
+			}
+			Mock GetImageConfigJsonFromRef { $null }
 			Mock Write-ToolchainInfo {}
 			Mock InstallPackage { @(New-MockObject -Type 'System.Object' -Methods @{Unlock = {}; Revert = {}}), 'ref' }
 			Mock MakeDirIfNotExist {}
 			Mock SavePackage {}
-			Mock ResolvePackagePath {}
+			Mock ResolvePackagePath { "$root\toolchain\content\existing" }
+			New-Item -ItemType Directory -Path "$root\toolchain\content\existing" -Force | Out-Null
 			Mock New-Item {}
 		}
 		AfterAll {
@@ -580,6 +593,21 @@ Describe 'PullPackage' {
 			$pkg | PullPackage
 			Should -Invoke -CommandName 'SavePackage' -Exactly -Times 0
 		}
+
+		It 'verified re-pulls when only a legacy content path exists' {
+			$missingFullPath = "$root\toolchain\content\$($script:cachedDigest.Substring(7))"
+			Mock ResolvePackagePath { $missingFullPath }
+			Mock InstallPackage { @(New-MockObject -Type 'System.Object' -Methods @{Unlock = {}; Revert = {}}), 'uptodate' }
+			$legacyPath = "$root\toolchain\content\$($script:cachedDigest.Substring(7, 12))"
+			[IO.Directory]::CreateDirectory($legacyPath) | Out-Null
+			[IO.File]::WriteAllText((Join-Path $legacyPath 'owner.txt'), 'legacy bytes')
+
+			$pkg = @{ Package = 'somepkg'; Tag = @{ Latest = $true } }
+			$pkg | PullPackage
+
+			Should -Invoke -CommandName 'SavePackage' -Exactly -Times 1
+			(Get-Content -LiteralPath (Join-Path $legacyPath 'owner.txt') -Raw).Trim() | Should -Be 'legacy bytes'
+		}
 	}
 }
 
@@ -590,7 +618,7 @@ Describe 'RemovePackage' {
 		BeforeAll {
 			Mock ResolveDockerRef { 'none' }
 			Mock Write-ToolchainInfo {}
-			Mock UninstallPackage { @(New-MockObject -Type 'System.Object' -Methods @{Unlock = {}; Revert = {}}), 'sha256:00000000000000000000', $null }
+			Mock UninstallPackage { @(New-MockObject -Type 'System.Object' -Methods @{Unlock = {}; Revert = {}}), ('sha256:' + ('0' * 64)), $null }
 			Mock GetToolchainPath {
 				$testPath
 			}
@@ -631,24 +659,23 @@ Describe 'SavePackage' {
 		$script:testPath = "$testRoot\save_package_test"
 		BeforeAll {
 			Mock ResolveDockerRef { 'none' }
-			Mock GetDigestForRef { 'sha256:00000000000000000000' }
+			$script:saveManifestText = 'none manifest'
+			$script:saveDigest = Get-ToolchainBytesSha256Digest -Bytes ([Text.Encoding]::UTF8.GetBytes($script:saveManifestText))
 
-			Mock GetManifest {
+			Mock GetVerifiedManifestResponse {
 				param(
-					[Parameter(ValueFromPipeline)]
 					[String]$Ref,
-					[String]$Method,
 					[Parameter(ValueFromRemainingArguments)]
 					[Object[]]$Remaining
 				)
 				$null = $Ref
-				$null = $Method
 				$null = $Remaining
 				$response = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::OK)
-				$response.Headers.Add('Docker-Content-Digest', "sha256:00000000000000000000")
-				$response.Content = [Net.Http.StringContent]::new('none manifest')
+				$response.Headers.Add('Docker-Content-Digest', $script:saveDigest)
+				$response.Content = [Net.Http.StringContent]::new($script:saveManifestText)
 				return $response
 			}
+			Mock GetImageConfigJsonFromRef { $null }
 			Mock DebugRateLimit {}
 			Mock GetSize {}
 			Mock Write-ToolchainInfo {}
@@ -672,7 +699,7 @@ Describe 'SavePackage' {
 			}
 		}
 		AfterEach {
-			[IO.Directory]::Delete($testPath, $true)
+			if (Test-Path -LiteralPath $testPath) { [IO.Directory]::Delete($testPath, $true) }
 		}
 		It 'No Exist Creates New' {
 			$pkg = @{
@@ -700,5 +727,68 @@ Describe 'SavePackage' {
 			"$testPath\cache\none\file.txt" | Should -Exist
 			"$testPath\cache\none\file.txt" | Should -FileContentMatchExactly 'abc123'
 		}
+
+		It 'does not publish or sign a manifest when reading its verified content fails' {
+			Mock GetVerifiedManifestResponse {
+				$response = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::OK)
+				$response.Headers.Add('Docker-Content-Digest', $script:saveDigest)
+				$response.Content = [Net.Http.ByteArrayContent]::new([Text.Encoding]::UTF8.GetBytes($script:saveManifestText))
+				$response.Content.Dispose()
+				return $response
+			}
+			Mock New-ToolchainFileCmsSignature { throw 'must not sign partial manifest' }
+			$pkg = @{ Package = 'somepkg'; Tag = @{ Latest = $true } }
+
+			{ $pkg | PullPackage -Output "$testPath\cache" -Sign } | Should -Throw
+			"$testPath\cache\none\manifest.json" | Should -Not -Exist
+			Should -Invoke -CommandName New-ToolchainFileCmsSignature -Exactly -Times 0
+		}
+	}
+}
+
+Describe 'SavePackage temporary layer cleanup' {
+	It 'removes a downloaded temporary archive when extraction fails' {
+		$tempArchive = Join-Path $TestDrive (('a' * 64) + '.tar.gz')
+		[IO.File]::WriteAllBytes($tempArchive, [byte[]](1, 2, 3))
+		$digest = 'sha256:' + ('b' * 64)
+		Mock GetPackageLayers { @([pscustomobject]@{ Digest=('sha256:' + ('a' * 64)); Size=3 }) }
+		Mock GetDigest { $digest }
+		Mock SaveBlob { $tempArchive }
+		Mock ExtractTarGz { throw 'malformed archive' }
+		Mock ResolvePackagePath { Join-Path $TestDrive 'content' }
+		Mock DeleteDirectory {}
+		Mock SetCursorVisible {}
+		Mock WriteConsole {}
+		$response = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::OK)
+		try {
+			{ $response | SavePackage } | Should -Throw '*malformed archive*'
+			Test-Path -LiteralPath $tempArchive | Should -BeFalse
+		} finally { $response.Dispose() }
+	}
+
+	It 'removes a failed package-root junction without touching its target' {
+		$target = Join-Path $TestDrive 'junction-target'
+		$contentPath = Join-Path $TestDrive 'junction-content'
+		New-Item -ItemType Directory -Path $target -Force | Out-Null
+		Set-Content -LiteralPath (Join-Path $target 'marker.txt') -Value 'keep'
+		New-Item -ItemType (GetToolchainLinkItemType) -Path $contentPath -Target $target | Out-Null
+
+		$tempArchive = Join-Path $TestDrive (('c' * 64) + '.tar.gz')
+		[IO.File]::WriteAllBytes($tempArchive, [byte[]](1, 2, 3))
+		$digest = 'sha256:' + ('d' * 64)
+		Mock GetPackageLayers { @([pscustomobject]@{ Digest=('sha256:' + ('c' * 64)); Size=3 }) }
+		Mock GetDigest { $digest }
+		Mock SaveBlob { $tempArchive }
+		Mock ExtractTarGz { throw 'malformed archive' }
+		Mock ResolvePackagePath { $contentPath }
+		Mock DeleteDirectory { throw 'must not recurse through a package-root link' }
+		Mock SetCursorVisible {}
+		Mock WriteConsole {}
+		$response = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::OK)
+		try {
+			{ $response | SavePackage } | Should -Throw '*malformed archive*'
+			Test-Path -LiteralPath $contentPath | Should -BeFalse
+			(Get-Content -LiteralPath (Join-Path $target 'marker.txt') -Raw).Trim() | Should -Be 'keep'
+		} finally { $response.Dispose() }
 	}
 }

@@ -111,10 +111,29 @@ Describe 'Toolchain config getters' {
 		GetPwrContentPath | Should -Be 'C:\tc\content'
 	}
 
-	It 'ResolvePackagePath uses first 12 chars of digest hash' {
+	It 'ResolvePackagePath uses the complete canonical digest hash' {
 		$global:ToolchainPath = 'C:\tc'
 		$d = 'sha256:' + ('a' * 64)
-		($d | ResolvePackagePath) | Should -Be 'C:\tc\content\aaaaaaaaaaaa'
+		($d | ResolvePackagePath) | Should -Be ('C:\tc\content\' + ('a' * 64))
+	}
+
+	It 'never assigns an unmarked legacy prefix directory to a colliding digest' {
+		$global:ToolchainPath = Join-Path $TestDrive 'tc-collision'
+		$legacy = Join-Path (GetPwrContentPath) 'aaaaaaaaaaaa'
+		New-Item -ItemType Directory -Path $legacy -Force | Out-Null
+		Set-Content -LiteralPath (Join-Path $legacy 'owner.txt') -Value 'legacy bytes'
+		$digestA = 'sha256:' + ('a' * 64)
+		$digestB = 'sha256:aaaaaaaaaaaa' + ('b' * 52)
+
+		$pathA = $digestA | ResolvePackagePath
+		$pathB = $digestB | ResolvePackagePath
+
+		$pathA | Should -Not -Be $pathB
+		$pathA | Should -Not -Be $legacy
+		$pathB | Should -Not -Be $legacy
+		Test-Path -LiteralPath $pathA | Should -BeFalse
+		Test-Path -LiteralPath $pathB | Should -BeFalse
+		(Get-Content -LiteralPath (Join-Path $legacy 'owner.txt') -Raw).Trim() | Should -Be 'legacy bytes'
 	}
 
 	It 'MakeDirIfNotExist creates directory idempotently' {

@@ -59,7 +59,7 @@ function ParsePaxHeader {
 		throw "pax header too large ($($Header.Size) bytes)"
 	}
 	$buf = New-Object byte[] $Header.Size
-	[void]([Util]::GzipRead($Source, $buf, $Header.Size))
+	[Util]::GzipReadExact($Source, $buf, [int]$Header.Size, 'pax header')
 	$content = [Text.Encoding]::UTF8.GetString($buf)
 	$xhdr = @{}
 	foreach ($line in $content -split "`n") {
@@ -72,6 +72,20 @@ function ParsePaxHeader {
 	return $xhdr
 }
 
+function Get-ToolchainArchiveLimit {
+	param(
+		[Parameter(Mandatory)][string]$EnvironmentName,
+		[Parameter(Mandatory)][long]$Default
+	)
+	$value = [Environment]::GetEnvironmentVariable($EnvironmentName, [EnvironmentVariableTarget]::Process)
+	if (-not $value) { return $Default }
+	$parsed = 0L
+	if (-not [long]::TryParse([string]$value, [ref]$parsed) -or $parsed -le 0) {
+		throw "invalid ${EnvironmentName}='$value' (expected a positive integer)"
+	}
+	return $parsed
+}
+
 function ExtractTarGz {
 	param (
 		[Parameter(Mandatory, ValueFromPipeline)]
@@ -81,9 +95,13 @@ function ExtractTarGz {
 	)
 	$tgz = $Path | Split-Path -Leaf
 	$layerId = $tgz.Replace('.tar.gz', '')
-	if ($layerId -ne (Get-FileHash $Path).Hash) {
+	if ($layerId -notmatch '^[0-9a-fA-F]{64}$' -or $layerId -ine (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash) {
 		[IO.File]::Delete($Path)
 		throw "removed $Path because it had corrupted data"
+	}
+	$maxLayerBytes = Get-ToolchainArchiveLimit -EnvironmentName 'TOOLCHAIN_MAX_LAYER_BYTES' -Default 8589934592
+	if ((Get-Item -LiteralPath $Path).Length -gt $maxLayerBytes) {
+		throw "compressed layer exceeds TOOLCHAIN_MAX_LAYER_BYTES ($maxLayerBytes bytes)"
 	}
 	$fs = [IO.File]::OpenRead($Path)
 	try {
@@ -112,6 +130,13 @@ class Util {
 			}
 		}
 		return $read
+	}
+
+	static [void] GzipReadExact([IO.Compression.GZipStream]$Source, [byte[]]$Buffer, [int]$Size, [string]$Context) {
+		$read = [Util]::GzipRead($Source, $Buffer, $Size)
+		if ($read -ne $Size) {
+			throw "truncated tar input while reading $Context (expected $Size bytes, got $read)"
+		}
 	}
 }
 
@@ -153,30 +178,40 @@ function ExtractTar {
 	$xhdr = $null
 	$gnuLongPath = $null
 	$gnuLongLink = $null
+	$entryCount = 0L
+	$totalExtracted = 0L
+	$maxEntries = Get-ToolchainArchiveLimit -EnvironmentName 'TOOLCHAIN_MAX_ARCHIVE_ENTRIES' -Default 1000000
+	$maxExtracted = Get-ToolchainArchiveLimit -EnvironmentName 'TOOLCHAIN_MAX_EXTRACTED_LAYER_BYTES' -Default 34359738368
+	$sawEndMarker = $false
 
 	function Skip-Byte([int64]$count) {
 		$remaining = $count
 		while ($remaining -gt 0) {
 			$n = [int][Math]::Min([int64]$ioBuf.Length, [int64]$remaining)
-			[void]([Util]::GzipRead($Source, $ioBuf, $n))
+			[Util]::GzipReadExact($Source, $ioBuf, $n, 'entry data')
 			$remaining -= $n
 		}
 	}
 
 	function Get-SafeDest([string]$relativePath) {
 		if (-not $relativePath) { return $null }
-
-		if ($relativePath -match '^[\/]' -or $relativePath -match '^[A-Za-z]:' ) {
-			throw "suspicious tar path '$relativePath'"
+		try {
+			return Resolve-ToolchainChildPath -Root $rootFull -RelativePath $relativePath -RejectReparsePoints -RejectRootReparsePoint
+		} catch {
+			throw "unsafe tar path '$relativePath': $($_.Exception.Message)"
 		}
-		$segments = $relativePath -split '[\/]' | Where-Object { $_ -ne '' }
-		if ($segments -contains '..') { throw "suspicious tar path '$relativePath'" }
+	}
 
-		$dest = [IO.Path]::GetFullPath((Join-Path $rootFull $relativePath))
-		if (-not $dest.StartsWith($rootFull, [StringComparison]::OrdinalIgnoreCase)) {
-			throw "tar path escapes root: '$relativePath'"
+	function Get-SafeLinkTarget([string]$dest, [string]$linkTarget) {
+		if ([string]::IsNullOrWhiteSpace($linkTarget) -or [IO.Path]::IsPathRooted($linkTarget) -or $linkTarget -match '^[\\/]' -or $linkTarget -match ':') {
+			throw "unsafe tar link target '$linkTarget'"
 		}
-		return $dest
+		$parent = Split-Path $dest -Parent
+		$combined = [IO.Path]::GetFullPath((Join-Path $parent $linkTarget))
+		if (-not $combined.StartsWith($rootFull, [StringComparison]::OrdinalIgnoreCase)) {
+			throw "tar link target escapes root: '$linkTarget'"
+		}
+		return $combined
 	}
 
 	function Parse-GnuLongString([int64]$sizeBytes) {
@@ -187,7 +222,7 @@ function ExtractTar {
 			return ''
 		}
 		$buf = New-Object byte[] $sizeBytes
-		[void]([Util]::GzipRead($Source, $buf, [int]$sizeBytes))
+		[Util]::GzipReadExact($Source, $buf, [int]$sizeBytes, 'GNU long header')
 		$str = [Text.Encoding]::UTF8.GetString($buf)
 		return $str.Trim([char]0).TrimEnd("`r", "`n")
 	}
@@ -220,10 +255,35 @@ function ExtractTar {
 		while ($true) {
 			{ $LayerId.Substring(0, 12) + ': Extracting ' + (GetProgress -Current $Source.BaseStream.Position -Total $Source.BaseStream.Length) + '   ' } | WritePeriodicConsole
 
-			if ([Util]::GzipRead($Source, $buffer, 512) -eq 0) { break }
+			$headerBytes = [Util]::GzipRead($Source, $buffer, 512)
+			if ($headerBytes -eq 0) { break }
+			if ($headerBytes -ne 512) {
+				throw "truncated tar input while reading header (expected 512 bytes, got $headerBytes)"
+			}
+			$allZero = $true
+			foreach ($b in $buffer) {
+				if ($b -ne 0) { $allZero = $false; break }
+			}
+			if ($allZero) {
+				$secondEndBlock = New-Object byte[] 512
+				[Util]::GzipReadExact($Source, $secondEndBlock, 512, 'second tar end marker')
+				foreach ($b in $secondEndBlock) {
+					if ($b -ne 0) { throw 'invalid tar end marker' }
+				}
+				$sawEndMarker = $true
+				break
+			}
+
+			$entryCount += 1
+			if ($entryCount -gt $maxEntries) {
+				throw "tar archive exceeds TOOLCHAIN_MAX_ARCHIVE_ENTRIES ($maxEntries entries)"
+			}
 
 			$hdr = ParseTarHeader $buffer
 			$size = if ($xhdr -and $xhdr.Size) { [int64]$xhdr.Size } else { [int64]$hdr.Size }
+			if ($size -lt 0 -or $size -gt $maxExtracted) {
+				throw "tar entry size $size exceeds extraction limit $maxExtracted"
+			}
 			$filename = if ($gnuLongPath) {
 				[string]$gnuLongPath
 			} elseif ($xhdr -and $xhdr.Path) {
@@ -237,6 +297,12 @@ function ExtractTar {
 				$headerName
 			}
 			$relativePath = Get-LayerRelativePath -tarPath $filename
+			if ($relativePath) {
+				$leafName = Split-Path $relativePath -Leaf
+				if ($leafName -like '.wh.*') {
+					throw "OCI whiteout entries are not supported: '$filename'"
+				}
+			}
 
 			if ($hdr.Type -eq [char]76 -or $hdr.Type -eq [char]75) {
 				$longVal = Parse-GnuLongString -sizeBytes $size
@@ -265,6 +331,7 @@ function ExtractTar {
 						[string]$hdr.Link
 					}
 					if ($linkTarget) {
+						$safeLinkTarget = Get-SafeLinkTarget -dest $dest -linkTarget $linkTarget
 						$parent = Split-Path $dest -Parent
 						if ($parent) {
 							New-Item -Path (Get-PlatformPath $parent) -ItemType Directory -Force -ErrorAction Ignore | Out-Null
@@ -274,18 +341,24 @@ function ExtractTar {
 						}
 						if ($isWindowsPlatform) {
 							try {
-								New-Item -Path (Get-PlatformPath $dest) -ItemType SymbolicLink -Target $linkTarget -Force -ErrorAction Stop | Out-Null
+								New-Item -Path (Get-PlatformPath $dest) -ItemType SymbolicLink -Target (Get-PlatformPath $safeLinkTarget) -Force -ErrorAction Stop | Out-Null
 							} catch {
 								Write-Debug "Skipping symlink '$relativePath' on Windows: $($_.Exception.Message)"
 							}
 						} else {
-							New-Item -Path (Get-PlatformPath $dest) -ItemType SymbolicLink -Target $linkTarget -Force | Out-Null
+							New-Item -Path (Get-PlatformPath $dest) -ItemType SymbolicLink -Target $safeLinkTarget -Force | Out-Null
 						}
 					}
 					$xhdr = $null
 				}
+			} elseif ($hdr.Type -eq [char]49) {
+				throw "tar hard links are not supported: '$filename'"
 			} elseif ($hdr.Type -in [char]0, [char]48, [char]55) {
 				$dest = Get-SafeDest $relativePath
+				$totalExtracted += $size
+				if ($totalExtracted -gt $maxExtracted) {
+					throw "tar archive exceeds TOOLCHAIN_MAX_EXTRACTED_LAYER_BYTES ($maxExtracted bytes)"
+				}
 				if ($null -eq $dest) {
 					Skip-Byte $size
 					$xhdr = $null
@@ -304,7 +377,7 @@ function ExtractTar {
 						$remaining = $size
 						while ($remaining -gt 0) {
 							$n = [int][Math]::Min([int64]$ioBuf.Length, [int64]$remaining)
-							[void]([Util]::GzipRead($Source, $ioBuf, $n))
+							[Util]::GzipReadExact($Source, $ioBuf, $n, "tar entry '$filename'")
 							$fs.Write($ioBuf, 0, $n)
 							$remaining -= $n
 						}
@@ -329,6 +402,9 @@ function ExtractTar {
 			}
 		}
 	} finally {}
+	if (-not $sawEndMarker) {
+		throw 'truncated tar input: missing end marker'
+	}
 
 	$LayerId.Substring(0, 12) + ': Extracting ' + (GetProgress -Current $Source.BaseStream.Length -Total $Source.BaseStream.Length) + '   ' | WriteConsole
 }

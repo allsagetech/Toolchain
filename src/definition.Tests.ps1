@@ -5,6 +5,7 @@ SPDX-License-Identifier: MPL-2.0
 #>
 
 BeforeAll {
+	. "$PSScriptRoot\config.ps1"
 	. "$PSScriptRoot\definition.ps1"
 }
 
@@ -31,6 +32,21 @@ Describe 'Assert-ToolchainEnvMap' {
 	It 'throws when value is unsupported type' {
 		$envMap = @{ A = @{ Nested = 1 } }
 		{ Assert-ToolchainEnvMap -EnvMap $envMap -Context 'bad' } | Should -Throw
+	}
+}
+
+Describe 'Expand-ToolchainDefinitionRoot' {
+	It 'expands Windows paths after JSON parsing without corrupting escapes' {
+		$root = 'C:\Program Files\Toolchain\pkg'
+		$definition = '{"env":{"ROOT":"${.}","PATH":["${.}/bin","literal"]},"dev":{"env":{"CFG":"${.}/cfg"}}}' |
+			ConvertFrom-Json | ConvertTo-HashTable
+
+		$expanded = Expand-ToolchainDefinitionRoot -Definition $definition -RootPath $root
+
+		$expanded.env.ROOT | Should -Be $root
+		$expanded.env.PATH[0] | Should -Be "$root/bin"
+		$expanded.env.PATH[1] | Should -Be 'literal'
+		$expanded.dev.env.CFG | Should -Be "$root/cfg"
 	}
 }
 

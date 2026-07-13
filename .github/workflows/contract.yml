@@ -1,80 +1,244 @@
 # <#
-# Toolchains
+# Toolchain
 # Copyright (c) 2026 AllSageTech
 # SPDX-License-Identifier: MPL-2.0
 # #>
-
 name: Contract Test (Toolchains)
 
 on:
   repository_dispatch:
     types: [toolchains-built]
   workflow_dispatch:
+    inputs:
+      docker_repo:
+        description: Registry repository containing the package
+        required: true
+        type: string
+      package_name:
+        description: Toolchain package name
+        required: true
+        type: string
+      package_version:
+        description: Toolchain package semantic version
+        required: true
+        type: string
+      digest:
+        description: Published sha256 manifest digest
+        required: true
+        type: string
+      repo_digest_ref:
+        description: Fully qualified repository@sha256 reference
+        required: true
+        type: string
+      spec_version:
+        description: Toolchain image contract version
+        required: true
+        default: '1'
+        type: string
+      tlc_path:
+        description: Definition path in the image
+        required: true
+        default: '/.tlc'
+        type: string
+      tlc_sha256:
+        description: Expected definition SHA-256
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.client_payload.repoDigestRef || inputs.repo_digest_ref || github.run_id }}
+  cancel-in-progress: false
 
 jobs:
   contract:
-    runs-on: windows-2022
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows PowerShell 7
+            os: windows-2022
+            shell: pwsh
+            coverage: 60
+          - name: Windows PowerShell 5.1
+            os: windows-2022
+            shell: powershell
+            coverage: 60
+          - name: Linux PowerShell 7
+            os: ubuntu-22.04
+            shell: pwsh
+            coverage: 0
     env:
-      TOOLCHAIN_COVERAGE_TARGET: 100
-      TOOLCHAIN_REPOSITORY: ''
-      TOOLCHAIN_PESTER_EXCLUDE_PATHS: 'src\\tlc.Tests.ps1,src\\config.more.Tests.ps1,src\\shell.Tests.ps1'
+      TOOLCHAIN_COVERAGE_TARGET: ${{ matrix.coverage }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
 
-      - name: Load Toolchains payload
+      - name: Load and validate contract payload (PowerShell 7)
+        if: matrix.shell == 'pwsh'
         shell: pwsh
+        env:
+          DISPATCH_PAYLOAD: ${{ toJson(github.event.client_payload) }}
+          INPUT_DOCKER_REPO: ${{ inputs.docker_repo }}
+          INPUT_PACKAGE_NAME: ${{ inputs.package_name }}
+          INPUT_PACKAGE_VERSION: ${{ inputs.package_version }}
+          INPUT_DIGEST: ${{ inputs.digest }}
+          INPUT_REPO_DIGEST_REF: ${{ inputs.repo_digest_ref }}
+          INPUT_SPEC_VERSION: ${{ inputs.spec_version }}
+          INPUT_TLC_PATH: ${{ inputs.tlc_path }}
+          INPUT_TLC_SHA256: ${{ inputs.tlc_sha256 }}
         run: |
           $ErrorActionPreference = 'Stop'
 
-          $raw = '${{ toJson(github.event.client_payload) }}'
-          if (-not $raw -or $raw -eq 'null') {
-            Write-Host 'No client_payload provided; contract tests will skip.'
-            exit 0
+          if ($env:GITHUB_EVENT_NAME -eq 'repository_dispatch') {
+            if (-not $env:DISPATCH_PAYLOAD -or $env:DISPATCH_PAYLOAD -eq 'null') {
+              throw 'repository_dispatch did not contain client_payload.'
+            }
+            $payload = $env:DISPATCH_PAYLOAD | ConvertFrom-Json
+          } else {
+            $payload = [pscustomobject]@{
+              dockerRepo = $env:INPUT_DOCKER_REPO
+              packageName = $env:INPUT_PACKAGE_NAME
+              packageVersion = $env:INPUT_PACKAGE_VERSION
+              digest = $env:INPUT_DIGEST
+              repoDigestRef = $env:INPUT_REPO_DIGEST_REF
+              specVersion = $env:INPUT_SPEC_VERSION
+              tlcPath = $env:INPUT_TLC_PATH
+              tlcSha256 = $env:INPUT_TLC_SHA256
+            }
           }
 
-          $payload = $raw | ConvertFrom-Json
-          if (-not $payload.packageName -or -not $payload.digest) {
-            Write-Host 'Payload missing packageName/digest; contract tests will skip.'
-            exit 0
+          foreach ($required in @('dockerRepo','packageName','packageVersion','digest','repoDigestRef','specVersion','tlcPath','tlcSha256')) {
+            if ([string]::IsNullOrWhiteSpace([string]$payload.$required)) {
+              throw "Contract payload is missing required field '$required'."
+            }
           }
 
           $digest = [string]$payload.digest
-          if ($digest -and -not $digest.StartsWith('sha256:')) { $digest = "sha256:$digest" }
+          if (-not $digest.StartsWith('sha256:')) { $digest = "sha256:$digest" }
+          if ($digest -notmatch '^sha256:[0-9a-fA-F]{64}$') { throw "Invalid digest: $digest" }
+          if ([string]$payload.repoDigestRef -notmatch "@$([regex]::Escape($digest))$") {
+            throw 'repoDigestRef does not end in the supplied digest.'
+          }
+          if ([string]$payload.specVersion -ne '1') { throw "Unsupported contract specVersion: $($payload.specVersion)" }
+          if ([string]$payload.tlcSha256 -notmatch '^[0-9a-fA-F]{64}$') { throw 'tlcSha256 must be a SHA-256 hex digest.' }
 
-          "TLC_CONTRACT_DOCKER_REPO=$($payload.dockerRepo)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "TLC_CONTRACT_PACKAGE_NAME=$($payload.packageName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "TLC_CONTRACT_PACKAGE_VERSION=$($payload.packageVersion)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "TLC_CONTRACT_DIGEST=$digest" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "TLC_CONTRACT_REPO_DIGEST_REF=$($payload.repoDigestRef)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "TLC_CONTRACT_SPEC_VERSION=$($payload.specVersion)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "TLC_CONTRACT_TLC_PATH=$($payload.tlcPath)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "TLC_CONTRACT_TLC_SHA256=$($payload.tlcSha256)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-
-          if ($payload.dockerRepo) {
-            "TOOLCHAIN_REPOSITORY=$($payload.dockerRepo)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $values = @{
+            TLC_CONTRACT_DOCKER_REPO = [string]$payload.dockerRepo
+            TLC_CONTRACT_PACKAGE_NAME = [string]$payload.packageName
+            TLC_CONTRACT_PACKAGE_VERSION = [string]$payload.packageVersion
+            TLC_CONTRACT_DIGEST = $digest
+            TLC_CONTRACT_REPO_DIGEST_REF = [string]$payload.repoDigestRef
+            TLC_CONTRACT_SPEC_VERSION = [string]$payload.specVersion
+            TLC_CONTRACT_TLC_PATH = [string]$payload.tlcPath
+            TLC_CONTRACT_TLC_SHA256 = ([string]$payload.tlcSha256).ToLowerInvariant()
+            TOOLCHAIN_REPOSITORY = [string]$payload.dockerRepo
+          }
+          foreach ($item in $values.GetEnumerator()) {
+            "$($item.Key)=$($item.Value)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           }
 
-      - name: Build module
-        shell: pwsh
+      - name: Load and validate contract payload (Windows PowerShell 5.1)
+        if: matrix.shell == 'powershell'
+        shell: powershell
+        env:
+          DISPATCH_PAYLOAD: ${{ toJson(github.event.client_payload) }}
+          INPUT_DOCKER_REPO: ${{ inputs.docker_repo }}
+          INPUT_PACKAGE_NAME: ${{ inputs.package_name }}
+          INPUT_PACKAGE_VERSION: ${{ inputs.package_version }}
+          INPUT_DIGEST: ${{ inputs.digest }}
+          INPUT_REPO_DIGEST_REF: ${{ inputs.repo_digest_ref }}
+          INPUT_SPEC_VERSION: ${{ inputs.spec_version }}
+          INPUT_TLC_PATH: ${{ inputs.tlc_path }}
+          INPUT_TLC_SHA256: ${{ inputs.tlc_sha256 }}
         run: |
-          pwsh -NoProfile -ExecutionPolicy Bypass -Command "
-            try {
-              [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
-            } catch {
-              [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-            }
-            & .\\build.ps1
-          "
+          $ErrorActionPreference = 'Stop'
 
-      - name: Run Pester tests (unit + contract)
+          if ($env:GITHUB_EVENT_NAME -eq 'repository_dispatch') {
+            if (-not $env:DISPATCH_PAYLOAD -or $env:DISPATCH_PAYLOAD -eq 'null') {
+              throw 'repository_dispatch did not contain client_payload.'
+            }
+            $payload = $env:DISPATCH_PAYLOAD | ConvertFrom-Json
+          } else {
+            $payload = [pscustomobject]@{
+              dockerRepo = $env:INPUT_DOCKER_REPO
+              packageName = $env:INPUT_PACKAGE_NAME
+              packageVersion = $env:INPUT_PACKAGE_VERSION
+              digest = $env:INPUT_DIGEST
+              repoDigestRef = $env:INPUT_REPO_DIGEST_REF
+              specVersion = $env:INPUT_SPEC_VERSION
+              tlcPath = $env:INPUT_TLC_PATH
+              tlcSha256 = $env:INPUT_TLC_SHA256
+            }
+          }
+
+          foreach ($required in @('dockerRepo','packageName','packageVersion','digest','repoDigestRef','specVersion','tlcPath','tlcSha256')) {
+            if ([string]::IsNullOrWhiteSpace([string]$payload.$required)) {
+              throw "Contract payload is missing required field '$required'."
+            }
+          }
+
+          $digest = [string]$payload.digest
+          if (-not $digest.StartsWith('sha256:')) { $digest = "sha256:$digest" }
+          if ($digest -notmatch '^sha256:[0-9a-fA-F]{64}$') { throw "Invalid digest: $digest" }
+          if ([string]$payload.repoDigestRef -notmatch "@$([regex]::Escape($digest))$") {
+            throw 'repoDigestRef does not end in the supplied digest.'
+          }
+          if ([string]$payload.specVersion -ne '1') { throw "Unsupported contract specVersion: $($payload.specVersion)" }
+          if ([string]$payload.tlcSha256 -notmatch '^[0-9a-fA-F]{64}$') { throw 'tlcSha256 must be a SHA-256 hex digest.' }
+
+          $values = @{
+            TLC_CONTRACT_DOCKER_REPO = [string]$payload.dockerRepo
+            TLC_CONTRACT_PACKAGE_NAME = [string]$payload.packageName
+            TLC_CONTRACT_PACKAGE_VERSION = [string]$payload.packageVersion
+            TLC_CONTRACT_DIGEST = $digest
+            TLC_CONTRACT_REPO_DIGEST_REF = [string]$payload.repoDigestRef
+            TLC_CONTRACT_SPEC_VERSION = [string]$payload.specVersion
+            TLC_CONTRACT_TLC_PATH = [string]$payload.tlcPath
+            TLC_CONTRACT_TLC_SHA256 = ([string]$payload.tlcSha256).ToLowerInvariant()
+            TOOLCHAIN_REPOSITORY = [string]$payload.dockerRepo
+          }
+          foreach ($item in $values.GetEnumerator()) {
+            "$($item.Key)=$($item.Value)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          }
+
+      - name: Run full unit and consumer contract tests (Windows PowerShell 7)
+        if: runner.os == 'Windows' && matrix.shell == 'pwsh'
         shell: pwsh
         run: |
-          pwsh -NoProfile -ExecutionPolicy Bypass -Command "
-            try {
-              [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
-            } catch {
-              [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-            }
-            & .\\test.ps1 -Paths .\\src,.\\contract
-          "
+          $ErrorActionPreference = 'Stop'
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          .\build.ps1
+          .\test.ps1 -Paths .\src,.\contract
+
+      - name: Run full unit and consumer contract tests (Windows PowerShell 5.1)
+        if: runner.os == 'Windows' && matrix.shell == 'powershell'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          .\build.ps1
+          .\test.ps1 -Paths .\src,.\contract
+
+      - name: Run cross-platform unit and consumer contract tests (Linux)
+        if: runner.os == 'Linux'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          .\build.ps1
+          $paths = @(
+            '.\src\definition.Tests.ps1'
+            '.\src\http.Tests.ps1'
+            '.\src\tar.Tests.ps1'
+            '.\src\registry.Tests.ps1'
+            '.\contract'
+          )
+          .\test.ps1 -Paths $paths
