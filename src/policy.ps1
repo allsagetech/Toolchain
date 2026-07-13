@@ -299,7 +299,7 @@ function Get-ToolchainPolicyTrustedSigner {
 
 function Get-ToolchainPolicyRequireCosign {
 	$envVal = [Environment]::GetEnvironmentVariable('TOOLCHAIN_COSIGN_VERIFY', [EnvironmentVariableTarget]::Process)
-	if ($null -ne $envVal) {
+	if (-not [string]::IsNullOrEmpty($envVal)) {
 		return (Test-TruthyValue $envVal)
 	}
 

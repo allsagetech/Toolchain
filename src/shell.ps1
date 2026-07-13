@@ -64,7 +64,11 @@ function Set-ToolchainEnvironmentValue {
 	$found = $false
 	foreach ($key in @($vars.Keys)) {
 		if ([string]::Equals([string]$key, $Name, [StringComparison]::OrdinalIgnoreCase)) {
-			[Environment]::SetEnvironmentVariable([string]$key, $Value, [EnvironmentVariableTarget]::Process)
+			if ($null -eq $Value) {
+				Remove-Item -LiteralPath "Env:$key" -Force -ErrorAction SilentlyContinue
+			} else {
+				[Environment]::SetEnvironmentVariable([string]$key, $Value, [EnvironmentVariableTarget]::Process)
+			}
 			$found = $true
 		}
 	}

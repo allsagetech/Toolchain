@@ -50,7 +50,7 @@ Describe 'Progress helpers' {
 		WritePeriodicConsole { 'a' }
 		$script:lastwrite = (Get-Date)
 		WritePeriodicConsole { 'b' }
-		(Assert-MockCalled WriteConsole -Times 1 -Exactly) | Out-Null
+		Should -Invoke -CommandName WriteConsole -Times 1 -Exactly
 	}
 
 	It 'SetCursorVisible handles cursor errors' {
