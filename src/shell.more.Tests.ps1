@@ -17,7 +17,8 @@ Describe 'Session state management' {
 		SaveSessionState $guid
 		ClearSessionState $guid
 		(Get-Variable -Name 'ToolchainTestVar' -Scope Global -ErrorAction SilentlyContinue) | Should -Be $null
-		$env:TOOLCHAIN_TEST_ENV | Should -Be $null
+		@(Get-ToolchainEnvironmentItems | Where-Object { $_.Name -ieq 'TOOLCHAIN_TEST_ENV' }).Count | Should -Be 0
+		$env:TOOLCHAIN_TEST_ENV | Should -BeNullOrEmpty
 		RestoreSessionState $guid
 		(Get-Variable -Name 'ToolchainTestVar' -Scope Global).Value | Should -Be 42
 		$env:TOOLCHAIN_TEST_ENV | Should -Be 'hello'
