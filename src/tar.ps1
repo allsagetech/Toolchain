@@ -180,7 +180,13 @@ function ExtractTar {
 	$gnuLongLink = $null
 	$entryCount = 0L
 	$totalExtracted = 0L
+	$pathComparison = if ($isWindowsPlatform) { [StringComparison]::OrdinalIgnoreCase } else { [StringComparison]::Ordinal }
+	$pathComparer = if ($isWindowsPlatform) { [StringComparer]::OrdinalIgnoreCase } else { [StringComparer]::Ordinal }
+	$pendingHardLinksByTarget = [Collections.Generic.Dictionary[string,Collections.Generic.List[object]]]::new($pathComparer)
+	$latestEntryForPath = [Collections.Generic.Dictionary[string,long]]::new($pathComparer)
+	$hardLinkState = @{ PendingCount = 0L }
 	$maxEntries = Get-ToolchainArchiveLimit -EnvironmentName 'TOOLCHAIN_MAX_ARCHIVE_ENTRIES' -Default 1000000
+	$maxPendingHardLinks = Get-ToolchainArchiveLimit -EnvironmentName 'TOOLCHAIN_MAX_PENDING_HARD_LINKS' -Default 10000
 	$maxExtracted = Get-ToolchainArchiveLimit -EnvironmentName 'TOOLCHAIN_MAX_EXTRACTED_LAYER_BYTES' -Default 34359738368
 	$sawEndMarker = $false
 
@@ -251,6 +257,136 @@ function ExtractTar {
 		return $path.Replace('/', [IO.Path]::DirectorySeparatorChar)
 	}
 
+	function Get-HardLinkTargetRelativePath([string]$linkTarget) {
+		if ([string]::IsNullOrWhiteSpace($linkTarget)) {
+			throw "unsafe tar hard link target '$linkTarget'"
+		}
+		$targetRelativePath = Get-LayerRelativePath -tarPath $linkTarget
+		if (-not $targetRelativePath) {
+			throw "unsafe tar hard link target '$linkTarget'"
+		}
+		try {
+			$null = Get-SafeDest -relativePath $targetRelativePath
+		} catch {
+			throw "unsafe tar hard link target '$linkTarget': $($_.Exception.Message)"
+		}
+		return $targetRelativePath
+	}
+
+	function Add-UnresolvedHardLink($link) {
+		if ($hardLinkState.PendingCount -ge $maxPendingHardLinks) {
+			throw "tar archive exceeds TOOLCHAIN_MAX_PENDING_HARD_LINKS ($maxPendingHardLinks unresolved links)"
+		}
+		if (-not $pendingHardLinksByTarget.ContainsKey($link.TargetKey)) {
+			$pendingHardLinksByTarget[$link.TargetKey] = [Collections.Generic.List[object]]::new()
+		}
+		$pendingHardLinksByTarget[$link.TargetKey].Add($link)
+		$hardLinkState.PendingCount += 1
+	}
+
+	function Try-CreatePendingHardLink($link) {
+		if ($link.Complete) { return $false }
+		if (-not $latestEntryForPath.ContainsKey($link.DestinationKey) -or
+			$latestEntryForPath[$link.DestinationKey] -ne $link.Sequence) {
+			$link.Complete = $true
+			return $false
+		}
+
+		$dest = Get-SafeDest -relativePath $link.DestinationRelativePath
+		try {
+			$target = Get-SafeDest -relativePath $link.TargetRelativePath
+		} catch {
+			throw "unsafe tar hard link target '$($link.ArchiveTarget)': $($_.Exception.Message)"
+		}
+		if ([string]::Equals($dest, $target, $pathComparison)) {
+			throw "tar hard link target '$($link.ArchiveTarget)' refers to itself"
+		}
+
+		$targetItem = Get-Item -LiteralPath (Get-PlatformPath $target) -Force -ErrorAction SilentlyContinue
+		if (-not $targetItem) { return $false }
+		if ($targetItem.PSIsContainer) {
+			throw "tar hard link target '$($link.ArchiveTarget)' is not a regular file"
+		}
+		if ($targetItem.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+			throw "tar hard link target '$($link.ArchiveTarget)' is a link or reparse point"
+		}
+
+		$parent = Split-Path $dest -Parent
+		if ($parent) {
+			New-Item -Path (Get-PlatformPath $parent) -ItemType Directory -Force -ErrorAction Stop | Out-Null
+		}
+		# Revalidate after creating the parent so a pre-existing or raced
+		# reparse point cannot redirect either side of the hard link.
+		$dest = Get-SafeDest -relativePath $link.DestinationRelativePath
+		try {
+			$target = Get-SafeDest -relativePath $link.TargetRelativePath
+		} catch {
+			throw "unsafe tar hard link target '$($link.ArchiveTarget)': $($_.Exception.Message)"
+		}
+		$targetItem = Get-Item -LiteralPath (Get-PlatformPath $target) -Force -ErrorAction SilentlyContinue
+		if (-not $targetItem -or $targetItem.PSIsContainer -or
+			($targetItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+			throw "tar hard link target '$($link.ArchiveTarget)' is not a safe regular file"
+		}
+
+		try {
+			New-Item -Path (Get-PlatformPath $dest) -ItemType HardLink -Target (Get-PlatformPath $target) -ErrorAction Stop | Out-Null
+		} catch {
+			throw "failed to create tar hard link '$($link.ArchivePath)' to '$($link.ArchiveTarget)': $($_.Exception.Message)"
+		}
+		$link.Complete = $true
+		if ($latestEntryForPath.ContainsKey($link.DestinationKey) -and
+			$latestEntryForPath[$link.DestinationKey] -eq $link.Sequence) {
+			$null = $latestEntryForPath.Remove($link.DestinationKey)
+		}
+		return $true
+	}
+
+	function Resolve-PendingHardLinks([string[]]$AvailablePathKeys = @(), [switch]$Final) {
+		$queue = [Collections.Generic.Queue[string]]::new()
+		$queued = [Collections.Generic.HashSet[string]]::new($pathComparer)
+		$seedPaths = @($AvailablePathKeys)
+		if ($Final) { $seedPaths += @($pendingHardLinksByTarget.Keys) }
+		foreach ($path in $seedPaths) {
+			if ($path -and $queued.Add($path)) { $queue.Enqueue($path) }
+		}
+
+		while ($queue.Count -gt 0) {
+			$availablePath = $queue.Dequeue()
+			$null = $queued.Remove($availablePath)
+			if (-not $pendingHardLinksByTarget.ContainsKey($availablePath)) { continue }
+
+			$links = $pendingHardLinksByTarget[$availablePath]
+			$null = $pendingHardLinksByTarget.Remove($availablePath)
+			$hardLinkState.PendingCount -= $links.Count
+			foreach ($link in $links) {
+				if ($link.Complete) { continue }
+				$created = Try-CreatePendingHardLink -link $link
+				if ($created) {
+					if ($queued.Add($link.DestinationKey)) {
+						$queue.Enqueue($link.DestinationKey)
+					}
+				} elseif (-not $link.Complete) {
+					Add-UnresolvedHardLink -link $link
+				}
+			}
+		}
+
+		if ($Final) {
+			$unresolved = $null
+			foreach ($links in $pendingHardLinksByTarget.Values) {
+				if ($links.Count -gt 0) {
+					$unresolved = $links[0]
+					break
+				}
+			}
+			if ($unresolved) {
+				$link = $unresolved
+				throw "tar hard link target '$($link.ArchiveTarget)' for '$($link.ArchivePath)' was not extracted"
+			}
+		}
+	}
+
 	try {
 		while ($true) {
 			{ $LayerId.Substring(0, 12) + ': Extracting ' + (GetProgress -Current $Source.BaseStream.Position -Total $Source.BaseStream.Length) + '   ' } | WritePeriodicConsole
@@ -303,6 +439,13 @@ function ExtractTar {
 					throw "OCI whiteout entries are not supported: '$filename'"
 				}
 			}
+			$pathKey = $null
+			if ($relativePath -and $hdr.Type -in [char]0, [char]48, [char]49, [char]50, [char]53, [char]55) {
+				$pathKey = Get-SafeDest -relativePath $relativePath
+				if ($hdr.Type -eq [char]49 -or $latestEntryForPath.ContainsKey($pathKey)) {
+					$latestEntryForPath[$pathKey] = $entryCount
+				}
+			}
 
 			if ($hdr.Type -eq [char]76 -or $hdr.Type -eq [char]75) {
 				$longVal = Parse-GnuLongString -sizeBytes $size
@@ -352,7 +495,46 @@ function ExtractTar {
 					$xhdr = $null
 				}
 			} elseif ($hdr.Type -eq [char]49) {
-				throw "tar hard links are not supported: '$filename'"
+				if (-not $relativePath) {
+					throw "invalid tar hard link path '$filename'"
+				}
+				if ($size -ne 0) {
+					throw "invalid tar hard link entry '$filename': expected zero size, got $size"
+				}
+				$linkTarget = if ($gnuLongLink) {
+					[string]$gnuLongLink
+				} elseif ($xhdr -and $xhdr.Linkpath) {
+					[string]$xhdr.Linkpath
+				} else {
+					[string]$hdr.Link
+				}
+				$targetRelativePath = Get-HardLinkTargetRelativePath -linkTarget $linkTarget
+				$targetKey = Get-SafeDest -relativePath $targetRelativePath
+				$dest = Get-SafeDest -relativePath $relativePath
+				$existingDest = Get-Item -LiteralPath (Get-PlatformPath $dest) -Force -ErrorAction SilentlyContinue
+				if ($existingDest) {
+					if ($existingDest.PSIsContainer) {
+						throw "tar hard link destination '$filename' is a directory"
+					}
+					Remove-Item -LiteralPath (Get-PlatformPath $dest) -Force -ErrorAction Stop
+				}
+				$dest = Get-SafeDest -relativePath $relativePath
+				$link = [pscustomobject]@{
+					ArchivePath = $filename
+					ArchiveTarget = $linkTarget
+					DestinationRelativePath = $relativePath
+					TargetRelativePath = $targetRelativePath
+					DestinationKey = $pathKey
+					TargetKey = $targetKey
+					Sequence = $entryCount
+					Complete = $false
+				}
+				if (Try-CreatePendingHardLink -link $link) {
+					Resolve-PendingHardLinks -AvailablePathKeys @($pathKey)
+				} elseif (-not $link.Complete) {
+					Add-UnresolvedHardLink -link $link
+				}
+				$xhdr = $null
 			} elseif ($hdr.Type -in [char]0, [char]48, [char]55) {
 				$dest = Get-SafeDest $relativePath
 				$totalExtracted += $size
@@ -368,8 +550,16 @@ function ExtractTar {
 						New-Item -Path (Get-PlatformPath $parent) -ItemType Directory -Force -ErrorAction Ignore | Out-Null
 					}
 
+					$existingDest = Get-Item -LiteralPath (Get-PlatformPath $dest) -Force -ErrorAction SilentlyContinue
+					if ($existingDest) {
+						if ($existingDest.PSIsContainer) {
+							throw "tar entry '$filename' cannot replace a directory"
+						}
+						Remove-Item -LiteralPath (Get-PlatformPath $dest) -Force -ErrorAction Stop
+					}
+					$dest = Get-SafeDest $relativePath
 					try {
-						$fs = [IO.File]::Open((Get-PlatformPath $dest), [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)
+						$fs = [IO.File]::Open((Get-PlatformPath $dest), [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
 					} catch {
 						throw "failed to open tar entry '$filename' (type '$($hdr.Type)', relative '$relativePath', size $size) at '$dest': $($_.Exception.Message)"
 					}
@@ -400,11 +590,15 @@ function ExtractTar {
 			if ($leftover -gt 0) {
 				Skip-Byte (512 - $leftover)
 			}
+			if ($relativePath -and $hdr.Type -in [char]0, [char]48, [char]50, [char]53, [char]55) {
+				Resolve-PendingHardLinks -AvailablePathKeys @($pathKey)
+			}
 		}
 	} finally {}
 	if (-not $sawEndMarker) {
 		throw 'truncated tar input: missing end marker'
 	}
+	Resolve-PendingHardLinks -Final
 
 	$LayerId.Substring(0, 12) + ': Extracting ' + (GetProgress -Current $Source.BaseStream.Length -Total $Source.BaseStream.Length) + '   ' | WriteConsole
 }

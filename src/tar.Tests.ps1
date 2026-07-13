@@ -33,6 +33,15 @@ Describe "Untargz" {
 			[Array]::Copy($bytes, 0, $Header, $Offset, [Math]::Min($bytes.Length, $Length))
 		}
 
+		function Remove-TestDirectoryLink([string]$Path) {
+			if (-not (Test-Path -LiteralPath $Path)) { return }
+			if ($PSVersionTable.PSEdition -eq 'Desktop') {
+				[IO.Directory]::Delete($Path)
+			} else {
+				Remove-Item -LiteralPath $Path -Force
+			}
+		}
+
 		function New-TestTarGz([string]$Directory, [object[]]$Entries, [switch]$OmitEndMarker, [switch]$TruncateEntryData) {
 			New-Item -ItemType Directory -Path $Directory -Force | Out-Null
 			$tar = [IO.MemoryStream]::new()
@@ -123,6 +132,157 @@ Describe "Untargz" {
 		}
 	}
 
+	It 'extracts hard links emitted by the platform tar command' {
+		$work = Join-Path $root ("native-hard-link-" + [Guid]::NewGuid().ToString('N'))
+		$layer = Join-Path $work 'layer'
+		$pkg = ResolvePackagePath '_'
+		try {
+			New-Item -ItemType Directory -Path $layer -Force | Out-Null
+			Set-Content -LiteralPath (Join-Path $layer 'native-target.txt') -Value 'native' -NoNewline
+			New-Item -ItemType HardLink -Path (Join-Path $layer 'native-alias.txt') -Target (Join-Path $layer 'native-target.txt') | Out-Null
+			$tgzPath = Join-Path $work 'layer.tar.gz'
+			tar -czf $tgzPath -C $layer . | Out-Null
+			$hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $tgzPath).Hash.ToLowerInvariant()
+			$archive = Join-Path $work "$hash.tar.gz"
+			Move-Item -LiteralPath $tgzPath -Destination $archive -Force
+
+			$archive | ExtractTarGz -Digest ('sha256:' + ('d' * 64))
+			$target = Join-Path $pkg 'native-target.txt'
+			$alias = Join-Path $pkg 'native-alias.txt'
+			[IO.File]::AppendAllText($target, '-updated')
+			Get-Content -LiteralPath $alias -Raw | Should -Be 'native-updated'
+		} finally {
+			Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+		}
+	}
+
+	It 'extracts forward OCI hard links as true hard links' {
+		$work = Join-Path $root ("hard-link-" + [Guid]::NewGuid().ToString('N'))
+		$pkg = ResolvePackagePath '_'
+		try {
+			$archive = New-TestTarGz -Directory $work -Entries @(
+				@{ Name='Files/hardlinks/chained.txt'; Type='1'; Link='Files/hardlinks/alias.txt' },
+				@{ Name='Files/hardlinks/alias.txt'; Type='1'; Link='Files/hardlinks/target.txt' },
+				@{ Name='Files/hardlinks/second.txt'; Type='1'; Link='Files/hardlinks/target.txt' },
+				@{ Name='Files/hardlinks/target.txt'; Type='0'; Data='shared' }
+			)
+			$archive | ExtractTarGz -Digest ('sha256:' + ('7' * 64))
+			$target = Join-Path (Join-Path $pkg 'hardlinks') 'target.txt'
+			$alias = Join-Path (Join-Path $pkg 'hardlinks') 'alias.txt'
+			$second = Join-Path (Join-Path $pkg 'hardlinks') 'second.txt'
+			$chained = Join-Path (Join-Path $pkg 'hardlinks') 'chained.txt'
+			Get-Content -LiteralPath $alias, $second, $chained -Raw | Should -Be @('shared', 'shared', 'shared')
+			[IO.File]::AppendAllText($target, '-updated')
+			Get-Content -LiteralPath $alias, $second, $chained -Raw | Should -Be @('shared-updated', 'shared-updated', 'shared-updated')
+		} finally {
+			Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+		}
+	}
+
+	It 'preserves archive ordering when hard links and regular files replace paths' {
+		$work = Join-Path $root ("hard-link-order-" + [Guid]::NewGuid().ToString('N'))
+		$pkg = ResolvePackagePath '_'
+		try {
+			$archive = New-TestTarGz -Directory $work -Entries @(
+				@{ Name='ordering/target.txt'; Type='0'; Data='old-target' },
+				@{ Name='ordering/nested/alias.txt'; Type='0'; Data='placeholder' },
+				@{ Name='ordering/nested/alias.txt'; Type='1'; Link='ordering/target.txt' },
+				@{ Name='ordering/target.txt'; Type='0'; Data='new-target' },
+				@{ Name='ordering//superseded.txt'; Type='1'; Link='ordering/future.txt' },
+				@{ Name='ordering/superseded.txt'; Type='0'; Data='regular-wins' },
+				@{ Name='ordering/future.txt'; Type='0'; Data='future' }
+			)
+			$archive | ExtractTarGz -Digest ('sha256:' + ('9' * 64))
+			$ordering = Join-Path $pkg 'ordering'
+			Get-Content -LiteralPath (Join-Path (Join-Path $ordering 'nested') 'alias.txt') -Raw | Should -Be 'old-target'
+			Get-Content -LiteralPath (Join-Path $ordering 'target.txt') -Raw | Should -Be 'new-target'
+			Get-Content -LiteralPath (Join-Path $ordering 'superseded.txt') -Raw | Should -Be 'regular-wins'
+		} finally {
+			Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+		}
+	}
+
+	It 'rejects a hard link target that escapes the package root' {
+		$work = Join-Path $root ("bad-hard-link-" + [Guid]::NewGuid().ToString('N'))
+		try {
+			$archive = New-TestTarGz -Directory $work -Entries @(@{ Name='hardlinks/alias.txt'; Type='1'; Link='../escape.txt' })
+			{ $archive | ExtractTarGz -Digest ('sha256:' + ('8' * 64)) } | Should -Throw '*hard link target*'
+			Test-Path -LiteralPath (Join-Path $ToolchainPath 'escape.txt') | Should -BeFalse
+		} finally {
+			Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+		}
+	}
+
+	It 'rejects invalid hard link entries and unresolved targets' {
+		$cases = @(
+			@{ Name='blank-target'; Entries=@(@{ Name='hardlinks/blank.txt'; Type='1' }); Pattern='*hard link target*' },
+			@{ Name='root-target'; Entries=@(@{ Name='hardlinks/root.txt'; Type='1'; Link='Files/' }); Pattern='*hard link target*' },
+			@{ Name='absolute-target'; Entries=@(@{ Name='hardlinks/absolute.txt'; Type='1'; Link='/outside.txt' }); Pattern='*hard link target*' },
+			@{ Name='drive-target'; Entries=@(@{ Name='hardlinks/drive.txt'; Type='1'; Link='C:\outside.txt' }); Pattern='*hard link target*' },
+			@{ Name='unc-target'; Entries=@(@{ Name='hardlinks/unc.txt'; Type='1'; Link='\\server\share\outside.txt' }); Pattern='*hard link target*' },
+			@{ Name='mixed-traversal'; Entries=@(@{ Name='hardlinks/mixed.txt'; Type='1'; Link='safe\..\..\outside.txt' }); Pattern='*hard link target*' },
+			@{ Name='root-path'; Entries=@(@{ Name='Files'; Type='1'; Link='target.txt' }); Pattern='*invalid tar hard link path*' },
+			@{ Name='nonzero-size'; Entries=@(@{ Name='hardlinks/data.txt'; Type='1'; Link='target.txt'; Data='x' }); Pattern='*expected zero size*' },
+			@{ Name='self-link'; Entries=@(@{ Name='hardlinks/self.txt'; Type='1'; Link='hardlinks/self.txt' }); Pattern='*refers to itself*' },
+			@{ Name='missing-target'; Entries=@(@{ Name='hardlinks/missing.txt'; Type='1'; Link='hardlinks/not-there.txt' }); Pattern='*was not extracted*' },
+			@{ Name='cycle'; Entries=@(@{ Name='hardlinks/a.txt'; Type='1'; Link='hardlinks/b.txt' }, @{ Name='hardlinks/b.txt'; Type='1'; Link='hardlinks/a.txt' }); Pattern='*was not extracted*' },
+			@{ Name='directory-target'; Entries=@(@{ Name='hardlinks/directory'; Type='5' }, @{ Name='hardlinks/to-directory.txt'; Type='1'; Link='hardlinks/directory' }); Pattern='*not a regular file*' },
+			@{ Name='directory-destination'; Entries=@(@{ Name='hardlinks/target.txt'; Type='0'; Data='target' }, @{ Name='hardlinks/destination'; Type='5' }, @{ Name='hardlinks/destination'; Type='1'; Link='hardlinks/target.txt' }); Pattern='*destination*directory*' }
+		)
+		foreach ($case in $cases) {
+			$work = Join-Path $root ("bad-hard-link-$($case.Name)-" + [Guid]::NewGuid().ToString('N'))
+			try {
+				$archive = New-TestTarGz -Directory $work -Entries $case.Entries
+				{ $archive | ExtractTarGz -Digest ('sha256:' + ('a' * 64)) } | Should -Throw $case.Pattern
+			} finally {
+				Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+			}
+		}
+	}
+
+	It 'rejects a hard link target through a pre-existing reparse point' {
+		$work = Join-Path $root ("hard-link-junction-" + [Guid]::NewGuid().ToString('N'))
+		$pkg = ResolvePackagePath '_'
+		$outside = Join-Path $work 'outside'
+		$pivot = Join-Path $pkg 'pivot'
+		try {
+			New-Item -ItemType Directory -Path $pkg, $outside -Force | Out-Null
+			Set-Content -LiteralPath (Join-Path $outside 'outside.txt') -Value 'outside' -NoNewline
+			$linkType = if ($isWindowsPlatform) { 'Junction' } else { 'SymbolicLink' }
+			New-Item -ItemType $linkType -Path $pivot -Target $outside | Out-Null
+			$archive = New-TestTarGz -Directory (Join-Path $work 'archive') -Entries @(@{ Name='reparse-hardlinks/alias.txt'; Type='1'; Link='pivot/outside.txt' })
+			{ $archive | ExtractTarGz -Digest ('sha256:' + ('b' * 64)) } | Should -Throw '*hard link target*reparse point*'
+			Test-Path -LiteralPath (Join-Path (Join-Path $pkg 'reparse-hardlinks') 'alias.txt') | Should -BeFalse
+
+			Set-Content -LiteralPath (Join-Path $pkg 'safe-hard-link-target.txt') -Value 'safe' -NoNewline
+			$archive = New-TestTarGz -Directory (Join-Path $work 'destination-archive') -Entries @(@{ Name='pivot/alias.txt'; Type='1'; Link='safe-hard-link-target.txt' })
+			{ $archive | ExtractTarGz -Digest ('sha256:' + ('c' * 64)) } | Should -Throw '*unsafe tar path*reparse point*'
+			Test-Path -LiteralPath (Join-Path $outside 'alias.txt') | Should -BeFalse
+		} finally {
+			try {
+				Remove-TestDirectoryLink -Path $pivot
+			} finally {
+				Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+			}
+		}
+	}
+
+	It 'limits unresolved hard links independently of the archive entry limit' {
+		$work = Join-Path $root ("hard-link-limit-" + [Guid]::NewGuid().ToString('N'))
+		$oldLimit = $env:TOOLCHAIN_MAX_PENDING_HARD_LINKS
+		try {
+			$env:TOOLCHAIN_MAX_PENDING_HARD_LINKS = '1'
+			$archive = New-TestTarGz -Directory $work -Entries @(
+				@{ Name='limited/one.txt'; Type='1'; Link='limited/missing-one.txt' },
+				@{ Name='limited/two.txt'; Type='1'; Link='limited/missing-two.txt' }
+			)
+			{ $archive | ExtractTarGz -Digest ('sha256:' + ('e' * 64)) } | Should -Throw '*TOOLCHAIN_MAX_PENDING_HARD_LINKS*'
+		} finally {
+			$env:TOOLCHAIN_MAX_PENDING_HARD_LINKS = $oldLimit
+			Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+		}
+	}
+
 	It 'rejects a symlink target that escapes the package root' {
 		$work = Join-Path $root ("bad-link-" + [Guid]::NewGuid().ToString('N'))
 		try {
@@ -147,8 +307,11 @@ Describe "Untargz" {
 			{ $archive | ExtractTarGz -Digest ('sha256:' + ('5' * 64)) } | Should -Throw '*traverses a link or reparse point*'
 			Test-Path -LiteralPath (Join-Path $outside 'escaped.txt') | Should -BeFalse
 		} finally {
-			Remove-Item -LiteralPath $pivot -Force -ErrorAction SilentlyContinue
-			Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+			try {
+				Remove-TestDirectoryLink -Path $pivot
+			} finally {
+				Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+			}
 		}
 	}
 
