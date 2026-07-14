@@ -22,7 +22,10 @@ Usage: toolchain COMMAND
 Commands:
   version        Outputs the version of the module
   list           Outputs a list of installed packages
-  remote list    Outputs an object of remote packages and versions
+  remote list    Lists remote tooling packages and versions
+  remote models  Lists remote AI model packages and versions
+  remote all     Lists every installable remote package and version
+  remote tags    Lists raw registry tags for diagnostics
   pull           Downloads packages (with retry behavior for transient failures)
   load           Loads packages into the PowerShell session
   exec           Runs a user-defined scriptblock in a managed PowerShell session

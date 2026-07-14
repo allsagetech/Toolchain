@@ -55,11 +55,13 @@ Describe 'Tag conversion helpers' {
 Describe 'Docker package tag mapping' {
 	BeforeEach {
 		$env:TOOLCHAIN_REPOSITORY = 'example/toolchain'
+		$env:TOOLCHAIN_MODEL_PACKAGES = $null
 	}
 
 
 	AfterEach {
 		Remove-Item Env:TOOLCHAIN_REPOSITORY -ErrorAction Ignore
+		Remove-Item Env:TOOLCHAIN_MODEL_PACKAGES -ErrorAction Ignore
 	}
 	It 'parses docker tag names into packages' {
 		('toolchain-1.2.3' | AsDockerPackage).Tag.Major | Should -Be '1'
@@ -72,6 +74,154 @@ Describe 'Docker package tag mapping' {
 		$pkgs.toolchain.Count | Should -Be 2
 		$tags = GetDockerTags
 		$tags.toolchain[0].ToString() | Should -Be '2.0.1'
+	}
+
+	It 'excludes Cosign and package-kind metadata from installable packages' {
+		$digitSignature = 'sha256-1' + ('a' * 63) + '.sig'
+		$letterSignature = 'sha256-a' + ('b' * 63) + '.sig'
+		Mock GetTagsList { @{ Tags = @(
+			'git-2.0.0',
+			$digitSignature,
+			$letterSignature,
+			('sha256-' + ('c' * 64) + '.att'),
+			('sha256-' + ('d' * 64) + '.sbom'),
+			'tlc-kind-model-v1-100-1--qwen3-0.6b'
+		) } }
+
+		$pkgs = GetDockerPackages
+		@($pkgs.Keys) | Should -Be @('git')
+		$pkgs.ContainsKey('sha256') | Should -BeFalse
+		$pkgs.ContainsKey('toolchain') | Should -BeFalse
+	}
+
+	It 'separates tooling and model views without removing models from resolution' {
+		Mock GetTagsList { @{ Tags = @(
+			'git-2.0.0',
+			'qwen3-0.6b-2025.7.26_346',
+			'tlc-kind-model-v1-100-1--qwen3-0.6b'
+		) } }
+
+		$tools = GetDockerPackages -Kind Tooling
+		$models = GetDockerPackages -Kind Model
+		$all = GetDockerPackages -Kind All
+		@($tools.Keys) | Should -Be @('git')
+		@($models.Keys) | Should -Be @('qwen3-0.6b')
+		@($all.Keys | Sort-Object) | Should -Be @('git', 'qwen3-0.6b')
+
+		# GetDockerTags defaults to the complete installable catalog because the
+		# package resolver uses it for pull/load/save operations.
+		$resolvedCatalog = GetDockerTags
+		$resolvedCatalog.PSObject.Properties.Name | Should -Contain 'qwen3-0.6b'
+
+		# The default list display is tooling-only without removing model
+		# properties that existing PowerShell automation may access.
+		$listCatalog = GetDockerTags -ToolingDefaultDisplay
+		$listCatalog.PSObject.Properties.Name | Should -Contain 'qwen3-0.6b'
+		$displayProperties = @($listCatalog.PSStandardMembers.DefaultDisplayPropertySet.ReferencedPropertyNames)
+		$displayProperties | Should -Contain 'git'
+		$displayProperties | Should -Not -Contain 'qwen3-0.6b'
+	}
+
+	It 'supports explicit model classification for legacy custom registries' {
+		$env:TOOLCHAIN_MODEL_PACKAGES = 'private-model; another-model'
+		Mock GetTagsList { @{ Tags = @('private-model-1.0.0', 'git-2.0.0') } }
+
+		$models = GetDockerPackages -Kind Model
+		@($models.Keys) | Should -Be @('private-model')
+	}
+
+	It 'uses the official migration catalog only before a complete registry catalog exists' {
+		$env:TOOLCHAIN_REPOSITORY = 'allsagetech/toolchains'
+		Mock GetTagsList { @{ Tags = @('qwen3-0.6b-1.0.0', 'git-2.0.0') } }
+
+		@(GetDockerPackages -Kind Model).Keys | Should -Be @('qwen3-0.6b')
+
+		Mock GetTagsList { @{ Tags = @(
+			'qwen3-0.6b-1.0.0',
+			'smollm2-135m-instruct-1.0.0',
+			'tlc-kind-model-v1-100-1--smollm2-135m-instruct'
+		) } }
+
+		# Published generations are authoritative. A newer generation can
+		# therefore reclassify an existing package from model to tooling.
+		@((GetDockerPackages -Kind Model).Keys) | Should -Be @('smollm2-135m-instruct')
+		@((GetDockerPackages -Kind Tooling).Keys) | Should -Be @('qwen3-0.6b')
+	}
+
+	It 'ignores incomplete generations and uses the newest complete model catalog' {
+		Mock GetTagsList { @{ Tags = @(
+			'alpha-1.0.0', 'beta-1.0.0', 'gamma-1.0.0',
+			'tlc-kind-model-v1-100-2--alpha',
+			'tlc-kind-model-v1-100-2--beta',
+			'tlc-kind-model-v1-101-3--alpha',
+			'tlc-kind-model-v1-101-3--gamma'
+		) } }
+
+		@((GetDockerPackages -Kind Model).Keys | Sort-Object) | Should -Be @('alpha', 'beta')
+		@((GetDockerPackages -Kind Tooling).Keys) | Should -Be @('gamma')
+	}
+
+	It 'lets a newer complete generation remove models from the catalog' {
+		Mock GetTagsList { @{ Tags = @(
+			'alpha-1.0.0', 'beta-1.0.0',
+			'tlc-kind-model-v1-100-2--alpha',
+			'tlc-kind-model-v1-100-2--beta',
+			'tlc-kind-model-v1-101-1--alpha'
+		) } }
+
+		@((GetDockerPackages -Kind Model).Keys) | Should -Be @('alpha')
+		@((GetDockerPackages -Kind Tooling).Keys) | Should -Be @('beta')
+	}
+
+	It 'supports an authoritative empty model catalog' {
+		Mock GetTagsList { @{ Tags = @(
+			'alpha-1.0.0',
+			'tlc-kind-model-v1-100-1--alpha',
+			'tlc-kind-model-v1-101-0--empty'
+		) } }
+
+		@((GetDockerPackages -Kind Model).Keys).Count | Should -Be 0
+		@((GetDockerPackages -Kind Tooling).Keys) | Should -Be @('alpha')
+	}
+
+	It 'rejects duplicate, case-conflicting, and aliased marker generations' {
+		@(GetCompleteRemoteModelCatalog -Tags @(
+			'tlc-kind-model-v1-100-1--alpha',
+			'tlc-kind-model-v1-0100-01--alpha'
+		)).Found | Should -BeFalse
+
+		@(GetCompleteRemoteModelCatalog -Tags @(
+			'tlc-kind-model-v1-200-2--alpha',
+			'tlc-kind-model-v1-200-2--ALPHA'
+		)).Found | Should -BeFalse
+
+		@(GetCompleteRemoteModelCatalog -Tags @(
+			'tlc-kind-model-v1-300-0--empty',
+			'tlc-kind-model-v1-0300-00--empty'
+		)).Found | Should -BeFalse
+	}
+
+	It 'does not display models when the remote catalog contains no tooling packages' {
+		Mock GetTagsList { @{ Tags = @(
+			'qwen3-0.6b-1.0.0',
+			'tlc-kind-model-v1-100-1--qwen3-0.6b'
+		) } }
+
+		$listCatalog = GetDockerTags -ToolingDefaultDisplay
+		$listCatalog.PSObject.Properties.Name | Should -Contain 'qwen3-0.6b'
+		$listCatalog.'Tooling packages' | Should -Be 'None'
+		$rendered = $listCatalog | Out-String
+		$rendered | Should -Match 'Tooling packages'
+		$rendered | Should -Not -Match 'qwen3-0.6b'
+	}
+
+	It 'keeps raw metadata available through the diagnostic tag view' {
+		$signature = 'sha256-' + ('f' * 64) + '.sig'
+		Mock GetTagsList { @{ Tags = @('git-2.0.0', $signature) } }
+
+		$tags = @(GetRemoteRegistryTags)
+		$tags | Should -Contain 'git-2.0.0'
+		$tags | Should -Contain $signature
 	}
 }
 
@@ -139,6 +289,18 @@ Describe 'ResolveDockerRef selection logic' {
 	It 'normalizes bare sha256 hex digests' {
 		$p = @{ Package='foo'; Tag=@{ Latest=$true }; Digest=('a'*64) }
 		($p | ResolveDockerRef) | Should -Be ('sha256:' + ('a'*64))
+	}
+
+	It 'resolves a model while ignoring catalog and Cosign metadata tags' {
+		Mock GetTagsList { @{ Tags = @(
+			'qwen3-0.6b-2025.7.25_999',
+			'qwen3-0.6b-2025.7.26_346',
+			'tlc-kind-model-v1-100-1--qwen3-0.6b',
+			('sha256-' + ('1' * 64) + '.sig')
+		) } }
+
+		$p = @{ Package='qwen3-0.6b'; Tag=@{ Latest=$true } }
+		($p | ResolveDockerRef) | Should -Be 'qwen3-0.6b-2025.7.26_346'
 	}
 
 	It 'throws for unknown packages' {
