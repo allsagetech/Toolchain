@@ -78,8 +78,11 @@ Describe 'Invoke-Toolchain dispatcher' {
 		(Invoke-Toolchain -Command v) | Should -Be '1.0.0'
 	}
 
-	It 'Routes remote list command' {
+	It 'Routes remote catalog commands' {
 		(Invoke-Toolchain -Command remote -ArgumentList @('list')) | Should -Be 'remote:list'
+		(Invoke-Toolchain -Command remote -ArgumentList @('models')) | Should -Be 'remote:models'
+		(Invoke-Toolchain -Command remote -ArgumentList @('all')) | Should -Be 'remote:all'
+		(Invoke-Toolchain -Command remote -ArgumentList @('tags')) | Should -Be 'remote:tags'
 	}
 
 	It 'Normalizes load/pull/remove packages to strings' {
@@ -378,15 +381,24 @@ Describe 'Invoke-ToolchainDoctor' {
 }
 
 Describe 'Invoke-ToolchainRemote' {
-	It 'Lists tags from registry' {
-		Mock GetDockerTags { return 123 }
-		(Invoke-ToolchainRemote -Command list) | Should -Be 123
+	It 'Routes package views to their catalog kinds' {
+		Mock GetDockerTags { param($Kind, [switch]$ToolingDefaultDisplay) return "$Kind`:$([bool]$ToolingDefaultDisplay)" }
+		(Invoke-ToolchainRemote -Command list) | Should -Be 'All:True'
+		(Invoke-ToolchainRemote -Command models) | Should -Be 'Model:False'
+		(Invoke-ToolchainRemote -Command all) | Should -Be 'All:False'
+	}
+
+	It 'Exposes raw registry tags only through the diagnostic command' {
+		Mock GetRemoteRegistryTags { return @('package-1.0.0', 'sha256-digest.sig') }
+		@(Invoke-ToolchainRemote -Command tags) | Should -Be @('package-1.0.0', 'sha256-digest.sig')
 	}
 }
 
 Describe 'Invoke-ToolchainHelp' {
 	It 'Returns usage text' {
 		(Invoke-ToolchainHelp) | Should -Match 'Usage:'
+		(Invoke-ToolchainHelp) | Should -Match 'remote models'
+		(Invoke-ToolchainHelp) | Should -Match 'remote tags'
 	}
 }
 
