@@ -46,12 +46,12 @@ jobs:
       TOOLCHAIN_COVERAGE_TARGET: ${{ matrix.coverage }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Cache PowerShell modules
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ps_modules
           key: psmodules-${{ runner.os }}-${{ matrix.shell }}-${{ hashFiles('test.ps1') }}
@@ -86,13 +86,15 @@ jobs:
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
           .\test.ps1 *>&1 | Tee-Object -FilePath (Join-Path artifacts '${{ matrix.log }}')
 
-      - name: Run explicit cross-platform suite (PowerShell 7 on Linux)
+      - name: Run cross-platform registry and archive suite (PowerShell 7 on Linux)
         if: runner.os == 'Linux'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          # Toolchain's supported client is Windows. Keep Linux coverage focused
+          # on the portable OCI transport, definition, and extraction boundary.
           $paths = @(
             '.\src\definition.Tests.ps1'
             '.\src\http.Tests.ps1'
@@ -113,7 +115,7 @@ jobs:
 
       - name: Upload test log
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.name }}-log
           path: artifacts/${{ matrix.log }}
@@ -124,5 +126,50 @@ jobs:
         uses: codecov/codecov-action@04b047e8bb82a0c002c8312c1c880fbc6a999d45 # v5
         with:
           files: ./coverage.xml
-          fail_ci_if_error: true
+          # The test suite enforces the coverage threshold. Keep the external
+          # upload best-effort until this repository is onboarded in Codecov.
+          fail_ci_if_error: false
           use_oidc: true
+
+  registry-integration:
+    name: Local OCI registry integration
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    services:
+      registry:
+        image: registry:2@sha256:46faa9a1ae6813194b53921a370f2f4f8c5e1aae228a89bceafef5847a6a3278
+        ports:
+          - 5000:5000
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Publish fixture image
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path .registry-fixture -Force | Out-Null
+          [IO.File]::WriteAllText('.registry-fixture/.tlc', '{"env":{"PATH":"${.}/bin"}}')
+          [IO.File]::WriteAllText('.registry-fixture/Dockerfile', @'
+          FROM scratch
+          COPY .tlc /.tlc
+          '@)
+          docker build -t localhost:5000/acme/toolchains:demo-1.0.0 .registry-fixture
+          docker push localhost:5000/acme/toolchains:demo-1.0.0
+
+      - name: Exercise Registry V2 discovery and manifest retrieval
+        shell: pwsh
+        env:
+          TOOLCHAIN_REGISTRY: http://localhost:5000
+          TOOLCHAIN_INDEX_REGISTRY: http://localhost:5000
+          TOOLCHAIN_REPOSITORY: acme/toolchains
+          TOOLCHAIN_CATALOG_CACHE_TTL: 00:00:00
+        run: |
+          $ErrorActionPreference = 'Stop'
+          . .\src\registry.ps1
+          $catalog = GetTagsList -Refresh
+          if ('demo-1.0.0' -notin @($catalog.Tags)) { throw 'Local registry tag discovery failed.' }
+          $manifest = GetManifestJson -Ref 'demo-1.0.0'
+          if ([int]$manifest.schemaVersion -ne 2) { throw 'Local registry manifest retrieval failed.' }

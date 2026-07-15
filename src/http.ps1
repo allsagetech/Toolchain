@@ -41,7 +41,11 @@ function HttpRequest {
 		}
 	}
 	if ($req.Headers.UserAgent.Count -eq 0) {
-		$userAgent = if ($env:TOOLCHAIN_USER_AGENT) { [string]$env:TOOLCHAIN_USER_AGENT } else { 'Toolchain/1 PowerShell' }
+		$userAgent = if ($env:TOOLCHAIN_USER_AGENT) {
+			[string]$env:TOOLCHAIN_USER_AGENT
+		} else {
+			'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+		}
 		$req.Headers.TryAddWithoutValidation('User-Agent', $userAgent) | Out-Null
 	}
 	if ($Accept) {

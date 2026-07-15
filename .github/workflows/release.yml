@@ -42,12 +42,12 @@ jobs:
       TOOLCHAIN_COVERAGE_TARGET: ${{ matrix.coverage }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Cache PowerShell modules
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ps_modules
           key: release-psmodules-${{ runner.os }}-${{ matrix.shell }}-${{ hashFiles('test.ps1') }}
@@ -74,7 +74,7 @@ jobs:
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
           .\test.ps1
 
-      - name: Run explicit cross-platform suite (PowerShell 7 on Linux)
+      - name: Run cross-platform registry and archive suite (PowerShell 7 on Linux)
         if: runner.os == 'Linux'
         shell: pwsh
         run: |
@@ -108,7 +108,7 @@ jobs:
       attestations: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -147,21 +147,22 @@ jobs:
           path: build/Toolchain
           format: spdx-json
           output-file: dist/Toolchain-${{ github.ref_name }}.spdx.json
+          syft-version: v1.51.0
           upload-artifact: false
           upload-release-assets: false
 
       - name: Attest release provenance
-        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         with:
           subject-path: ${{ steps.package.outputs.archive }}
 
       - name: Attest package specification provenance
-        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         with:
           subject-path: dist/toolchain-package-spec-v1.zip
 
       - name: Attest release SBOM
-        uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         with:
           subject-path: ${{ steps.package.outputs.archive }}
           sbom-path: dist/Toolchain-${{ github.ref_name }}.spdx.json
@@ -181,3 +182,15 @@ jobs:
             "dist/toolchain-package-spec-v1.zip" \
             "dist/toolchain-package-spec-v1.zip.sha256" \
             "dist/SHA256SUMS"
+
+      - name: Publish matching PowerShell Gallery package
+        shell: pwsh
+        env:
+          PSGALLERY_API_KEY: ${{ secrets.PSGALLERY_API_KEY }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:PSGALLERY_API_KEY)) {
+            Write-Output '::warning title=PowerShell Gallery publish skipped::Configure PSGALLERY_API_KEY in the toolchain-release environment to publish this exact release to PowerShell Gallery.'
+            return
+          }
+          Publish-Module -Path .\build\Toolchain -Repository PSGallery -NuGetApiKey $env:PSGALLERY_API_KEY -Force
