@@ -69,6 +69,7 @@ Describe 'Invoke-Toolchain dispatcher' {
 		Mock Invoke-ToolchainExec { param([string[]]$Packages,[scriptblock]$ScriptBlock) @($Packages).Count }
 		Mock Invoke-ToolchainRun { param([string]$FnName,[object[]]$ArgumentList) @($FnName) + @($ArgumentList) }
 		Mock Invoke-ToolchainInit { 'init' }
+		Mock Invoke-ToolchainProfile { param($Command,[string[]]$Packages) @($Command) + @($Packages) }
 		Mock Invoke-ToolchainDoctor { 'doctor' }
 		Mock Invoke-ToolchainHelp { 'help' }
 	}
@@ -119,6 +120,7 @@ Describe 'Invoke-Toolchain dispatcher' {
 		(Invoke-Toolchain -Command update) | Should -Be 'update'
 		(Invoke-Toolchain -Command save -ArgumentList @('-Output','out')) | Should -Be 'save'
 		(Invoke-Toolchain -Command init) | Should -Be 'init'
+		@(Invoke-Toolchain -Command profile -ArgumentList @('add','node','git')) | Should -Be @('add','node','git')
 		(Invoke-Toolchain -Command doctor) | Should -Be 'doctor'
 		(Invoke-Toolchain -Command help) | Should -Be 'help'
 		(Invoke-Toolchain -Command h) | Should -Be 'help'
@@ -366,6 +368,16 @@ Describe 'Invoke-ToolchainDoctor' {
 		{ Invoke-ToolchainDoctor } | Should -Not -Throw
 	}
 
+	It 'Returns structured diagnostics for automation' {
+		Mock GetToolchainRepo { return $null }
+		Mock GetTagsList { return @{ tags = @('a','b') } }
+		$result = Invoke-ToolchainDoctor -PassThru
+		$result.PSTypeNames | Should -Contain 'Toolchain.DoctorResult'
+		$result.Healthy | Should -BeTrue
+		$result.TagCount | Should -Be 2
+		(Invoke-ToolchainDoctor -Json | ConvertFrom-Json).Healthy | Should -BeTrue
+	}
+
 	It 'Reports registry failure and throws in strict mode' {
 		Mock GetToolchainRepo { return $null }
 		Mock GetTagsList { throw 'offline' }
@@ -382,10 +394,16 @@ Describe 'Invoke-ToolchainDoctor' {
 
 Describe 'Invoke-ToolchainRemote' {
 	It 'Routes package views to their catalog kinds' {
-		Mock GetDockerTags { param($Kind, [switch]$ToolingDefaultDisplay) return "$Kind`:$([bool]$ToolingDefaultDisplay)" }
-		(Invoke-ToolchainRemote -Command list) | Should -Be 'All:True'
-		(Invoke-ToolchainRemote -Command models) | Should -Be 'Model:False'
-		(Invoke-ToolchainRemote -Command all) | Should -Be 'All:False'
+		Mock GetDockerTags { param($Kind, [switch]$ToolingDefaultDisplay, [switch]$Refresh) return "$Kind`:$([bool]$ToolingDefaultDisplay):$([bool]$Refresh)" }
+		(Invoke-ToolchainRemote -Command list) | Should -Be 'All:True:False'
+		(Invoke-ToolchainRemote -Command models) | Should -Be 'Model:False:False'
+		(Invoke-ToolchainRemote -Command all -Refresh) | Should -Be 'All:False:True'
+	}
+
+	It 'Supports JSON output' {
+		Mock GetDockerTags { return [pscustomobject]@{ package = @('1.0.0') } }
+		$result = Invoke-ToolchainRemote -Command all -Json | ConvertFrom-Json
+		$result.package | Should -Contain '1.0.0'
 	}
 
 	It 'Exposes raw registry tags only through the diagnostic command' {
@@ -403,16 +421,20 @@ Describe 'Invoke-ToolchainHelp' {
 }
 
 Describe 'CheckForUpdates' {
+	BeforeEach {
+		Mock Set-ToolchainUpdateCheckTime { }
+	}
+
 	It 'Swallows network errors' {
 		Mock HttpSend { throw 'offline' }
-		{ CheckForUpdates } | Should -Not -Throw
+		{ CheckForUpdates -Force } | Should -Not -Throw
 	}
 
 	It 'No-ops when no redirect location is present' {
 		Mock HttpRequest { return [Net.Http.HttpRequestMessage]::new() }
 		Mock HttpSend { return [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::OK) }
 		Mock Import-PowerShellDataFile { return @{ ModuleVersion='1.0.0' } }
-		{ CheckForUpdates } | Should -Not -Throw
+		{ CheckForUpdates -Force } | Should -Not -Throw
 	}
 
 	It 'Writes message when a newer version is available' {
@@ -424,7 +446,7 @@ Describe 'CheckForUpdates' {
 			return $resp
 		}
 		Mock Write-ToolchainInfo { }
-		CheckForUpdates
+		CheckForUpdates -Force
 		Should -Invoke -CommandName Write-ToolchainInfo -Times 2 -Exactly
 	}
 
@@ -437,7 +459,7 @@ Describe 'CheckForUpdates' {
 			return $resp
 		}
 		Mock Write-ToolchainInfo { }
-		CheckForUpdates
+		CheckForUpdates -Force
 		Should -Invoke -CommandName Write-ToolchainInfo -Times 0 -Exactly
 	}
 }

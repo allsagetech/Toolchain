@@ -16,7 +16,7 @@ Prints diagnostics for your Toolchain setup.
 
 ## Usage
 
-    toolchain doctor [-Strict]
+    toolchain doctor [-Strict] [-PassThru] [-Json] [-Refresh]
 
 ## Output (example)
 
@@ -36,3 +36,6 @@ If issues are found, `-Strict` will throw an error (useful for CI):
 ```powershell
 toolchain doctor -Strict
 ```
+
+Use `-PassThru` for a `Toolchain.DoctorResult` object, `-Json` for serialized
+diagnostics, and `-Refresh` to bypass the cached remote catalog.

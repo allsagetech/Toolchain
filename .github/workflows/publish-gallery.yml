@@ -1,0 +1,121 @@
+# <#
+# Toolchain
+# Copyright (c) 2026 AllSageTech
+# SPDX-License-Identifier: MPL-2.0
+# #>
+name: Publish Toolchain to PowerShell Gallery
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing GitHub release tag to publish
+        required: true
+        default: v2.2.0
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: powershell-gallery-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish verified release artifact
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    environment: toolchain-release
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PSGALLERY_API_KEY: ${{ secrets.PSGALLERY_API_KEY }}
+      POWERSHELL_TELEMETRY_OPTOUT: '1'
+    steps:
+      - name: Validate requested release
+        id: release
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ($env:RELEASE_TAG -notmatch '^v(?<version>\d+\.\d+\.\d+)$') {
+            throw "Release tag must use vMAJOR.MINOR.PATCH syntax: $env:RELEASE_TAG"
+          }
+          gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -ne 0) { throw "GitHub release not found: $env:RELEASE_TAG" }
+          "version=$($Matches.version)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Download release module and checksum
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path artifact -Force | Out-Null
+          gh release download $env:RELEASE_TAG `
+            --repo $env:GITHUB_REPOSITORY `
+            --pattern "Toolchain-$env:RELEASE_TAG.zip" `
+            --pattern SHA256SUMS `
+            --dir artifact
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to download the release module and checksum.' }
+
+      - name: Verify and extract exact release artifact
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $archive = Join-Path artifact "Toolchain-$env:RELEASE_TAG.zip"
+          $checksumLine = Get-Content -LiteralPath (Join-Path artifact SHA256SUMS) -Raw
+          if ($checksumLine -notmatch '^(?<hash>[0-9a-fA-F]{64})\s+Toolchain-v\d+\.\d+\.\d+\.zip\s*$') {
+            throw 'SHA256SUMS does not contain the expected Toolchain release entry.'
+          }
+          $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash
+          if ($actual -ine $Matches.hash) { throw "Release checksum mismatch: expected $($Matches.hash), got $actual" }
+
+          $modulePath = Join-Path artifact Toolchain
+          Expand-Archive -LiteralPath $archive -DestinationPath $modulePath
+          $manifest = Test-ModuleManifest -Path (Join-Path $modulePath Toolchain.psd1)
+          if ($manifest.Version.ToString() -ne $env:RELEASE_VERSION) {
+            throw "Release module version '$($manifest.Version)' does not match '$env:RELEASE_VERSION'."
+          }
+
+      - name: Publish module
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:PSGALLERY_API_KEY)) {
+            throw 'PSGALLERY_API_KEY is unavailable to the toolchain-release environment.'
+          }
+
+          $published = Find-Module Toolchain -Repository PSGallery -RequiredVersion $env:RELEASE_VERSION -ErrorAction SilentlyContinue
+          if ($published) {
+            Write-Host "Toolchain $env:RELEASE_VERSION is already published; nothing to do."
+            return
+          }
+
+          Publish-Module `
+            -Path (Join-Path artifact Toolchain) `
+            -Repository PSGallery `
+            -NuGetApiKey $env:PSGALLERY_API_KEY `
+            -Force
+          Write-Host "Published Toolchain $env:RELEASE_VERSION to PowerShell Gallery."
+
+      - name: Write publication summary
+        if: always()
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          @"
+          ## PowerShell Gallery publication
+
+          - GitHub release: ``$env:RELEASE_TAG``
+          - Module version: ``$env:RELEASE_VERSION``
+          - Source: verified GitHub release ZIP and SHA256SUMS
+          "@ | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY

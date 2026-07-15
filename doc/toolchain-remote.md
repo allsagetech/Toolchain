@@ -15,6 +15,8 @@ views.
 	toolchain remote models
 	toolchain remote all
 	toolchain remote tags
+	toolchain remote list -Refresh
+	toolchain remote all -Json
 
 - `list` displays ordinary tooling packages by default while retaining model
   properties on the PowerShell object for compatibility with existing scripts.
@@ -22,6 +24,12 @@ views.
 - `all` returns every installable package, including tools and models.
 - `tags` returns raw registry tags for diagnostics. This view can include
   Cosign `sha256-<digest>.sig` tags and Toolchain package-kind markers.
+- `-Refresh` bypasses the short-lived on-disk catalog cache.
+- `-Json` emits the selected view as JSON for CI and other automation.
+
+The last successful catalog is cached for 15 minutes by default and is used as
+a stale fallback when a registry is temporarily unavailable. Configure the
+duration with `TOOLCHAIN_CATALOG_CACHE_TTL`.
 
 ## Examples
 

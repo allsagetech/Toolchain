@@ -35,6 +35,7 @@ Commands:
   remove         Untags and deletes packages
   save           Downloads packages for use in an offline installation
   init           Writes a starter Toolchain.ps1 in the current directory
+  profile        Creates or manages Toolchain loads in your PowerShell profile
   doctor         Prints diagnostics for your Toolchain setup
   help           Outputs usage for this command
 
