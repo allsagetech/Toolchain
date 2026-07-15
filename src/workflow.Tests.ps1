@@ -16,4 +16,8 @@ Describe 'GitHub Actions test workflow' {
 		$testWorkflow | Should -Match '(?ms)- name:\s*Upload coverage to Codecov.*?with:.*?use_oidc:\s*true'
 		$testWorkflow | Should -Not -Match 'secrets\.CODECOV_TOKEN'
 	}
+
+	It 'does not fail CI when an unconfigured Codecov repository rejects an upload' {
+		$testWorkflow | Should -Match '(?ms)- name:\s*Upload coverage to Codecov.*?with:.*?fail_ci_if_error:\s*false'
+	}
 }

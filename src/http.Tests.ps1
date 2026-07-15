@@ -31,7 +31,7 @@ Describe 'HttpRequest' {
 		$req.Headers.GetValues('X-Test')[0] | Should -Be '1'
 		$req.Headers.Authorization.ToString() | Should -Be 'Bearer t'
 		$req.Headers.Range.ToString() | Should -Be 'bytes=0-9'
-		$req.Headers.UserAgent.ToString() | Should -Match 'Toolchain'
+		$req.Headers.UserAgent.ToString() | Should -Match '^Mozilla/5\.0 .+ Chrome/[0-9]+'
 	}
 
 	It 'omits range upper bound when RangeTo is not specified' {
@@ -42,6 +42,17 @@ Describe 'HttpRequest' {
 	It 'allows custom User-Agent headers' {
 		$req = HttpRequest -URL 'https://example.com/a' -Headers @{ 'User-Agent' = 'custom-agent/1.0' }
 		$req.Headers.UserAgent.ToString() | Should -Be 'custom-agent/1.0'
+	}
+
+	It 'allows the default User-Agent to be overridden by the environment' {
+		$oldUserAgent = $env:TOOLCHAIN_USER_AGENT
+		try {
+			$env:TOOLCHAIN_USER_AGENT = 'environment-agent/2.0'
+			$req = HttpRequest -URL 'https://example.com/a'
+			$req.Headers.UserAgent.ToString() | Should -Be 'environment-agent/2.0'
+		} finally {
+			$env:TOOLCHAIN_USER_AGENT = $oldUserAgent
+		}
 	}
 }
 

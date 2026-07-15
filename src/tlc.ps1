@@ -6,6 +6,8 @@ SPDX-License-Identifier: MPL-2.0
 
 . $PSScriptRoot\package.ps1
 . $PSScriptRoot\shell.ps1
+. $PSScriptRoot\maintenance.ps1
+. $PSScriptRoot\completion.ps1
 
 <#
 .SYNOPSIS
@@ -32,7 +34,8 @@ function Invoke-Toolchain {
 				Invoke-ToolchainVersion
 			}
 			'remote' {
-				Invoke-ToolchainRemote @ArgumentList
+				$params, $remaining = ResolveParameters 'Invoke-ToolchainRemote' $ArgumentList
+				Invoke-ToolchainRemote @params @remaining
 			}
 			'list' {
 				Invoke-ToolchainList
@@ -282,22 +285,26 @@ function Invoke-ToolchainRemote {
 	param (
 		[Parameter(Mandatory)]
 		[ValidateSet('list', 'models', 'all', 'tags')]
-		[string]$Command
+		[string]$Command,
+		[switch]$Refresh,
+		[switch]$Json
 	)
-	switch ($Command) {
+	$result = switch ($Command) {
 		'list' {
-			GetDockerTags -Kind All -ToolingDefaultDisplay
+			GetDockerTags -Kind All -ToolingDefaultDisplay -Refresh:$Refresh
 		}
 		'models' {
-			GetDockerTags -Kind Model
+			GetDockerTags -Kind Model -Refresh:$Refresh
 		}
 		'all' {
-			GetDockerTags -Kind All
+			GetDockerTags -Kind All -Refresh:$Refresh
 		}
 		'tags' {
-			GetRemoteRegistryTags
+			GetRemoteRegistryTags -Refresh:$Refresh
 		}
 	}
+	if ($Json) { return ($result | ConvertTo-Json -Depth 20) }
+	return $result
 }
 
 function Invoke-ToolchainSave {
@@ -375,16 +382,25 @@ $ToolchainPackages = @(
 function Invoke-ToolchainDoctor {
   [CmdletBinding()]
   param(
-    [switch]$Strict
+    [switch]$Strict,
+    [switch]$PassThru,
+    [switch]$Json,
+    [switch]$Refresh
   )
 
   $errors = @()
+  $toolchainPath = $null
+  $repoPath = $null
+  $registry = $null
+  $repository = $null
+  $tagCount = $null
+  $structured = $PassThru -or $Json
 
   try {
-    $p = GetToolchainPath
-    Write-ToolchainInfo "ToolchainPath: $p"
-    MakeDirIfNotExist $p | Out-Null
-    $test = Join-Path $p (".doctor." + [guid]::NewGuid().ToString('n'))
+    $toolchainPath = GetToolchainPath
+    if (-not $structured) { Write-ToolchainInfo "ToolchainPath: $toolchainPath" }
+    MakeDirIfNotExist $toolchainPath | Out-Null
+    $test = Join-Path $toolchainPath (".doctor." + [guid]::NewGuid().ToString('n'))
     'ok' | Set-Content -LiteralPath $test -Encoding ascii
     Remove-Item -LiteralPath $test -Force
   } catch {
@@ -393,26 +409,43 @@ function Invoke-ToolchainDoctor {
 
   $repoPath = GetToolchainRepo
   if ($repoPath) {
-    Write-ToolchainInfo "Offline repository: $repoPath"
+    if (-not $structured) { Write-ToolchainInfo "Offline repository: $repoPath" }
     if (-not (Test-Path -LiteralPath $repoPath -PathType Container)) {
       $errors += "ToolchainRepo not found: $repoPath"
     }
   } else {
-    Write-ToolchainInfo "Registry: $(GetRegistryBaseUrl)"
-    Write-ToolchainInfo "Repository: $(GetRegistryRepoName)"
+    $registry = GetRegistryBaseUrl
+    $repository = GetRegistryRepoName
+    if (-not $structured) {
+      Write-ToolchainInfo "Registry: $registry"
+      Write-ToolchainInfo "Repository: $repository"
+    }
     try {
-      $tags = GetTagsList
-      $count = @($tags.tags).Count
-      Write-ToolchainInfo "Registry reachable; tags count: $count"
+      $tags = GetTagsList -Refresh:$Refresh
+      $tagCount = @($tags.tags).Count
+      if (-not $structured) { Write-ToolchainInfo "Registry reachable; tags count: $tagCount" }
     } catch {
       $errors += "Registry check failed: $_"
     }
   }
 
+  $result = [pscustomobject]@{
+    PSTypeName = 'Toolchain.DoctorResult'
+    Healthy = ($errors.Count -eq 0)
+    ToolchainPath = $toolchainPath
+    OfflineRepository = $repoPath
+    Registry = $registry
+    Repository = $repository
+    TagCount = $tagCount
+    Errors = @($errors)
+  }
+  if ($Json) { $result | ConvertTo-Json -Depth 5 }
+  elseif ($PassThru) { $result }
+
   if ($errors.Count -gt 0) {
     foreach ($e in $errors) { Write-Error $e }
     if ($Strict) { throw "doctor found $($errors.Count) issue(s)" }
-  } else {
+  } elseif (-not $structured) {
     Write-ToolchainInfo "doctor: ok"
   }
 }
@@ -438,7 +471,7 @@ Commands:
   remove         Untags and deletes packages
   save           Downloads packages for use in an offline installation
   init           Writes a starter Toolchain.ps1 in the current directory
-  doctor         Prints diagnostics for your Toolchain setup
+  doctor         Prints diagnostics; supports -PassThru and -Json
   help           Outputs usage for this command
 
 For detailed documentation and examples, visit https://github.com/allsagetech/toolchain.
@@ -447,6 +480,8 @@ For detailed documentation and examples, visit https://github.com/allsagetech/to
 }
 
 function CheckForUpdates {
+	param([switch]$Force)
+	if (-not $Force -and -not (Test-ToolchainUpdateCheckDue)) { return }
 	try {
 		$params = @{
 			URL = "https://www.powershellgallery.com/packages/toolchain"
@@ -463,12 +498,16 @@ function CheckForUpdates {
 		}
 	} catch {
 		Write-Debug "failed to check for updates: $_"
+	} finally {
+		Set-ToolchainUpdateCheckTime
 	}
 }
 
 Set-Alias -Name 'toolchain' -Value 'Invoke-Toolchain' -Scope Global
 Set-Alias -Name 'tool' -Value 'Invoke-Toolchain' -Scope Global
 Set-Alias -Name 'tlc' -Value 'Invoke-Toolchain' -Scope Global
+
+Register-ToolchainArgumentCompleters
 
 
 function Invoke-ToolchainModuleEntry {

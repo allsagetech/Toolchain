@@ -29,6 +29,12 @@ Install-Module Toolchain -Scope CurrentUser
 Import-Module Toolchain
 ```
 
+Tagged GitHub releases are the canonical immutable artifacts and include SHA-256
+checksums, an SPDX SBOM, and GitHub provenance attestations. PowerShell Gallery
+receives the same built module when the release environment has its
+`PSGALLERY_API_KEY` configured; check `Find-Module Toolchain` if the Gallery
+channel is temporarily behind the latest GitHub release.
+
 ### Offline / no PowerShell Gallery access
 
 This repo includes an installer that builds the module and copies it to your user module path:
@@ -201,7 +207,7 @@ Toolchain reads configuration from either a global variable (highest priority) o
 ### Registry selection
 
 - `TOOLCHAIN_REGISTRY` — base registry URL (default: `https://registry-1.docker.io`)
-- `TOOLCHAIN_INDEX_REGISTRY` — index API URL used for tag listing (default: `https://index.docker.io`)
+- `TOOLCHAIN_INDEX_REGISTRY` — index API URL used for tag listing (default: the value of `TOOLCHAIN_REGISTRY`)
 - `TOOLCHAIN_REPOSITORY` — repo name (default: `allsagetech/toolchains`)
 - `TOOLCHAIN_MODEL_PACKAGES` — optional comma/semicolon-separated model package names for legacy custom registries that do not publish package-kind markers
 - `TOOLCHAIN_OS` / `TOOLCHAIN_ARCH` — platform selection when resolving multi-arch manifests (defaults: `windows` / `amd64`)
@@ -220,6 +226,10 @@ Toolchain supports:
 - `TOOLCHAIN_HTTP_DISABLE_PROXY=1` — disable proxy usage
 - `TOOLCHAIN_HTTP_TIMEOUT_SECONDS` — override HTTP timeout
 - `TOOLCHAIN_TLS_INSECURE=1` — disable TLS certificate validation (only for controlled/private PKI environments)
+- `TOOLCHAIN_CATALOG_CACHE_TTL` — remote package catalog cache duration (default: `00:15:00`; set to `00:00:00` to disable)
+- `TOOLCHAIN_CATALOG_REFRESH=1` — bypass the catalog cache for the current process
+- `TOOLCHAIN_UPDATE_CHECK_TTL` — PowerShell Gallery update-check interval (default: `1.00:00:00`)
+- `TOOLCHAIN_DISABLE_UPDATE_CHECK=1` — disable the import-time update check
 
 ### Convenience: `.env` loading
 
@@ -234,10 +244,17 @@ See `.env.example` for supported values.
 ## Troubleshooting
 
 - `toolchain doctor` prints diagnostics (cache path writability, registry reachability, offline repo status).
+- `toolchain doctor -PassThru` and `toolchain doctor -Json` provide structured diagnostics for automation.
+- Add `-Refresh` to `toolchain remote ...` or `toolchain doctor` to bypass cached registry data.
 - If `cosign` verification is enabled, ensure `cosign` is installed and on `PATH`.
 - If you see policy failures, confirm which policy file is being discovered (see `doc/toolchain-policy.md`).
 
 ## Development
+
+The supported Toolchain client runs on Windows. CI executes the complete suite
+on Windows PowerShell 5.1 and PowerShell 7. Linux CI covers the portable OCI
+registry, package-definition, archive-extraction, and producer/consumer contract
+boundary used by the Toolchains repository.
 
 Build the module into `build/Toolchain/`:
 
@@ -260,6 +277,8 @@ Install a locally-built copy to your user module path:
 Package-definition compatibility is governed by the versioned contract in `schema/`. Run the shared valid/invalid fixture corpus when changing definition parsing, labels, or environment semantics. Release automation exports that contract with `scripts/export-package-spec.ps1`.
 
 Security-sensitive changes must preserve the boundaries described in [`SECURITY.md`](SECURITY.md). Cache-layout changes and the legacy short-digest migration are documented in [`doc/cache-migration-v2.md`](doc/cache-migration-v2.md). Tag and artifact publication is documented in [`doc/release-process.md`](doc/release-process.md), and user-visible changes are recorded in [`CHANGELOG.md`](CHANGELOG.md).
+
+The module boundaries and request flow are summarized in [`doc/architecture.md`](doc/architecture.md).
 
 ## License
 

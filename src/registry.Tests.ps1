@@ -7,6 +7,48 @@ SPDX-License-Identifier: MPL-2.0
 
 BeforeAll {
 	. $PSCommandPath.Replace('.Tests.ps1', '.ps1')
+	$script:oldCatalogCacheTtl = $env:TOOLCHAIN_CATALOG_CACHE_TTL
+	$env:TOOLCHAIN_CATALOG_CACHE_TTL = '00:00:00'
+}
+
+AfterAll {
+	$env:TOOLCHAIN_CATALOG_CACHE_TTL = $script:oldCatalogCacheTtl
+}
+
+Describe 'Remote catalog cache' {
+	BeforeEach {
+		$env:TOOLCHAIN_CATALOG_CACHE_TTL = '00:15:00'
+		$env:TOOLCHAIN_REGISTRY = 'https://registry.example.test'
+		$env:TOOLCHAIN_INDEX_REGISTRY = 'https://registry.example.test'
+		$env:TOOLCHAIN_REPOSITORY = 'acme/toolchains'
+		Mock GetToolchainRepo { return $null }
+		Mock GetPwrDBPath { return (Join-Path $TestDrive 'cache') }
+		Mock Assert-ToolchainRegistryPolicyAllowed { }
+		Mock GetRegistryTagsList { return [pscustomobject]@{ Name='acme/toolchains'; Tags=@('pkg-1.0.0') } }
+	}
+
+	AfterEach {
+		$env:TOOLCHAIN_CATALOG_CACHE_TTL = '00:00:00'
+		Remove-Item Env:TOOLCHAIN_REGISTRY,Env:TOOLCHAIN_INDEX_REGISTRY,Env:TOOLCHAIN_REPOSITORY -ErrorAction Ignore
+	}
+
+	It 'reuses a fresh matching catalog and supports explicit refresh' {
+		(GetTagsList).Tags | Should -Contain 'pkg-1.0.0'
+		(GetTagsList).Tags | Should -Contain 'pkg-1.0.0'
+		Should -Invoke -CommandName GetRegistryTagsList -Exactly -Times 1
+		(GetTagsList -Refresh).Tags | Should -Contain 'pkg-1.0.0'
+		Should -Invoke -CommandName GetRegistryTagsList -Exactly -Times 2
+	}
+
+	It 'uses stale matching data when the registry is temporarily unavailable' {
+		(GetTagsList).Tags | Should -Contain 'pkg-1.0.0'
+		$path = Get-ToolchainCatalogCachePath
+		$document = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+		$document.createdAt = [datetime]::UtcNow.AddHours(-1).ToString('o')
+		[IO.File]::WriteAllText($path, ($document | ConvertTo-Json -Depth 5))
+		Mock GetRegistryTagsList { throw 'temporary outage' }
+		(GetTagsList).Tags | Should -Contain 'pkg-1.0.0'
+	}
 }
 
 Describe "Registry config defaults" {
@@ -36,6 +78,7 @@ Describe "Registry config defaults" {
 	It "Defaults to allsagetech/toolchains on Docker Hub" {
 		GetRegistryRepoName | Should -Be 'allsagetech/toolchains'
 		(GetRegistryBaseUrl) | Should -Be 'https://registry-1.docker.io'
+		(GetRegistryIndexUrl) | Should -Be 'https://registry-1.docker.io'
 	}
 	It "Defaults to Windows/amd64 platform" {
 		(GetRegistryPlatformOs) | Should -Be 'windows'
@@ -239,9 +282,12 @@ Describe "Response disposal in registry helpers" {
 		$script:hubCalls = 0
 		Mock HttpSend {
 			$script:hubCalls += 1
-			$Req.Headers.UserAgent.ToString() | Should -Match 'Toolchain'
+			$Req.Headers.UserAgent.ToString() | Should -Match '^Mozilla/5\.0 .+ Chrome/[0-9]+'
+			if ($script:hubCalls -eq 1) {
+				$Req.RequestUri.AbsolutePath | Should -Be '/v2/namespaces/allsagetech/repositories/toolchains/tags'
+			}
 			$payload = if ($script:hubCalls -eq 1) {
-				@{ results=@(@{ name='first-1.0.0' }); next='https://hub.docker.com/next' }
+				@{ results=@(@{ name='first-1.0.0' }); next='https://hub.docker.com/v2/namespaces/allsagetech/repositories/toolchains/tags?page=2' }
 			} else {
 				@{ results=@(@{ name='second-1.0.0' }); next=$null }
 			}
@@ -258,28 +304,15 @@ Describe "Response disposal in registry helpers" {
 		$script:hubCalls | Should -Be 2
 	}
 
-	It "Tries alternate Docker Hub tag endpoints after an HTML 403" {
-		$script:hubCalls = 0
+	It "Rejects unsafe Docker Hub pagination URLs" {
 		Mock HttpSend {
-			$script:hubCalls += 1
-			if ($script:hubCalls -eq 1) {
-				$resp = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::Forbidden)
-				$resp.Content = [Net.Http.StringContent]::new('<!DOCTYPE HTML PUBLIC "-//IETF//DTD HTML 2.0//EN">')
-				$resp.Content.Headers.ContentType = $null
-				return $resp
-			}
-
-			$Req.RequestUri.Host | Should -Be 'hub.docker.com'
-			$Req.RequestUri.AbsolutePath | Should -Match '/v2/repositories/'
 			$resp = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::OK)
-			$resp.Content = [Net.Http.StringContent]::new((ConvertTo-Json @{ results=@(@{ name='alternate-1.0.0' }); next=$null }))
+			$resp.Content = [Net.Http.StringContent]::new((ConvertTo-Json @{ results=@(@{ name='first-1.0.0' }); next='https://example.invalid/steal' }))
 			$resp.Content.Headers.ContentType.MediaType = 'application/json'
 			return $resp
 		}
 
-		$t = GetDockerHubRepositoryTagsList
-		$t.tags | Should -Contain 'alternate-1.0.0'
-		$script:hubCalls | Should -Be 2
+		{ GetDockerHubRepositoryTagsList } | Should -Throw '*unsafe URL*'
 	}
 }
 

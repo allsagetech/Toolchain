@@ -1,0 +1,35 @@
+# <#
+# Toolchain
+# Copyright (c) 2026 AllSageTech
+# SPDX-License-Identifier: MPL-2.0
+# #>
+name: Workflow Security
+
+on:
+  push:
+    paths: ['.github/**']
+  pull_request:
+    paths: ['.github/**']
+  schedule:
+    - cron: '17 7 * * 3'
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  zizmor:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Audit GitHub Actions
+        uses: zizmorcore/zizmor-action@3dc1ecc9bcb9e94e9b2c709687979e1298497054 # v0.6.2
+        with:
+          version: v1.29.0
+          persona: regular
+          min-severity: high
+          online-audits: false
