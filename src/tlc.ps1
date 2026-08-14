@@ -9,6 +9,7 @@ SPDX-License-Identifier: MPL-2.0
 . $PSScriptRoot\maintenance.ps1
 . $PSScriptRoot\profile.ps1
 . $PSScriptRoot\cluster.ps1
+. $PSScriptRoot\help.ps1
 . $PSScriptRoot\completion.ps1
 
 <#
@@ -31,6 +32,11 @@ function Invoke-Toolchain {
 		[object[]]$ArgumentList
 	)
 	try {
+		$helpRequest = Get-ToolchainHelpRequest -Command $Command -ArgumentList $ArgumentList
+		if ($helpRequest.Requested) {
+			Invoke-ToolchainHelp -CommandPath $helpRequest.CommandPath
+			return
+		}
 		switch ($Command) {
 			{ $_ -in 'v', 'version' } {
 				Invoke-ToolchainVersion
@@ -105,9 +111,6 @@ function Invoke-Toolchain {
 			'doctor' {
 				$params, $remaining = ResolveParameters 'Invoke-ToolchainDoctor' $ArgumentList
 				Invoke-ToolchainDoctor @params @remaining
-			}
-			{ $_ -in 'help', 'h' } {
-				Invoke-ToolchainHelp
 			}
 		}
 	} catch {
@@ -458,37 +461,6 @@ function Invoke-ToolchainDoctor {
   } elseif (-not $structured) {
     Write-ToolchainInfo "doctor: ok"
   }
-}
-
-function Invoke-ToolchainHelp {
-@"
-
-Usage: toolchain COMMAND
-
-Commands:
-  version        Outputs the version of the module
-  list           Outputs a list of installed packages
-  remote list    Lists remote tooling packages and versions
-  remote models  Lists remote AI model packages and versions
-  remote all     Lists every installable remote package and version
-  remote tags    Lists raw registry tags for diagnostics
-  pull           Downloads packages (with retry behavior for transient failures)
-  load           Loads packages into the PowerShell session
-  exec           Runs a user-defined scriptblock in a managed PowerShell session
-  run            Runs a user-defined scriptblock provided in a project file
-  update         Updates all tagged packages (with retry for temporary package locks)
-  prune          Deletes unreferenced packages
-  remove         Untags and deletes packages
-  save           Downloads packages for use in an offline installation
-  init           Writes a starter Toolchain.ps1 in the current directory
-  profile        Creates or manages Toolchain loads in your PowerShell profile
-  cluster        Creates and manages local Docker-backed Kubernetes clusters
-  doctor         Prints diagnostics; supports -PassThru and -Json
-  help           Outputs usage for this command
-
-For detailed documentation and examples, visit https://github.com/allsagetech/toolchain.
-
-"@
 }
 
 function CheckForUpdates {

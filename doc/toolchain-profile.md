@@ -11,7 +11,7 @@ Creates or manages Toolchain package loads in the current user's
 
 `profile init` creates the profile and its parent directory only when they are
 missing. A new profile sets the current-user execution policy to `Unrestricted`
-and prints a green `Toolchain` heading when PowerShell starts. An existing
+and prints a green `Toolchain by AllSageTech` heading when PowerShell starts. An existing
 profile is never overwritten by `profile init`.
 
 ## Usage

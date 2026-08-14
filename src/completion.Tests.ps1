@@ -14,11 +14,24 @@ Describe 'Toolchain nested argument completion' {
 			Should -Be @('create')
 		@(Get-ToolchainNestedCompletionValues -Subcommand cluster -Elements @('toolchain','cluster','create') -WordToComplete '') |
 			Should -Contain '-Provider'
+		@(Get-ToolchainNestedCompletionValues -Subcommand cluster -Elements @('toolchain','cluster','create') -WordToComplete '') |
+			Should -Contain 'help'
 	}
 
 	It 'completes cluster providers after the nested provider option' {
 		$values = @(Get-ToolchainNestedCompletionValues -Subcommand cluster `
 			-Elements @('toolchain','cluster','create','dev','-Provider','k') -WordToComplete 'k')
 		$values | Should -Be @('kind','k0s','k3s')
+	}
+
+	It 'offers command-scoped help across simple and grouped commands' {
+		@(Get-ToolchainNestedCompletionValues -Subcommand load -Elements @('tlc','load') -WordToComplete '') |
+			Should -Contain 'help'
+		@(Get-ToolchainNestedCompletionValues -Subcommand remote -Elements @('tlc','remote','list') -WordToComplete '') |
+			Should -Contain '--help'
+		@(Get-ToolchainNestedCompletionValues -Subcommand profile -Elements @('tlc','profile','add') -WordToComplete '') |
+			Should -Contain 'help'
+		@(Get-ToolchainNestedCompletionValues -Subcommand help -Elements @('tlc','help','cl') -WordToComplete 'cl') |
+			Should -Be @('cluster')
 	}
 }

@@ -158,6 +158,18 @@ toolchain run build -Configuration Debug
 | `doctor` | Print diagnostics for your Toolchain setup | `doc/toolchain-doctor.md` |
 | `help` | Show CLI help | `doc/toolchain-help.md` |
 
+Every command has help at the point where it is used:
+
+```powershell
+tlc update help
+tlc prune help
+tlc remote models help
+tlc cluster create help
+```
+
+`tlc help` still shows the complete command overview. Prefix-style help such as
+`tlc help cluster create` is also supported.
+
 ## Package reference syntax
 
 Toolchain accepts a few package reference forms:

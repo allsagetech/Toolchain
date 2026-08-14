@@ -6,40 +6,37 @@ SPDX-License-Identifier: MPL-2.0
 
 # help
 
-Outputs usage for this command.
+Shows the command overview or detailed help for a specific command. Detailed
+help includes the command's purpose, usage forms, options, examples, and notes.
 
 ## Usage
 
-    toolchain help
+    tlc help
+    tlc COMMAND help
+    tlc COMMAND SUBCOMMAND help
+    tlc help COMMAND [SUBCOMMAND]
 
-## Example
+The suffix tokens `help`, `h`, `-h`, `--help`, `?`, and `/?` are accepted.
 
+## Examples
+
+```powershell
+# Complete command overview
+tlc help
+
+# Top-level command help
+tlc update help
+tlc prune --help
+
+# Command-group and nested-command help
+tlc remote help
+tlc remote models help
+tlc cluster create help
+
+# Prefix-style equivalent
+tlc help cluster create
 ```
-PS C:\example> toolchain help
 
-Usage: toolchain COMMAND
-
-Commands:
-  version        Outputs the version of the module
-  list           Outputs a list of installed packages
-  remote list    Lists remote tooling packages and versions
-  remote models  Lists remote AI model packages and versions
-  remote all     Lists every installable remote package and version
-  remote tags    Lists raw registry tags for diagnostics
-  pull           Downloads packages (with retry behavior for transient failures)
-  load           Loads packages into the PowerShell session
-  exec           Runs a user-defined scriptblock in a managed PowerShell session
-  run            Runs a user-defined scriptblock provided in a project file
-  update         Updates all tagged packages (with retry for temporary package locks)
-  prune          Deletes unreferenced packages
-  remove         Untags and deletes packages
-  save           Downloads packages for use in an offline installation
-  init           Writes a starter Toolchain.ps1 in the current directory
-  profile        Creates or manages Toolchain loads in your PowerShell profile
-  cluster        Creates and manages local Docker-backed Kubernetes clusters
-  doctor         Prints diagnostics for your Toolchain setup
-  help           Outputs usage for this command
-
-For detailed documentation and examples, visit https://github.com/allsagetech/toolchain.
-
-```
+Help requests are handled before the command runs. For example, `tlc update
+help` displays help without updating packages, and `tlc cluster create dev
+help` displays `cluster create` help without creating a cluster.

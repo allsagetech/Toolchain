@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.3.3 - 2026-08-14
+
+### Added
+
+- Add detailed command-scoped help through `tlc COMMAND help`, including nested commands such as `tlc cluster create help`.
+- Add prefix-style help compatibility through `tlc help COMMAND [SUBCOMMAND]` and help-aware argument completion.
+
+### Changed
+
+- Expand help with command-specific descriptions, usage forms, options, examples, and operational notes.
+- Validate help routing without executing the requested command and extend command regression coverage across the full CLI.
+
 ## 2.3.2 - 2026-08-14
 
 ### Changed

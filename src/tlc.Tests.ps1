@@ -72,7 +72,7 @@ Describe 'Invoke-Toolchain dispatcher' {
 		Mock Invoke-ToolchainProfile { param($Command,[string[]]$Packages) @($Command) + @($Packages) }
 		Mock Invoke-ToolchainCluster { param($Command,$Name,$Provider) @($Command,$Name,$Provider) }
 		Mock Invoke-ToolchainDoctor { 'doctor' }
-		Mock Invoke-ToolchainHelp { 'help' }
+		Mock Invoke-ToolchainHelp { param([string[]]$CommandPath) if ($CommandPath) { "help:$($CommandPath -join ' ')" } else { 'help' } }
 	}
 
 	It 'Routes version commands' {
@@ -131,6 +131,28 @@ Describe 'Invoke-Toolchain dispatcher' {
 	It 'Writes an error when a command throws' {
 		Mock Invoke-ToolchainList { throw 'boom' }
 		{ Invoke-Toolchain -Command list -ErrorAction SilentlyContinue } | Should -Not -Throw
+	}
+
+	It 'routes suffix help for every top-level command without executing it' {
+		$commands = @('version','v','remote','list','load','pull','exec','run','remove','rm','save','prune','update','init','profile','cluster','doctor')
+		foreach ($command in $commands) {
+			$expected = switch ($command) { 'v' { 'version' }; 'rm' { 'remove' }; default { $command } }
+			(Invoke-Toolchain -Command $command -ArgumentList @('help')) | Should -Be "help:$expected"
+		}
+		Should -Invoke -CommandName Invoke-ToolchainVersion -Times 0 -Exactly
+		Should -Invoke -CommandName Invoke-ToolchainList -Times 0 -Exactly
+		Should -Invoke -CommandName Invoke-ToolchainRemote -Times 0 -Exactly
+		Should -Invoke -CommandName Invoke-ToolchainCluster -Times 0 -Exactly
+	}
+
+	It 'routes nested and prefix help without executing command handlers' {
+		(Invoke-Toolchain -Command remote -ArgumentList @('list','help')) | Should -Be 'help:remote list'
+		(Invoke-Toolchain -Command profile -ArgumentList @('add','--help')) | Should -Be 'help:profile add'
+		(Invoke-Toolchain -Command cluster -ArgumentList @('create','-h')) | Should -Be 'help:cluster create'
+		(Invoke-Toolchain -Command help -ArgumentList @('cluster','kubeconfig')) | Should -Be 'help:cluster kubeconfig'
+		Should -Invoke -CommandName Invoke-ToolchainRemote -Times 0 -Exactly
+		Should -Invoke -CommandName Invoke-ToolchainProfile -Times 0 -Exactly
+		Should -Invoke -CommandName Invoke-ToolchainCluster -Times 0 -Exactly
 	}
 }
 
@@ -417,9 +439,9 @@ Describe 'Invoke-ToolchainRemote' {
 Describe 'Invoke-ToolchainHelp' {
 	It 'Returns usage text' {
 		(Invoke-ToolchainHelp) | Should -Match 'Usage:'
-		(Invoke-ToolchainHelp) | Should -Match 'remote models'
-		(Invoke-ToolchainHelp) | Should -Match 'remote tags'
 		(Invoke-ToolchainHelp) | Should -Match 'cluster'
+		(Invoke-ToolchainHelp -CommandPath @('remote')) | Should -Match 'remote models'
+		(Invoke-ToolchainHelp -CommandPath @('remote')) | Should -Match 'remote tags'
 	}
 }
 
