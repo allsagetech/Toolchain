@@ -8,6 +8,7 @@ SPDX-License-Identifier: MPL-2.0
 . $PSScriptRoot\shell.ps1
 . $PSScriptRoot\maintenance.ps1
 . $PSScriptRoot\profile.ps1
+. $PSScriptRoot\cluster.ps1
 . $PSScriptRoot\completion.ps1
 
 <#
@@ -24,7 +25,7 @@ function Invoke-Toolchain {
 	[CmdletBinding()]
 	param (
 		[Parameter(Mandatory)]
-		[ValidateSet('version', 'v', 'remote', 'list', 'load', 'pull', 'exec', 'run', 'remove', 'rm', 'save', 'prune', 'update', 'init', 'profile', 'doctor', 'help', 'h')]
+		[ValidateSet('version', 'v', 'remote', 'list', 'load', 'pull', 'exec', 'run', 'remove', 'rm', 'save', 'prune', 'update', 'init', 'profile', 'cluster', 'doctor', 'help', 'h')]
 		[string]$Command,
 		[Parameter(ValueFromRemainingArguments)]
 		[object[]]$ArgumentList
@@ -96,6 +97,10 @@ function Invoke-Toolchain {
 			'profile' {
 				$params, $remaining = ResolveParameters 'Invoke-ToolchainProfile' $ArgumentList
 				Invoke-ToolchainProfile @params @remaining
+			}
+			'cluster' {
+				$params, $remaining = ResolveParameters 'Invoke-ToolchainCluster' $ArgumentList
+				Invoke-ToolchainCluster @params @remaining
 			}
 			'doctor' {
 				$params, $remaining = ResolveParameters 'Invoke-ToolchainDoctor' $ArgumentList
@@ -477,6 +482,7 @@ Commands:
   save           Downloads packages for use in an offline installation
   init           Writes a starter Toolchain.ps1 in the current directory
   profile        Creates or manages Toolchain loads in your PowerShell profile
+  cluster        Creates and manages local Docker-backed Kubernetes clusters
   doctor         Prints diagnostics; supports -PassThru and -Json
   help           Outputs usage for this command
 

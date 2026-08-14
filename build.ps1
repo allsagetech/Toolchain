@@ -100,8 +100,38 @@ Out-File "$buildDir\Toolchain.Format.ps1xml" -Encoding ascii -Force -InputObject
 							</TableColumnItems>
 						</TableRowEntry>
 					</TableRowEntries>
-				</TableControl>
-			</View>
+			</TableControl>
+		</View>
+		<View>
+			<Name>Toolchain.Cluster</Name>
+			<ViewSelectedBy>
+				<TypeName>Toolchain.Cluster</TypeName>
+			</ViewSelectedBy>
+			<TableControl>
+				<TableHeaders />
+				<TableRowEntries>
+					<TableRowEntry>
+						<TableColumnItems>
+							<TableColumnItem>
+								<PropertyName>Name</PropertyName>
+							</TableColumnItem>
+							<TableColumnItem>
+								<PropertyName>Provider</PropertyName>
+							</TableColumnItem>
+							<TableColumnItem>
+								<PropertyName>Status</PropertyName>
+							</TableColumnItem>
+							<TableColumnItem>
+								<PropertyName>Servers</PropertyName>
+							</TableColumnItem>
+							<TableColumnItem>
+								<PropertyName>Workers</PropertyName>
+							</TableColumnItem>
+						</TableColumnItems>
+					</TableRowEntry>
+				</TableRowEntries>
+			</TableControl>
+		</View>
 	</ViewDefinitions>
 </Configuration>
 "@

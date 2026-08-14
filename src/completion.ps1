@@ -9,8 +9,47 @@ function New-ToolchainCompletionResult {
 	return [Management.Automation.CompletionResult]::new($Value, $Value, 'ParameterValue', $Value)
 }
 
+function Get-ToolchainNestedCompletionValues {
+	param(
+		[Parameter(Mandatory)][string]$Subcommand,
+		[Parameter(Mandatory)][string[]]$Elements,
+		[AllowEmptyString()][string]$WordToComplete = ''
+	)
+
+	$previous = if ($WordToComplete -and $Elements.Count -gt 1) {
+		$Elements[$Elements.Count - 2]
+	} elseif ($Elements.Count -gt 0) {
+		$Elements[$Elements.Count - 1]
+	} else {
+		''
+	}
+
+	switch ($Subcommand) {
+		'remote' { return @('list','models','all','tags','-Refresh','-Json') | Where-Object { $_ -like "$WordToComplete*" } }
+		'profile' {
+			if ($Elements.Count -le 3) { return @('init','add','remove','list','path') | Where-Object { $_ -like "$WordToComplete*" } }
+			return @()
+		}
+		'cluster' {
+			if ($previous -eq '-Provider') { return @('kind','k0s','k3s') | Where-Object { $_ -like "$WordToComplete*" } }
+			if ($Elements.Count -le 2 -or ($Elements.Count -eq 3 -and $WordToComplete)) {
+				return @('create','list','status','kubeconfig','delete') | Where-Object { $_ -like "$WordToComplete*" }
+			}
+			$options = switch ($Elements[2]) {
+				'create' { @('-Provider','-Servers','-Workers','-ApiPort','-WaitSeconds','-Image','-Config') }
+				'list' { @('-Provider') }
+				'kubeconfig' { @('-Raw') }
+				default { @() }
+			}
+			return $options | Where-Object { $_ -like "$WordToComplete*" }
+		}
+		'doctor' { return @('-Strict','-PassThru','-Json','-Refresh') | Where-Object { $_ -like "$WordToComplete*" } }
+	}
+	return @()
+}
+
 function Register-ToolchainArgumentCompleters {
-	$commands = @('version','remote','list','load','pull','exec','run','remove','save','prune','update','init','profile','doctor','help')
+	$commands = @('version','remote','list','load','pull','exec','run','remove','save','prune','update','init','profile','cluster','doctor','help')
 	Register-ArgumentCompleter -CommandName Invoke-Toolchain,toolchain,tool,tlc -ParameterName Command -ScriptBlock {
 		param($commandName, $parameterName, $wordToComplete)
 		$commands | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object { New-ToolchainCompletionResult $_ }
@@ -19,18 +58,24 @@ function Register-ToolchainArgumentCompleters {
 	Register-ArgumentCompleter -CommandName Invoke-Toolchain,toolchain,tool,tlc -ParameterName ArgumentList -ScriptBlock {
 		param($commandName, $parameterName, $wordToComplete, $commandAst)
 		$subcommand = if ($commandAst.CommandElements.Count -gt 1) { [string]$commandAst.CommandElements[1].Value } else { '' }
-		if ($subcommand -eq 'remote') {
-			@('list','models','all','tags','-Refresh','-Json') | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object { New-ToolchainCompletionResult $_ }
+		$elements = @($commandAst.CommandElements | ForEach-Object {
+			if ($_ -is [Management.Automation.Language.CommandParameterAst]) { '-' + $_.ParameterName } else { [string]$_.Value }
+		})
+		Get-ToolchainNestedCompletionValues -Subcommand $subcommand -Elements $elements -WordToComplete $wordToComplete |
+			ForEach-Object { New-ToolchainCompletionResult $_ }
+	}
+
+	Register-ArgumentCompleter -Native -CommandName toolchain,tool,tlc -ScriptBlock {
+		param($wordToComplete, $commandAst, $cursorPosition)
+		$elements = @($commandAst.CommandElements | ForEach-Object {
+			if ($_ -is [Management.Automation.Language.CommandParameterAst]) { '-' + $_.ParameterName } else { [string]$_.Value }
+		})
+		if ($elements.Count -le 1 -or ($elements.Count -eq 2 -and $wordToComplete)) {
+			$commands | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object { New-ToolchainCompletionResult $_ }
 			return
 		}
-		if ($subcommand -eq 'profile') {
-			if ($commandAst.CommandElements.Count -le 3) {
-				@('init','add','remove','list','path') | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object { New-ToolchainCompletionResult $_ }
-			}
-			return
-		}
-		if ($subcommand -eq 'doctor') {
-			@('-Strict','-PassThru','-Json','-Refresh') | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object { New-ToolchainCompletionResult $_ }
-		}
+		$subcommand = if ($elements.Count -gt 1) { $elements[1] } else { '' }
+		Get-ToolchainNestedCompletionValues -Subcommand $subcommand -Elements $elements -WordToComplete $wordToComplete |
+			ForEach-Object { New-ToolchainCompletionResult $_ }
 	}
 }

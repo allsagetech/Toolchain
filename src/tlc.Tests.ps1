@@ -70,6 +70,7 @@ Describe 'Invoke-Toolchain dispatcher' {
 		Mock Invoke-ToolchainRun { param([string]$FnName,[object[]]$ArgumentList) @($FnName) + @($ArgumentList) }
 		Mock Invoke-ToolchainInit { 'init' }
 		Mock Invoke-ToolchainProfile { param($Command,[string[]]$Packages) @($Command) + @($Packages) }
+		Mock Invoke-ToolchainCluster { param($Command,$Name,$Provider) @($Command,$Name,$Provider) }
 		Mock Invoke-ToolchainDoctor { 'doctor' }
 		Mock Invoke-ToolchainHelp { 'help' }
 	}
@@ -121,6 +122,7 @@ Describe 'Invoke-Toolchain dispatcher' {
 		(Invoke-Toolchain -Command save -ArgumentList @('-Output','out')) | Should -Be 'save'
 		(Invoke-Toolchain -Command init) | Should -Be 'init'
 		@(Invoke-Toolchain -Command profile -ArgumentList @('add','node','git')) | Should -Be @('add','node','git')
+		@(Invoke-Toolchain -Command cluster -ArgumentList @('create','dev','-Provider','kind')) | Should -Be @('create','dev','kind')
 		(Invoke-Toolchain -Command doctor) | Should -Be 'doctor'
 		(Invoke-Toolchain -Command help) | Should -Be 'help'
 		(Invoke-Toolchain -Command h) | Should -Be 'help'
@@ -417,6 +419,7 @@ Describe 'Invoke-ToolchainHelp' {
 		(Invoke-ToolchainHelp) | Should -Match 'Usage:'
 		(Invoke-ToolchainHelp) | Should -Match 'remote models'
 		(Invoke-ToolchainHelp) | Should -Match 'remote tags'
+		(Invoke-ToolchainHelp) | Should -Match 'cluster'
 	}
 }
 

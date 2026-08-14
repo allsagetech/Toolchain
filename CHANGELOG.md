@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Add `toolchain cluster create`, `list`, `status`, `kubeconfig`, and `delete` for isolated kind, k0s, and k3s-on-k3d development clusters, with Toolchains-managed provider dependencies.
+
 ## 2.2.0 - 2026-08-13
 
 ### Added

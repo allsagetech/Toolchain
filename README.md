@@ -62,6 +62,22 @@ Toolchain adds only the requested `toolchain load '<package>'` lines inside a
 marked block. It preserves the rest of `Microsoft.PowerShell_profile.ps1`; see
 [`profile`](doc/toolchain-profile.md) for listing, removal, and path commands.
 
+### Local Kubernetes clusters
+
+Toolchain can create isolated development clusters on a running Docker Engine:
+
+```powershell
+toolchain cluster create dev -Provider kind -Workers 2
+toolchain cluster create k3s-dev -Provider k3s -Workers 2
+toolchain cluster create k0s-dev -Provider k0s -Image docker.io/k0sproject/k0s:v1.32.4-k0s.0
+```
+
+If `kind` or `k3d` is not already on `PATH`, Toolchain automatically resolves
+and loads its integrity-checked package from the Toolchains catalog. Kubeconfigs
+stay under Toolchain's managed data directory and are never merged into the
+default kubeconfig. See [`cluster`](doc/toolchain-cluster.md) for requirements,
+topology options, and cleanup commands.
+
 ## Quick start
 
 ### 1) Create a project file
@@ -136,6 +152,7 @@ toolchain run build -Configuration Debug
 | `save` | Download packages for offline use | `doc/toolchain-save.md` |
 | `init` | Write a starter `Toolchain.ps1` | `doc/toolchain-init.md` |
 | `profile init` / `add` / `remove` / `list` / `path` | Manage startup package loads in your PowerShell profile | `doc/toolchain-profile.md` |
+| `cluster create` / `list` / `status` / `kubeconfig` / `delete` | Manage local Docker-backed Kubernetes clusters | `doc/toolchain-cluster.md` |
 | `doctor` | Print diagnostics for your Toolchain setup | `doc/toolchain-doctor.md` |
 | `help` | Show CLI help | `doc/toolchain-help.md` |
 

@@ -9,6 +9,7 @@ flowchart LR
     CLI --> Lifecycle["Package lifecycle"]
     CLI --> Shell["Session configuration"]
     CLI --> Profile["PowerShell profile management"]
+    CLI --> Cluster["Local cluster orchestration"]
     Catalog --> Transport["OCI registry transport and authentication"]
     Lifecycle --> Registry["Manifest and blob integrity"]
     Registry --> Archive["Bounded tar extraction"]
@@ -24,6 +25,7 @@ flowchart LR
 - `package.ps1` owns package references and local resolution.
 - `shell.ps1` applies package definitions to the current or managed session.
 - `profile.ps1` safely manages opt-in package loads in the user's current-host PowerShell profile.
+- `cluster.ps1` manages isolated local kind, k0s, and k3s cluster lifecycles over Docker.
 
 `build.ps1` follows those dot-source relationships and produces the single
 `Toolchain.psm1` shipped in releases.
