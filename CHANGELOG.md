@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.3.2 - 2026-08-14
+
+### Changed
+
+- Restrict normal test and workflow-security push runs to `main`, preventing release tag pushes from duplicating those pipelines.
+
 ## 2.3.1 - 2026-08-14
 
 ### Changed
