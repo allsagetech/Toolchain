@@ -78,13 +78,20 @@ function Get-ToolchainClusterExecutable {
 		}
 
 		if ($packageName) {
+			$previousCatalogRefresh = $env:TOOLCHAIN_CATALOG_REFRESH
 			try {
 				Write-ToolchainInfo "Provisioning cluster dependency '$packageName' through Toolchain."
+				# Cluster providers are provisioned only after a PATH miss. Force a fresh
+				# catalog lookup so a newly published provider is not hidden by the normal
+				# remote-tag cache.
+				$env:TOOLCHAIN_CATALOG_REFRESH = '1'
 				$resolved = ResolvePackage -Ref $packageName
 				LoadPackage -Pkg $resolved
 				$command = Get-Command -Name $Name -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
 			} catch {
 				throw "$Name executable was not found on PATH and Toolchain could not provision package '$packageName': $($_.Exception.Message)"
+			} finally {
+				$env:TOOLCHAIN_CATALOG_REFRESH = $previousCatalogRefresh
 			}
 		}
 	}

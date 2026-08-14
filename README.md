@@ -46,7 +46,8 @@ This repo includes an installer that builds the module and copies it to your use
 
 ### Optional: load packages whenever PowerShell starts
 
-Create your current-user PowerShell profile without adding any content:
+Create your current-user PowerShell profile with the execution-policy and
+green Toolchain startup header, without adding package loads:
 
 ```powershell
 toolchain profile init
@@ -58,9 +59,10 @@ Or create it and add packages explicitly:
 toolchain profile add node git:latest
 ```
 
-Toolchain adds only the requested `toolchain load '<package>'` lines inside a
-marked block. It preserves the rest of `Microsoft.PowerShell_profile.ps1`; see
-[`profile`](doc/toolchain-profile.md) for listing, removal, and path commands.
+Toolchain adds only the requested `toolchain load '<package>' *> $null` lines
+inside a marked block. It preserves the rest of
+`Microsoft.PowerShell_profile.ps1`; see [`profile`](doc/toolchain-profile.md)
+for listing, removal, and path commands.
 
 ### Local Kubernetes clusters
 

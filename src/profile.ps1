@@ -6,6 +6,10 @@ SPDX-License-Identifier: MPL-2.0
 
 $script:ToolchainProfileStartMarker = '# >>> Toolchain managed packages >>>'
 $script:ToolchainProfileEndMarker = '# <<< Toolchain managed packages <<<'
+$script:ToolchainProfileHeader = @(
+	'Set-ExecutionPolicy -Scope CurrentUser Unrestricted'
+	'Write-Host "Toolchain" -ForegroundColor Green'
+)
 
 function Get-ToolchainPowerShellProfilePath {
 	[CmdletBinding()]
@@ -38,7 +42,8 @@ function Initialize-ToolchainPowerShellProfile {
 		[void][IO.Directory]::CreateDirectory($parent)
 	}
 	if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) {
-		[IO.File]::WriteAllText($fullPath, '', [Text.UTF8Encoding]::new($false))
+		$content = ($script:ToolchainProfileHeader -join [Environment]::NewLine) + [Environment]::NewLine
+		[IO.File]::WriteAllText($fullPath, $content, [Text.UTF8Encoding]::new($false))
 	}
 	return $fullPath
 }
@@ -65,7 +70,7 @@ function ConvertTo-ToolchainProfileLoadLine {
 
 	Assert-ToolchainProfilePackage -Package $Package
 	$literal = $Package.Replace("'", "''")
-	return "toolchain load '$literal'"
+	return "toolchain load '$literal' *> `$null"
 }
 
 function Read-ToolchainProfileState {
@@ -115,7 +120,7 @@ function Read-ToolchainProfileState {
 	$packages = @()
 	for ($i = $starts[0] + 1; $i -lt $ends[0]; $i++) {
 		if ([string]::IsNullOrWhiteSpace($lines[$i])) { continue }
-		$match = [regex]::Match($lines[$i], "^[ `t]*toolchain[ `t]+load[ `t]+'(?<Package>(?:[^']|'')*)'[ `t]*$")
+		$match = [regex]::Match($lines[$i], "^[ `t]*toolchain[ `t]+load[ `t]+'(?<Package>(?:[^']|'')*)'(?:[ `t]+\*>[ `t]+\`$null)?[ `t]*$")
 		if (-not $match.Success) {
 			throw "PowerShell profile contains an unrecognized line in the Toolchain managed block: $($lines[$i])"
 		}

@@ -9,9 +9,10 @@ SPDX-License-Identifier: MPL-2.0
 Creates or manages Toolchain package loads in the current user's
 `Microsoft.PowerShell_profile.ps1` for the current PowerShell host.
 
-Nothing is prefilled by default. `profile init` creates the profile and its
-parent directory only when they are missing; an existing profile is never
-overwritten.
+`profile init` creates the profile and its parent directory only when they are
+missing. A new profile sets the current-user execution policy to `Unrestricted`
+and prints a green `Toolchain` heading when PowerShell starts. An existing
+profile is never overwritten by `profile init`.
 
 ## Usage
 
@@ -25,7 +26,7 @@ toolchain profile path
 
 ## Examples
 
-Create an empty profile:
+Create a profile with the Toolchain startup header:
 
 ```powershell
 PS C:\example> toolchain profile init
@@ -48,16 +49,20 @@ toolchain profile add git:latest go:1.22
 The resulting managed section looks like this:
 
 ```powershell
+Set-ExecutionPolicy -Scope CurrentUser Unrestricted
+Write-Host "Toolchain" -ForegroundColor Green
+
 # >>> Toolchain managed packages >>>
-toolchain load 'node'
-toolchain load 'git:latest'
-toolchain load 'go:1.22'
+toolchain load 'node' *> $null
+toolchain load 'git:latest' *> $null
+toolchain load 'go:1.22' *> $null
 # <<< Toolchain managed packages <<<
 ```
 
 Toolchain safely quotes package references, ignores case-only duplicates, and
-does not change commands outside these markers. If the marked section has been
-manually malformed, Toolchain stops instead of rewriting the profile.
+suppresses all output from managed startup loads. It does not change commands
+outside these markers. If the marked section has been manually malformed,
+Toolchain stops instead of rewriting the profile.
 
 List only the packages managed by this command:
 

@@ -21,11 +21,16 @@ Describe 'Toolchain PowerShell profile management' {
 		Test-Path -LiteralPath $script:testProfile | Should -BeFalse
 	}
 
-	It 'Creates an empty profile and its parent directory' {
+	It 'Creates a profile with the Toolchain startup header and its parent directory' {
 		Invoke-ToolchainProfile -Command init
 
 		Test-Path -LiteralPath $script:testProfile -PathType Leaf | Should -BeTrue
-		[IO.File]::ReadAllText($script:testProfile) | Should -BeExactly ''
+		$expected = @(
+			'Set-ExecutionPolicy -Scope CurrentUser Unrestricted'
+			'Write-Host "Toolchain" -ForegroundColor Green'
+			''
+		) -join [Environment]::NewLine
+		[IO.File]::ReadAllText($script:testProfile) | Should -BeExactly $expected
 	}
 
 	It 'Leaves an existing profile unchanged during init' {
@@ -41,9 +46,10 @@ Describe 'Toolchain PowerShell profile management' {
 		Invoke-ToolchainProfile -Command add -Packages @('node', 'git:latest')
 
 		$content = [IO.File]::ReadAllText($script:testProfile)
+		$content | Should -Match '\ASet-ExecutionPolicy -Scope CurrentUser Unrestricted\r?\nWrite-Host "Toolchain" -ForegroundColor Green\r?\n'
 		$content | Should -Match '(?m)^# >>> Toolchain managed packages >>>\r?$'
-		$content | Should -Match "(?m)^toolchain load 'node'\r?$"
-		$content | Should -Match "(?m)^toolchain load 'git:latest'\r?$"
+		$content | Should -Match "(?m)^toolchain load 'node' \*> \`$null\r?$"
+		$content | Should -Match "(?m)^toolchain load 'git:latest' \*> \`$null\r?$"
 		$content | Should -Match '(?m)^# <<< Toolchain managed packages <<<\r?$'
 		@(Invoke-ToolchainProfile -Command list) | Should -Be @('node', 'git:latest')
 	}
@@ -59,7 +65,7 @@ Describe 'Toolchain PowerShell profile management' {
 	It 'quotes package references as safe PowerShell literals' {
 		Invoke-ToolchainProfile -Command add -Packages @("team's-node")
 
-		[IO.File]::ReadAllText($script:testProfile) | Should -Match "(?m)^toolchain load 'team''s-node'\r?$"
+		[IO.File]::ReadAllText($script:testProfile) | Should -Match "(?m)^toolchain load 'team''s-node' \*> \`$null\r?$"
 		@(Invoke-ToolchainProfile -Command list) | Should -Be @("team's-node")
 	}
 
@@ -73,8 +79,8 @@ Describe 'Toolchain PowerShell profile management' {
 
 		$content = [IO.File]::ReadAllText($script:testProfile)
 		$content | Should -Match '(?m)^Set-Alias my-command Get-ChildItem\r?$'
-		$content | Should -Not -Match "(?m)^toolchain load 'node'\r?$"
-		$content | Should -Match "(?m)^toolchain load 'git'\r?$"
+		$content | Should -Not -Match "(?m)^toolchain load 'node' \*> \`$null\r?$"
+		$content | Should -Match "(?m)^toolchain load 'git' \*> \`$null\r?$"
 
 		Invoke-ToolchainProfile -Command remove -Packages @('git')
 		[IO.File]::ReadAllText($script:testProfile) | Should -BeExactly $original
@@ -89,6 +95,19 @@ Describe 'Toolchain PowerShell profile management' {
 		Invoke-ToolchainProfile -Command remove -Packages @('node')
 
 		[IO.File]::ReadAllText($script:testProfile) | Should -BeExactly $manual
+	}
+
+	It 'reads legacy managed load lines and rewrites them with output suppression' {
+		[void][IO.Directory]::CreateDirectory((Split-Path -Parent $script:testProfile))
+		$legacy = "# >>> Toolchain managed packages >>>`r`ntoolchain load 'node'`r`n# <<< Toolchain managed packages <<<`r`n"
+		[IO.File]::WriteAllText($script:testProfile, $legacy)
+
+		@(Invoke-ToolchainProfile -Command list) | Should -Be @('node')
+		Invoke-ToolchainProfile -Command add -Packages @('git')
+
+		$content = [IO.File]::ReadAllText($script:testProfile)
+		$content | Should -Match "(?m)^toolchain load 'node' \*> \`$null\r?$"
+		$content | Should -Match "(?m)^toolchain load 'git' \*> \`$null\r?$"
 	}
 
 	It 'rejects line breaks in package references' {

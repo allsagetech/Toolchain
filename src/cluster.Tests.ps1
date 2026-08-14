@@ -63,17 +63,29 @@ Describe 'Toolchain cluster validation' {
 
 	It 'provisions a missing provider executable from the Toolchains catalog' {
 		$script:clusterCommandChecks = 0
+		$script:catalogRefreshDuringResolve = $null
+		$previousCatalogRefresh = $env:TOOLCHAIN_CATALOG_REFRESH
+		$env:TOOLCHAIN_CATALOG_REFRESH = 'previous-value'
 		Mock Get-Command {
 			$script:clusterCommandChecks++
 			if ($script:clusterCommandChecks -gt 1) { return [pscustomobject]@{ Source = 'C:\toolchain\kind.exe' } }
 			return $null
 		} -ParameterFilter { $Name -eq 'kind' }
-		Mock ResolvePackage { return @{ Package = 'kind'; Tag = @{ Latest = $true }; Digest = 'sha256:test' } }
+		Mock ResolvePackage {
+			$script:catalogRefreshDuringResolve = $env:TOOLCHAIN_CATALOG_REFRESH
+			return @{ Package = 'kind'; Tag = @{ Latest = $true }; Digest = 'sha256:test' }
+		}
 		Mock LoadPackage {}
 
-		Get-ToolchainClusterExecutable -Name kind -Package kind -InstallHint 'Install kind.' | Should -Be 'C:\toolchain\kind.exe'
-		Should -Invoke ResolvePackage -Times 1 -ParameterFilter { $Ref -in @('kind', 'kind-linux') }
-		Should -Invoke LoadPackage -Times 1
+		try {
+			Get-ToolchainClusterExecutable -Name kind -Package kind -InstallHint 'Install kind.' | Should -Be 'C:\toolchain\kind.exe'
+			$script:catalogRefreshDuringResolve | Should -Be '1'
+			$env:TOOLCHAIN_CATALOG_REFRESH | Should -Be 'previous-value'
+			Should -Invoke ResolvePackage -Times 1 -ParameterFilter { $Ref -in @('kind', 'kind-linux') }
+			Should -Invoke LoadPackage -Times 1
+		} finally {
+			$env:TOOLCHAIN_CATALOG_REFRESH = $previousCatalogRefresh
+		}
 	}
 }
 
@@ -222,7 +234,9 @@ Describe 'Toolchain cluster lifecycle' {
 	It 'rejects tampered cluster state identity' {
 		$null = Invoke-ToolchainCluster -Command create -Name dev -Provider kind
 		$path = Get-ToolchainClusterStatePath -Name dev
-		(Get-Content -LiteralPath $path -Raw).Replace('"name":  "dev"', '"name":  "other"') | Set-Content -LiteralPath $path
+		$state = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+		$state.name = 'other'
+		[IO.File]::WriteAllText($path, ($state | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
 		{ Invoke-ToolchainCluster -Command status -Name dev } | Should -Throw '*invalid cluster state identity*'
 	}
 }

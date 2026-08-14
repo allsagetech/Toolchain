@@ -1,10 +1,14 @@
 # Changelog
 
-## Unreleased
+## 2.3.0 - 2026-08-14
 
 ### Added
 
 - Add `toolchain cluster create`, `list`, `status`, `kubeconfig`, and `delete` for isolated kind, k0s, and k3s-on-k3d development clusters, with Toolchains-managed provider dependencies.
+
+### Changed
+
+- Initialize new PowerShell profiles with the current-user execution policy and a green Toolchain heading, and suppress all output from managed `toolchain load` startup commands.
 
 ## 2.2.0 - 2026-08-13
 
