@@ -5,9 +5,9 @@ SPDX-License-Identifier: MPL-2.0
 -->
 
 # remote
-Lists remote package versions by category. Registry signatures and other
-transport metadata are not installable packages and are excluded from package
-views.
+Lists remote package versions by category. Registry signatures, temporary
+`staging-*` publication tags, and other transport metadata are not installable
+packages and are excluded from package views.
 
 ## Usage
 
@@ -23,7 +23,8 @@ views.
 - `models` returns AI model packages.
 - `all` returns every installable package, including tools and models.
 - `tags` returns raw registry tags for diagnostics. This view can include
-  Cosign `sha256-<digest>.sig` tags and Toolchain package-kind markers.
+  Cosign `sha256-<digest>.sig` tags, temporary `staging-*` tags, and Toolchain
+  package-kind markers.
 - `-Refresh` bypasses the short-lived on-disk catalog cache.
 - `-Json` emits the selected view as JSON for CI and other automation.
 

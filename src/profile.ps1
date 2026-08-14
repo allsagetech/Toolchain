@@ -8,7 +8,7 @@ $script:ToolchainProfileStartMarker = '# >>> Toolchain managed packages >>>'
 $script:ToolchainProfileEndMarker = '# <<< Toolchain managed packages <<<'
 $script:ToolchainProfileHeader = @(
 	'Set-ExecutionPolicy -Scope CurrentUser Unrestricted'
-	'Write-Host "Toolchain" -ForegroundColor Green'
+	'Write-Host "Toolchain by AllSageTech" -ForegroundColor Green'
 )
 
 function Get-ToolchainPowerShellProfilePath {

@@ -50,7 +50,7 @@ The resulting managed section looks like this:
 
 ```powershell
 Set-ExecutionPolicy -Scope CurrentUser Unrestricted
-Write-Host "Toolchain" -ForegroundColor Green
+Write-Host "Toolchain by AllSageTech" -ForegroundColor Green
 
 # >>> Toolchain managed packages >>>
 toolchain load 'node' *> $null

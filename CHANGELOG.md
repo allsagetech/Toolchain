@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.3.1 - 2026-08-14
+
+### Changed
+
+- Label newly initialized PowerShell profile blocks as `Toolchain by AllSageTech`.
+
+### Fixed
+
+- Hide internal `staging-*` publication tags from installable remote catalog views while retaining them in `toolchain remote tags` diagnostics.
+
 ## 2.3.0 - 2026-08-14
 
 ### Added

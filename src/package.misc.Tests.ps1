@@ -76,22 +76,29 @@ Describe 'Docker package tag mapping' {
 		$tags.toolchain[0].ToString() | Should -Be '2.0.1'
 	}
 
-	It 'excludes Cosign and package-kind metadata from installable packages' {
+	It 'excludes Cosign, package-kind, and staging metadata from installable packages' {
 		$digitSignature = 'sha256-1' + ('a' * 63) + '.sig'
 		$letterSignature = 'sha256-a' + ('b' * 63) + '.sig'
+		$staging = 'staging-podman-6.1.0_1-31838586914-1'
 		Mock GetTagsList { @{ Tags = @(
 			'git-2.0.0',
 			$digitSignature,
 			$letterSignature,
 			('sha256-' + ('c' * 64) + '.att'),
 			('sha256-' + ('d' * 64) + '.sbom'),
-			'tlc-kind-model-v1-100-1--qwen3-0.6b'
+			'tlc-kind-model-v1-100-1--qwen3-0.6b',
+			$staging
 		) } }
 
 		$pkgs = GetDockerPackages
 		@($pkgs.Keys) | Should -Be @('git')
 		$pkgs.ContainsKey('sha256') | Should -BeFalse
 		$pkgs.ContainsKey('toolchain') | Should -BeFalse
+		$catalog = GetDockerTags -ToolingDefaultDisplay
+		@($catalog.PSObject.Properties.Name) | Should -Be @('git')
+		$rendered = $catalog | Out-String
+		$rendered | Should -Not -Match 'staging'
+		$rendered | Should -Not -Match 'podman'
 	}
 
 	It 'separates tooling and model views without removing models from resolution' {
@@ -217,11 +224,13 @@ Describe 'Docker package tag mapping' {
 
 	It 'keeps raw metadata available through the diagnostic tag view' {
 		$signature = 'sha256-' + ('f' * 64) + '.sig'
-		Mock GetTagsList { @{ Tags = @('git-2.0.0', $signature) } }
+		$staging = 'staging-podman-6.1.0_1-31838586914-1'
+		Mock GetTagsList { @{ Tags = @('git-2.0.0', $signature, $staging) } }
 
 		$tags = @(GetRemoteRegistryTags)
 		$tags | Should -Contain 'git-2.0.0'
 		$tags | Should -Contain $signature
+		$tags | Should -Contain $staging
 	}
 }
 

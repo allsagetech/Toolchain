@@ -27,7 +27,7 @@ Describe 'Toolchain PowerShell profile management' {
 		Test-Path -LiteralPath $script:testProfile -PathType Leaf | Should -BeTrue
 		$expected = @(
 			'Set-ExecutionPolicy -Scope CurrentUser Unrestricted'
-			'Write-Host "Toolchain" -ForegroundColor Green'
+			'Write-Host "Toolchain by AllSageTech" -ForegroundColor Green'
 			''
 		) -join [Environment]::NewLine
 		[IO.File]::ReadAllText($script:testProfile) | Should -BeExactly $expected
@@ -46,7 +46,7 @@ Describe 'Toolchain PowerShell profile management' {
 		Invoke-ToolchainProfile -Command add -Packages @('node', 'git:latest')
 
 		$content = [IO.File]::ReadAllText($script:testProfile)
-		$content | Should -Match '\ASet-ExecutionPolicy -Scope CurrentUser Unrestricted\r?\nWrite-Host "Toolchain" -ForegroundColor Green\r?\n'
+		$content | Should -Match '\ASet-ExecutionPolicy -Scope CurrentUser Unrestricted\r?\nWrite-Host "Toolchain by AllSageTech" -ForegroundColor Green\r?\n'
 		$content | Should -Match '(?m)^# >>> Toolchain managed packages >>>\r?$'
 		$content | Should -Match "(?m)^toolchain load 'node' \*> \`$null\r?$"
 		$content | Should -Match "(?m)^toolchain load 'git:latest' \*> \`$null\r?$"
