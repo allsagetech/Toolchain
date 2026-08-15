@@ -193,6 +193,16 @@ function Get-ToolchainHelpTopics {
 		-Description 'Deletes a managed provider cluster and then removes its Toolchain state.' `
 		-Usage @('tlc cluster delete NAME') `
 		-Examples @('tlc cluster delete dev')
+	$topics.k9s = New-ToolchainHelpTopic `
+		-Description 'Launches the K9s terminal UI against the current context or a selected kubeconfig.' `
+		-Usage @('tlc k9s [-Cluster NAME | -Kubeconfig PATH] [K9S_ARGUMENT ...]') `
+		-Options @(
+			'-Cluster NAME       Use the isolated kubeconfig for a Toolchain-managed cluster.',
+			'-Kubeconfig PATH     Use an explicit kubeconfig file.',
+			'K9S_ARGUMENT         Pass any other argument directly to K9s.'
+		) `
+		-Examples @('tlc k9s', 'tlc k9s -Cluster dev', 'tlc k9s -Kubeconfig .\kubeconfig.yaml -n default', 'tlc k9s --readonly -A') `
+		-Notes @('If k9s is absent from PATH, Toolchain resolves and loads its platform package from the configured catalog.', 'The command does not merge kubeconfigs or change the current context.')
 
 	$topics.doctor = New-ToolchainHelpTopic `
 		-Description 'Checks Toolchain storage and registry configuration and reports diagnostics.' `
@@ -300,6 +310,7 @@ function Invoke-ToolchainHelp {
 			'init           Create a starter Toolchain.ps1 file.',
 			'profile        Manage PowerShell profile package loads.',
 			'cluster        Manage local Docker-backed Kubernetes clusters.',
+			'k9s            Launch a terminal UI for a Kubernetes cluster.',
 			'doctor         Check Toolchain storage and registry configuration.',
 			'help           Display overview or command-specific help.'
 		)

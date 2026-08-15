@@ -74,6 +74,12 @@ $env:KUBECONFIG = toolchain cluster kubeconfig dev
 kubectl get nodes
 ```
 
+Or launch K9s with the managed kubeconfig without changing the session:
+
+```powershell
+tlc k9s -Cluster dev
+```
+
 Use `toolchain cluster kubeconfig dev -Raw` when an automation step needs the
 file contents instead of its path.
 

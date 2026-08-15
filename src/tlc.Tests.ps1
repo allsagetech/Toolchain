@@ -71,6 +71,7 @@ Describe 'Invoke-Toolchain dispatcher' {
 		Mock Invoke-ToolchainInit { 'init' }
 		Mock Invoke-ToolchainProfile { param($Command,[string[]]$Packages) @($Command) + @($Packages) }
 		Mock Invoke-ToolchainCluster { param($Command,$Name,$Provider) @($Command,$Name,$Provider) }
+		Mock Invoke-ToolchainK9s { param($Cluster,$Kubeconfig,[object[]]$ArgumentList) [pscustomobject]@{ Cluster = $Cluster; Kubeconfig = $Kubeconfig; Arguments = @($ArgumentList) } }
 		Mock Invoke-ToolchainDoctor { 'doctor' }
 		Mock Invoke-ToolchainHelp { param([string[]]$CommandPath) if ($CommandPath) { "help:$($CommandPath -join ' ')" } else { 'help' } }
 	}
@@ -123,6 +124,12 @@ Describe 'Invoke-Toolchain dispatcher' {
 		(Invoke-Toolchain -Command init) | Should -Be 'init'
 		@(Invoke-Toolchain -Command profile -ArgumentList @('add','node','git')) | Should -Be @('add','node','git')
 		@(Invoke-Toolchain -Command cluster -ArgumentList @('create','dev','-Provider','kind')) | Should -Be @('create','dev','kind')
+		$k9s = Invoke-Toolchain -Command k9s -ArgumentList @('-Cluster','dev','-n','default')
+		$k9s.Cluster | Should -Be 'dev'
+		$k9s.Kubeconfig | Should -BeNullOrEmpty
+		$k9s.Arguments | Should -Be @('-n','default')
+		$k9s = Invoke-Toolchain -Command k9s -ArgumentList @('--readonly','-A')
+		$k9s.Arguments | Should -Be @('--readonly','-A')
 		(Invoke-Toolchain -Command doctor) | Should -Be 'doctor'
 		(Invoke-Toolchain -Command help) | Should -Be 'help'
 		(Invoke-Toolchain -Command h) | Should -Be 'help'
@@ -134,7 +141,7 @@ Describe 'Invoke-Toolchain dispatcher' {
 	}
 
 	It 'routes suffix help for every top-level command without executing it' {
-		$commands = @('version','v','remote','list','load','pull','exec','run','remove','rm','save','prune','update','init','profile','cluster','doctor')
+		$commands = @('version','v','remote','list','load','pull','exec','run','remove','rm','save','prune','update','init','profile','cluster','k9s','doctor')
 		foreach ($command in $commands) {
 			$expected = switch ($command) { 'v' { 'version' }; 'rm' { 'remove' }; default { $command } }
 			(Invoke-Toolchain -Command $command -ArgumentList @('help')) | Should -Be "help:$expected"

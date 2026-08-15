@@ -9,6 +9,7 @@ SPDX-License-Identifier: MPL-2.0
 . $PSScriptRoot\maintenance.ps1
 . $PSScriptRoot\profile.ps1
 . $PSScriptRoot\cluster.ps1
+. $PSScriptRoot\k9s.ps1
 . $PSScriptRoot\help.ps1
 . $PSScriptRoot\completion.ps1
 
@@ -26,7 +27,7 @@ function Invoke-Toolchain {
 	[CmdletBinding()]
 	param (
 		[Parameter(Mandatory)]
-		[ValidateSet('version', 'v', 'remote', 'list', 'load', 'pull', 'exec', 'run', 'remove', 'rm', 'save', 'prune', 'update', 'init', 'profile', 'cluster', 'doctor', 'help', 'h')]
+		[ValidateSet('version', 'v', 'remote', 'list', 'load', 'pull', 'exec', 'run', 'remove', 'rm', 'save', 'prune', 'update', 'init', 'profile', 'cluster', 'k9s', 'doctor', 'help', 'h')]
 		[string]$Command,
 		[Parameter(ValueFromRemainingArguments)]
 		[object[]]$ArgumentList
@@ -107,6 +108,10 @@ function Invoke-Toolchain {
 			'cluster' {
 				$params, $remaining = ResolveParameters 'Invoke-ToolchainCluster' $ArgumentList
 				Invoke-ToolchainCluster @params @remaining
+			}
+			'k9s' {
+				$params, $remaining = ResolveParameters 'Invoke-ToolchainK9s' $ArgumentList
+				Invoke-ToolchainK9s @params -ArgumentList $remaining
 			}
 			'doctor' {
 				$params, $remaining = ResolveParameters 'Invoke-ToolchainDoctor' $ArgumentList

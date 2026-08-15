@@ -15,7 +15,7 @@ Describe 'Toolchain command help catalog' {
 			'pull','load','exec','run','update','prune','remove','save','init',
 			'profile','profile init','profile add','profile remove','profile list','profile path',
 			'cluster','cluster create','cluster list','cluster status','cluster kubeconfig','cluster delete',
-			'doctor','help'
+			'k9s','doctor','help'
 		)
 		$topics = Get-ToolchainHelpTopics
 		@($topics.Keys) | Should -Be $expected
@@ -34,6 +34,7 @@ Describe 'Toolchain command help catalog' {
 		$text | Should -Match 'tlc COMMAND help'
 		$text | Should -Match 'remote'
 		$text | Should -Match 'cluster'
+		$text | Should -Match 'k9s'
 	}
 
 	It 'normalizes command aliases in help paths' {

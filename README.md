@@ -80,6 +80,16 @@ stay under Toolchain's managed data directory and are never merged into the
 default kubeconfig. See [`cluster`](doc/toolchain-cluster.md) for requirements,
 topology options, and cleanup commands.
 
+Launch K9s against the current kubecontext or a Toolchain-managed cluster:
+
+```powershell
+tlc k9s
+tlc k9s -Cluster dev
+```
+
+Toolchain provisions its K9s package when the executable is not already on
+`PATH`, then forwards native K9s arguments. See [`k9s`](doc/toolchain-k9s.md).
+
 ## Quick start
 
 ### 1) Create a project file
@@ -155,6 +165,7 @@ toolchain run build -Configuration Debug
 | `init` | Write a starter `Toolchain.ps1` | `doc/toolchain-init.md` |
 | `profile init` / `add` / `remove` / `list` / `path` | Manage startup package loads in your PowerShell profile | `doc/toolchain-profile.md` |
 | `cluster create` / `list` / `status` / `kubeconfig` / `delete` | Manage local Docker-backed Kubernetes clusters | `doc/toolchain-cluster.md` |
+| `k9s` | Launch K9s against the current context or a selected kubeconfig | `doc/toolchain-k9s.md` |
 | `doctor` | Print diagnostics for your Toolchain setup | `doc/toolchain-doctor.md` |
 | `help` | Show CLI help | `doc/toolchain-help.md` |
 

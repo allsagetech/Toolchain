@@ -34,4 +34,11 @@ Describe 'Toolchain nested argument completion' {
 		@(Get-ToolchainNestedCompletionValues -Subcommand help -Elements @('tlc','help','cl') -WordToComplete 'cl') |
 			Should -Be @('cluster')
 	}
+
+	It 'completes Toolchain and native K9s options' {
+		@(Get-ToolchainNestedCompletionValues -Subcommand k9s -Elements @('tlc','k9s') -WordToComplete '') |
+			Should -Contain '-Cluster'
+		@(Get-ToolchainNestedCompletionValues -Subcommand k9s -Elements @('tlc','k9s','--read') -WordToComplete '--read') |
+			Should -Be @('--readonly')
+	}
 }

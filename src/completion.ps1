@@ -51,9 +51,13 @@ function Get-ToolchainNestedCompletionValues {
 			}
 			return @($options) + $helpValues | Where-Object { $_ -like "$WordToComplete*" }
 		}
+		'k9s' {
+			return @('-Cluster','-Kubeconfig','--all-namespaces','--command','--context','--namespace','--readonly') + $helpValues |
+				Where-Object { $_ -like "$WordToComplete*" }
+		}
 		'doctor' { return @('-Strict','-PassThru','-Json','-Refresh') + $helpValues | Where-Object { $_ -like "$WordToComplete*" } }
 		'help' {
-			return @('version','remote','list','load','pull','exec','run','remove','save','prune','update','init','profile','cluster','doctor') |
+			return @('version','remote','list','load','pull','exec','run','remove','save','prune','update','init','profile','cluster','k9s','doctor') |
 				Where-Object { $_ -like "$WordToComplete*" }
 		}
 	}
@@ -61,7 +65,7 @@ function Get-ToolchainNestedCompletionValues {
 }
 
 function Register-ToolchainArgumentCompleters {
-	$commands = @('version','remote','list','load','pull','exec','run','remove','save','prune','update','init','profile','cluster','doctor','help')
+	$commands = @('version','remote','list','load','pull','exec','run','remove','save','prune','update','init','profile','cluster','k9s','doctor','help')
 	Register-ArgumentCompleter -CommandName Invoke-Toolchain,toolchain,tool,tlc -ParameterName Command -ScriptBlock {
 		param($commandName, $parameterName, $wordToComplete)
 		$commands | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object { New-ToolchainCompletionResult $_ }
