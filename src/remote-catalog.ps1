@@ -86,6 +86,8 @@ function Test-ToolchainRegistryMetadataTag {
 	# metadata. None of these are installable packages.
 	return ($Tag -match '(?i)^sha256-[0-9a-f]{64}\.(sig|att|sbom)$') -or
 		($Tag -match '(?i)^tlc-kind-[a-z0-9-]+--[a-z0-9][a-z0-9._-]*$') -or
+		($Tag -match '(?i)^tlc-catalog-v[0-9]+$') -or
+		($Tag -match '(?i)^tlc-platform-[a-z0-9._-]+$') -or
 		($Tag -match '(?i)^staging-[a-z0-9][a-z0-9._-]*$')
 }
 
@@ -210,19 +212,33 @@ function GetRemotePackageKinds {
 	return $kinds
 }
 
+function GetRemotePlatformAliases {
+	param([string[]]$Tags)
+	$aliases = @{}
+	foreach ($tag in @($Tags)) {
+		if ($tag -match '(?i)^tlc-kind-platform-v1--([a-z0-9][a-z0-9._-]*)--([a-z0-9][a-z0-9._-]*)$') {
+			$aliases[[string]$Matches[1]] = [string]$Matches[2]
+		}
+	}
+	return $aliases
+}
+
 function GetDockerPackages {
 	param (
 		[ValidateSet('All', 'Tooling', 'Model')]
 		[string]$Kind = 'All',
 		[ref]$KindsOutput,
+		[ref]$AliasesOutput,
 		[switch]$Refresh
 	)
 
 	$tags = @((GetTagsList -Refresh:$Refresh).Tags)
 	$kindMap = GetRemotePackageKinds -Tags $tags
+	$aliasMap = GetRemotePlatformAliases -Tags $tags
 	if ($PSBoundParameters.ContainsKey('KindsOutput')) {
 		$KindsOutput.Value = $kindMap
 	}
+	if ($PSBoundParameters.ContainsKey('AliasesOutput')) { $AliasesOutput.Value = $aliasMap }
 	$docker = @{}
 	foreach ($tag in $tags) {
 		if ($tag | Test-ToolchainRegistryMetadataTag) {
@@ -243,14 +259,19 @@ function GetDockerTags {
 		[ValidateSet('All', 'Tooling', 'Model')]
 		[string]$Kind = 'All',
 		[switch]$ToolingDefaultDisplay,
+		[switch]$SkipHealthPolicy,
 		[switch]$Refresh
 	)
 
 	$packageKinds = $null
+	$platformAliases = $null
 	if ($ToolingDefaultDisplay) {
-		$docker = GetDockerPackages -Kind All -KindsOutput ([ref]$packageKinds) -Refresh:$Refresh
+		$docker = GetDockerPackages -Kind All -KindsOutput ([ref]$packageKinds) -AliasesOutput ([ref]$platformAliases) -Refresh:$Refresh
 	} else {
 		$docker = GetDockerPackages -Kind $Kind -Refresh:$Refresh
+	}
+	if (-not $SkipHealthPolicy -and (Get-Command Protect-ToolchainRemoteCatalogWithHealthPolicy -ErrorAction SilentlyContinue)) {
+		$docker = Protect-ToolchainRemoteCatalogWithHealthPolicy -Catalog $docker -Refresh:$Refresh
 	}
 	$o = New-Object PSObject
 	foreach ($k in $docker.keys | Sort-Object) {
@@ -262,7 +283,8 @@ function GetDockerTags {
 	}
 	if ($ToolingDefaultDisplay) {
 		$toolingProperties = [string[]]@($docker.Keys | Where-Object {
-			-not ($packageKinds.ContainsKey([string]$_) -and $packageKinds[[string]$_] -eq 'model')
+			-not ($packageKinds.ContainsKey([string]$_) -and $packageKinds[[string]$_] -eq 'model') -and
+			-not $platformAliases.ContainsKey([string]$_)
 		} | Sort-Object)
 		if ($toolingProperties.Count -eq 0) {
 			# An empty default display set makes PowerShell fall back to every

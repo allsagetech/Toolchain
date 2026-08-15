@@ -10,6 +10,8 @@ SPDX-License-Identifier: MPL-2.0
 . $PSScriptRoot\profile.ps1
 . $PSScriptRoot\cluster.ps1
 . $PSScriptRoot\k9s.ps1
+. $PSScriptRoot\health.ps1
+. $PSScriptRoot\project-lock.ps1
 . $PSScriptRoot\help.ps1
 . $PSScriptRoot\completion.ps1
 
@@ -27,7 +29,7 @@ function Invoke-Toolchain {
 	[CmdletBinding()]
 	param (
 		[Parameter(Mandatory)]
-		[ValidateSet('version', 'v', 'remote', 'list', 'load', 'pull', 'exec', 'run', 'remove', 'rm', 'save', 'prune', 'update', 'init', 'profile', 'cluster', 'k9s', 'doctor', 'help', 'h')]
+		[ValidateSet('version', 'v', 'remote', 'list', 'load', 'pull', 'exec', 'run', 'remove', 'rm', 'save', 'prune', 'update', 'init', 'lock', 'restore', 'verify', 'profile', 'cluster', 'k9s', 'doctor', 'help', 'h')]
 		[string]$Command,
 		[Parameter(ValueFromRemainingArguments)]
 		[object[]]$ArgumentList
@@ -100,6 +102,23 @@ function Invoke-Toolchain {
 			'init' {
 				$params, $remaining = ResolveParameters 'Invoke-ToolchainInit' $ArgumentList
 				Invoke-ToolchainInit @params @remaining
+			}
+			'lock' {
+				$params, $remaining = ResolveParameters 'Invoke-ToolchainLock' $ArgumentList
+				if ($remaining) {
+					if ($params.ContainsKey('Update')) { $params.Update = @($params.Update) + @($remaining | ForEach-Object { [string]$_ }) }
+					else { $params.Packages = @($remaining | ForEach-Object { [string]$_ }) }
+				}
+				Invoke-ToolchainLock @params
+			}
+			'restore' {
+				$params, $remaining = ResolveParameters 'Invoke-ToolchainRestore' $ArgumentList
+				Invoke-ToolchainRestore @params @remaining
+			}
+			'verify' {
+				$params, $remaining = ResolveParameters 'Invoke-ToolchainVerify' $ArgumentList
+				if ($remaining) { $params.Packages = @($remaining | ForEach-Object { [string]$_ }) }
+				Invoke-ToolchainVerify @params
 			}
 			'profile' {
 				$params, $remaining = ResolveParameters 'Invoke-ToolchainProfile' $ArgumentList
@@ -302,12 +321,13 @@ function Invoke-ToolchainRemote {
 	[CmdletBinding()]
 	param (
 		[Parameter(Mandatory, Position = 0)]
-		[ValidateSet('list', 'models', 'all', 'tags')]
+		[ValidateSet('list', 'models', 'all', 'tags', 'health', 'info')]
 		[string]$Command,
 		[Parameter(Position = 1)]
 		[string]$Package,
 		[switch]$Refresh,
-		[switch]$Json
+		[switch]$Json,
+		[switch]$OnlyProblems
 	)
 	$result = switch ($Command) {
 		'list' {
@@ -324,8 +344,15 @@ function Invoke-ToolchainRemote {
 			if ($Package) { throw 'remote tags does not accept a package name' }
 			GetRemoteRegistryTags -Refresh:$Refresh
 		}
+		'health' {
+			Get-ToolchainPackageHealth -Package $Package -OnlyProblems:$OnlyProblems -Refresh:$Refresh
+		}
+		'info' {
+			if (-not $Package) { throw 'remote info requires a package name' }
+			Get-ToolchainPackageHealth -Package $Package -Refresh:$Refresh
+		}
 	}
-	if ($Package) {
+	if ($Package -and $Command -notin @('health', 'info')) {
 		$property = $result.PSObject.Properties |
 			Where-Object { $_.Name -ieq $Package } |
 			Select-Object -First 1

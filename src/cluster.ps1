@@ -123,14 +123,60 @@ function Invoke-ToolchainClusterProcess {
 	return $result
 }
 
+function Resolve-ToolchainContainerEngine {
+	param(
+		[ValidateSet('auto', 'docker', 'podman', 'nerdctl')]
+		[string]$Engine = 'auto',
+		[ValidateSet('kind', 'k0s', 'k3s')]
+		[string]$Provider = 'kind'
+	)
+
+	$candidates = if ($Engine -eq 'auto') { @('docker', 'podman', 'nerdctl') } else { @($Engine) }
+	if ($Provider -eq 'k3s') { $candidates = @($candidates | Where-Object { $_ -in @('docker', 'podman') }) }
+	foreach ($candidate in $candidates) {
+		$command = Get-Command -Name $candidate -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+		if (-not $command) { continue }
+		$arguments = if ($candidate -eq 'docker') { @('info', '--format', '{{.OSType}}') } elseif ($candidate -eq 'podman') { @('info', '--format', '{{.Host.OS}}') } else { @('info') }
+		$result = Invoke-ToolchainClusterProcess -FilePath $command.Source -Arguments $arguments -AllowFailure
+		if ($result.ExitCode -ne 0) { continue }
+		if ($candidate -ne 'nerdctl') {
+			$osType = ($result.Output -join '').Trim()
+			if ($osType -and $osType -ine 'linux') { continue }
+		}
+		if ($Provider -eq 'k3s' -and $candidate -eq 'podman' -and -not $env:DOCKER_HOST) {
+			throw 'k3d Podman support requires the Podman API service and DOCKER_HOST pointing to its socket.'
+		}
+		return [pscustomobject]@{ Name = $candidate; Path = [string]$command.Source }
+	}
+	$requested = if ($Engine -eq 'auto') { 'Docker, Podman, or nerdctl' } else { $Engine }
+	throw "no ready Linux container engine was found for $Provider; install and start $requested"
+}
+
 function Assert-ToolchainDockerReady {
-	$docker = Get-ToolchainClusterExecutable -Name 'docker' -InstallHint 'Install Docker Desktop or another Docker Engine client and start its daemon.'
-	$result = Invoke-ToolchainClusterProcess -FilePath $docker -Arguments @('info', '--format', '{{.OSType}}')
+	# Retained as an internal compatibility shim for callers that explicitly require
+	# Docker. New cluster creation uses Resolve-ToolchainContainerEngine so that
+	# Podman and nerdctl can be selected as well.
+	$docker = Get-ToolchainClusterExecutable -Name 'docker' -InstallHint 'Install and start Docker Desktop or Docker Engine.'
+	$result = Invoke-ToolchainClusterProcess -FilePath $docker -Arguments @('info', '--format', '{{.OSType}}') -AllowFailure
 	$osType = ($result.Output -join '').Trim()
-	if ($osType -ine 'linux') {
-		throw "local clusters require Docker to be running Linux containers; Docker reported '$osType'"
+	if ($result.ExitCode -ne 0 -or $osType -ine 'linux') {
+		throw 'Docker must be running Linux containers before a local cluster can be created.'
 	}
 	return $docker
+}
+
+function Invoke-ToolchainKindProcess {
+	param(
+		[Parameter(Mandatory)][string]$FilePath,
+		[Parameter(Mandatory)][string[]]$Arguments,
+		[Parameter(Mandatory)][string]$Engine,
+		[switch]$AllowFailure
+	)
+	$previous = $env:KIND_EXPERIMENTAL_PROVIDER
+	try {
+		$env:KIND_EXPERIMENTAL_PROVIDER = $Engine
+		return (Invoke-ToolchainClusterProcess -FilePath $FilePath -Arguments $Arguments -AllowFailure:$AllowFailure)
+	} finally { $env:KIND_EXPERIMENTAL_PROVIDER = $previous }
 }
 
 function Resolve-ToolchainClusterConfigPath {
@@ -186,7 +232,8 @@ function Write-ToolchainClusterState {
 		[Parameter(Mandatory)][ValidateSet('kind', 'k0s', 'k3s')][string]$Provider,
 		[Parameter(Mandatory)][int]$Servers,
 		[Parameter(Mandatory)][int]$Workers,
-		[string]$Image
+		[string]$Image,
+		[string]$Engine = 'docker'
 	)
 
 	$directory = Get-ToolchainClusterDirectory -Name $Name
@@ -197,6 +244,7 @@ function Write-ToolchainClusterState {
 		schemaVersion = 1
 		name = $Name
 		provider = $Provider
+		engine = $Engine
 		createdAt = [datetime]::UtcNow.ToString('o')
 		servers = $Servers
 		workers = $Workers
@@ -252,7 +300,8 @@ function New-ToolchainKindCluster {
 		[Parameter(Mandatory)][int]$ApiPort,
 		[Parameter(Mandatory)][int]$WaitSeconds,
 		[string]$Image,
-		[string]$Config
+		[string]$Config,
+		[string]$Engine = 'docker'
 	)
 
 	$kind = Get-ToolchainClusterExecutable -Name 'kind' -Package 'kind' -InstallHint 'Install kind and ensure its executable is available on PATH.'
@@ -269,14 +318,14 @@ function New-ToolchainKindCluster {
 
 	$created = $false
 	try {
-		$null = Invoke-ToolchainClusterProcess -FilePath $kind -Arguments $args
+		$null = Invoke-ToolchainKindProcess -FilePath $kind -Arguments $args -Engine $Engine
 		$created = $true
 		if (-not (Test-Path -LiteralPath $Kubeconfig -PathType Leaf)) {
 			throw 'kind reported success but did not write the requested kubeconfig'
 		}
 	} catch {
 		if ($created) {
-			$null = Invoke-ToolchainClusterProcess -FilePath $kind -Arguments @('delete', 'cluster', '--name', $Name) -AllowFailure
+			$null = Invoke-ToolchainKindProcess -FilePath $kind -Arguments @('delete', 'cluster', '--name', $Name) -Engine $Engine -AllowFailure
 		}
 		throw
 	}
@@ -334,7 +383,7 @@ function Set-ToolchainK0sKubeconfigServer {
 
 function New-ToolchainK0sCluster {
 	param(
-		[Parameter(Mandatory)][string]$Docker,
+		[Parameter(Mandatory)][string]$ContainerEngine,
 		[Parameter(Mandatory)][string]$Name,
 		[Parameter(Mandatory)][string]$Kubeconfig,
 		[Parameter(Mandatory)][int]$ApiPort,
@@ -353,29 +402,29 @@ function New-ToolchainK0sCluster {
 	)
 	$created = $false
 	try {
-		$null = Invoke-ToolchainClusterProcess -FilePath $Docker -Arguments $args
+		$null = Invoke-ToolchainClusterProcess -FilePath $ContainerEngine -Arguments $args
 		$created = $true
 		$deadline = [datetime]::UtcNow.AddSeconds($WaitSeconds)
 		$ready = $false
 		do {
-			$check = Invoke-ToolchainClusterProcess -FilePath $Docker -Arguments @('exec', $container, 'k0s', 'kubectl', 'get', '--raw=/readyz') -AllowFailure
+			$check = Invoke-ToolchainClusterProcess -FilePath $ContainerEngine -Arguments @('exec', $container, 'k0s', 'kubectl', 'get', '--raw=/readyz') -AllowFailure
 			if ($check.ExitCode -eq 0) { $ready = $true; break }
 			if ([datetime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 1000 }
 		} while ([datetime]::UtcNow -lt $deadline)
 		if (-not $ready) { throw "k0s cluster did not become ready within $WaitSeconds seconds" }
 
-		$portResult = Invoke-ToolchainClusterProcess -FilePath $Docker -Arguments @('port', $container, '6443/tcp')
+		$portResult = Invoke-ToolchainClusterProcess -FilePath $ContainerEngine -Arguments @('port', $container, '6443/tcp')
 		$portText = ([string]($portResult.Output | Select-Object -First 1)).Trim()
 		if ($portText -notmatch ':(?<Port>\d+)$') { throw "could not determine k0s API port from Docker output: $portText" }
 		$hostPort = [int]$Matches.Port
-		$configResult = Invoke-ToolchainClusterProcess -FilePath $Docker -Arguments @('exec', $container, 'cat', '/var/lib/k0s/pki/admin.conf')
+		$configResult = Invoke-ToolchainClusterProcess -FilePath $ContainerEngine -Arguments @('exec', $container, 'cat', '/var/lib/k0s/pki/admin.conf')
 		$content = ($configResult.Output -join "`n").Trim()
 		if (-not $content) { throw 'k0s returned an empty admin kubeconfig' }
 		$content = Set-ToolchainK0sKubeconfigServer -Content $content -Port $hostPort
 		Write-ToolchainClusterTextFile -Path $Kubeconfig -Content ($content + "`n")
 	} catch {
 		if ($created) {
-			$null = Invoke-ToolchainClusterProcess -FilePath $Docker -Arguments @('rm', '-f', '-v', $container) -AllowFailure
+			$null = Invoke-ToolchainClusterProcess -FilePath $ContainerEngine -Arguments @('rm', '-f', '-v', $container) -AllowFailure
 		}
 		throw
 	}
@@ -388,7 +437,8 @@ function Get-ToolchainClusterRuntimeStatus {
 		switch ([string]$State.provider) {
 			'kind' {
 				$kind = Get-ToolchainClusterExecutable -Name 'kind' -Package 'kind' -InstallHint 'Install kind to inspect this cluster.'
-				$result = Invoke-ToolchainClusterProcess -FilePath $kind -Arguments @('get', 'clusters') -AllowFailure
+				$engine = if ($State.engine) { [string]$State.engine } else { 'docker' }
+				$result = Invoke-ToolchainKindProcess -FilePath $kind -Arguments @('get', 'clusters') -Engine $engine -AllowFailure
 				if ($result.ExitCode -ne 0) { return 'Unknown' }
 				if (@($result.Output | Where-Object { $_.Trim() -ceq [string]$State.name }).Count -gt 0) { return 'Running' }
 				return 'Missing'
@@ -401,9 +451,10 @@ function Get-ToolchainClusterRuntimeStatus {
 				return 'Missing'
 			}
 			'k0s' {
-				$docker = Get-ToolchainClusterExecutable -Name 'docker' -InstallHint 'Install Docker to inspect this cluster.'
+				$engineName = if ($State.engine) { [string]$State.engine } else { 'docker' }
+				$engine = Resolve-ToolchainContainerEngine -Engine $engineName -Provider k0s
 				$container = "toolchain-k0s-$($State.name)"
-				$result = Invoke-ToolchainClusterProcess -FilePath $docker -Arguments @('inspect', '--format', '{{.State.Status}}', $container) -AllowFailure
+				$result = Invoke-ToolchainClusterProcess -FilePath $engine.Path -Arguments @('inspect', '--format', '{{.State.Status}}', $container) -AllowFailure
 				if ($result.ExitCode -ne 0) { return 'Missing' }
 				$status = ($result.Output -join '').Trim()
 				if ($status -ieq 'running') { return 'Running' }
@@ -430,6 +481,7 @@ function ConvertTo-ToolchainClusterObject {
 		Servers = [int]$State.servers
 		Workers = [int]$State.workers
 		Image = [string]$State.image
+		Engine = if ($State.engine) { [string]$State.engine } else { 'docker' }
 		Kubeconfig = Get-ToolchainClusterKubeconfigPath -Name ([string]$State.name)
 		CreatedAt = [datetime]::Parse([string]$State.createdAt).ToLocalTime()
 	}
@@ -445,18 +497,20 @@ function Remove-ToolchainProviderCluster {
 	switch ($provider) {
 		'kind' {
 			$kind = Get-ToolchainClusterExecutable -Name 'kind' -Package 'kind' -InstallHint 'Install kind to delete this cluster.'
-			$result = Invoke-ToolchainClusterProcess -FilePath $kind -Arguments @('delete', 'cluster', '--name', $name) -AllowFailure
+			$engine = if ($State.engine) { [string]$State.engine } else { 'docker' }
+			$result = Invoke-ToolchainKindProcess -FilePath $kind -Arguments @('delete', 'cluster', '--name', $name) -Engine $engine -AllowFailure
 		}
 		'k3s' {
 			$k3d = Get-ToolchainClusterExecutable -Name 'k3d' -Package 'k3d' -InstallHint 'Install k3d to delete this cluster.'
 			$result = Invoke-ToolchainClusterProcess -FilePath $k3d -Arguments @('cluster', 'delete', $name) -AllowFailure
 		}
 		'k0s' {
-			$docker = Get-ToolchainClusterExecutable -Name 'docker' -InstallHint 'Install Docker to delete this cluster.'
+			$engineName = if ($State.engine) { [string]$State.engine } else { 'docker' }
+			$engine = Resolve-ToolchainContainerEngine -Engine $engineName -Provider k0s
 			$container = "toolchain-k0s-$name"
-			$inspect = Invoke-ToolchainClusterProcess -FilePath $docker -Arguments @('inspect', $container) -AllowFailure
+			$inspect = Invoke-ToolchainClusterProcess -FilePath $engine.Path -Arguments @('inspect', $container) -AllowFailure
 			if ($inspect.ExitCode -ne 0) { return }
-			$result = Invoke-ToolchainClusterProcess -FilePath $docker -Arguments @('rm', '-f', '-v', $container) -AllowFailure
+			$result = Invoke-ToolchainClusterProcess -FilePath $engine.Path -Arguments @('rm', '-f', '-v', $container) -AllowFailure
 		}
 	}
 	if ($result.ExitCode -ne 0 -and -not $AllowMissing) {
@@ -485,6 +539,8 @@ function Invoke-ToolchainCluster {
 		[int]$WaitSeconds = 120,
 		[string]$Image,
 		[string]$Config,
+		[ValidateSet('auto', 'docker', 'podman', 'nerdctl')]
+		[string]$Engine = 'auto',
 		[switch]$Raw
 	)
 
@@ -514,16 +570,16 @@ function Invoke-ToolchainCluster {
 			}
 			[void][IO.Directory]::CreateDirectory($directory)
 			$kubeconfig = Get-ToolchainClusterKubeconfigPath -Name $Name
-			$docker = Assert-ToolchainDockerReady
+			$containerEngine = Resolve-ToolchainContainerEngine -Engine $Engine -Provider $Provider
 			$created = $false
 			try {
 				switch ($Provider) {
-					'kind' { New-ToolchainKindCluster -Name $Name -Kubeconfig $kubeconfig -Servers $Servers -Workers $Workers -ApiPort $ApiPort -WaitSeconds $WaitSeconds -Image $Image -Config $Config }
+					'kind' { New-ToolchainKindCluster -Name $Name -Kubeconfig $kubeconfig -Servers $Servers -Workers $Workers -ApiPort $ApiPort -WaitSeconds $WaitSeconds -Image $Image -Config $Config -Engine $containerEngine.Name }
 					'k3s' { New-ToolchainK3dCluster -Name $Name -Kubeconfig $kubeconfig -Servers $Servers -Workers $Workers -ApiPort $ApiPort -WaitSeconds $WaitSeconds -Image $Image -Config $Config }
-					'k0s' { New-ToolchainK0sCluster -Docker $docker -Name $Name -Kubeconfig $kubeconfig -ApiPort $ApiPort -WaitSeconds $WaitSeconds -Image $Image }
+					'k0s' { New-ToolchainK0sCluster -ContainerEngine $containerEngine.Path -Name $Name -Kubeconfig $kubeconfig -ApiPort $ApiPort -WaitSeconds $WaitSeconds -Image $Image }
 				}
 				$created = $true
-				Write-ToolchainClusterState -Name $Name -Provider $Provider -Servers $Servers -Workers $Workers -Image $Image
+				Write-ToolchainClusterState -Name $Name -Provider $Provider -Servers $Servers -Workers $Workers -Image $Image -Engine $containerEngine.Name
 				$state = Read-ToolchainClusterState -Name $Name
 				Write-ToolchainInfo "Created $Provider cluster '$Name'. Kubeconfig: $kubeconfig"
 				return (ConvertTo-ToolchainClusterObject -State $state -Status 'Running')
@@ -563,7 +619,6 @@ function Invoke-ToolchainCluster {
 			if (-not $Name) { throw 'cluster delete requires a name' }
 			$state = Read-ToolchainClusterState -Name $Name
 			if (-not $state) { throw "Toolchain cluster not found: $Name" }
-			$null = Assert-ToolchainDockerReady
 			Remove-ToolchainProviderCluster -State $state
 			Remove-ToolchainClusterDirectory -Name $Name
 			Write-ToolchainInfo "Deleted $($state.provider) cluster '$Name'."

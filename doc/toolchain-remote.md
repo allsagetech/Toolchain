@@ -16,6 +16,9 @@ packages and are excluded from package views.
 	toolchain remote models
 	toolchain remote models qwen3-0.6b
 	toolchain remote all
+	toolchain remote health
+	toolchain remote health -OnlyProblems
+	toolchain remote info kubectl
 	toolchain remote tags
 	toolchain remote list -Refresh
 	toolchain remote all -Json
@@ -29,6 +32,17 @@ packages and are excluded from package views.
 - `tags` returns raw registry tags for diagnostics. This view can include
   Cosign `sha256-<digest>.sig` tags, temporary `staging-*` tags, and Toolchain
   package-kind markers.
+- `health` reads the signed Toolchains health catalog and shows availability,
+  quarantine or scanner state, supported platforms, versions, and upstream
+  location. `-OnlyProblems` hides healthy entries.
+- `info PACKAGE` returns the health record for exactly one logical package.
+- If the signed health catalog is temporarily unavailable, `health` falls back
+  to a live registry view and labels the result as fallback metadata.
+- When the health catalog is available, ordinary package views and resolution
+  expose only versions it marks installable; quarantined and scanner-blocked
+  versions remain visible under `BlockedVersions` in health output.
+- Catalog content is pinned to its OCI digest. If automatic Cosign verification
+  is enabled by Toolchain policy, the catalog signature is verified before use.
 - `-Refresh` bypasses the short-lived on-disk catalog cache.
 - `-Json` emits the selected view as JSON for CI and other automation.
 

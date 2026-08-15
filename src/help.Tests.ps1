@@ -12,7 +12,9 @@ Describe 'Toolchain command help catalog' {
 	It 'covers every top-level and nested command' {
 		$expected = @(
 			'version','list','remote','remote list','remote models','remote all','remote tags',
+			'remote health','remote info',
 			'pull','load','exec','run','update','prune','remove','save','init',
+			'lock','restore','verify',
 			'profile','profile init','profile add','profile remove','profile list','profile path',
 			'cluster','cluster create','cluster list','cluster status','cluster kubeconfig','cluster delete',
 			'k9s','doctor','help'

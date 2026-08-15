@@ -66,10 +66,12 @@ for listing, removal, and path commands.
 
 ### Local Kubernetes clusters
 
-Toolchain can create isolated development clusters on a running Docker Engine:
+Toolchain can create isolated development clusters on a running Docker, Podman,
+or nerdctl-backed Linux container engine:
 
 ```powershell
 toolchain cluster create dev -Provider kind -Workers 2
+toolchain cluster create podman-dev -Provider kind -Engine podman
 toolchain cluster create k3s-dev -Provider k3s -Workers 2
 toolchain cluster create k0s-dev -Provider k0s -Image docker.io/k0sproject/k0s:v1.32.4-k0s.0
 ```
@@ -153,7 +155,7 @@ toolchain run build -Configuration Debug
 |---|---|---|
 | `version` | Print module version | `doc/toolchain-version.md` |
 | `list` | List installed packages | `doc/toolchain-list.md` |
-| `remote list` / `models` / `all` / `tags` | List remote tools, models, all packages, one package's versions, or raw registry tags | `doc/toolchain-remote.md` |
+| `remote list` / `models` / `all` / `health` / `info` / `tags` | List remote packages or inspect signed package health and raw registry metadata | `doc/toolchain-remote.md` |
 | `pull` | Download packages | `doc/toolchain-pull.md` |
 | `load` | Load packages into current session | `doc/toolchain-load.md` |
 | `exec` | Run a scriptblock in a managed session | `doc/toolchain-exec.md` |
@@ -163,8 +165,10 @@ toolchain run build -Configuration Debug
 | `remove` / `rm` | Untag/delete packages | `doc/toolchain-remove.md` |
 | `save` | Download packages for offline use | `doc/toolchain-save.md` |
 | `init` | Write a starter `Toolchain.ps1` | `doc/toolchain-init.md` |
+| `lock` / `restore` | Pin project packages by platform digest and restore them exactly | `doc/toolchain-lock.md` |
+| `verify` | Verify package and platform-index signatures | `doc/toolchain-verify.md` |
 | `profile init` / `add` / `remove` / `list` / `path` | Manage startup package loads in your PowerShell profile | `doc/toolchain-profile.md` |
-| `cluster create` / `list` / `status` / `kubeconfig` / `delete` | Manage local Docker-backed Kubernetes clusters | `doc/toolchain-cluster.md` |
+| `cluster create` / `list` / `status` / `kubeconfig` / `delete` | Manage local Docker-, Podman-, or nerdctl-backed Kubernetes clusters | `doc/toolchain-cluster.md` |
 | `k9s` | Launch K9s against the current context or a selected kubeconfig | `doc/toolchain-k9s.md` |
 | `doctor` | Print diagnostics for your Toolchain setup | `doc/toolchain-doctor.md` |
 | `help` | Show CLI help | `doc/toolchain-help.md` |
@@ -246,6 +250,7 @@ Toolchain supports:
 - Allow/deny policies for registries, repos, packages and versions (`doc/toolchain-policy.md`)
 - Optional signed-manifest enforcement for offline repos (CMS/PKCS#7)
 - Optional Sigstore/cosign verification for online pulls (`doc/toolchain-security.md`)
+- Explicit signature verification with `tlc verify`, including both an OCI index and its selected platform manifest
 
 ### Environment toggles (high-level)
 

@@ -28,9 +28,9 @@ function Get-ToolchainNestedCompletionValues {
 	switch ($Subcommand) {
 		'remote' {
 			if ($Elements.Count -le 2 -or ($Elements.Count -eq 3 -and $WordToComplete)) {
-				return @('list','models','all','tags') + $helpValues | Where-Object { $_ -like "$WordToComplete*" }
+				return @('list','models','all','health','info','tags') + $helpValues | Where-Object { $_ -like "$WordToComplete*" }
 			}
-			return @('-Refresh','-Json') + $helpValues | Where-Object { $_ -like "$WordToComplete*" }
+			return @('-Refresh','-Json','-OnlyProblems') + $helpValues | Where-Object { $_ -like "$WordToComplete*" }
 		}
 		'profile' {
 			if ($Elements.Count -le 2 -or ($Elements.Count -eq 3 -and $WordToComplete)) {
@@ -40,11 +40,12 @@ function Get-ToolchainNestedCompletionValues {
 		}
 		'cluster' {
 			if ($previous -eq '-Provider') { return @('kind','k0s','k3s') | Where-Object { $_ -like "$WordToComplete*" } }
+			if ($previous -eq '-Engine') { return @('auto','docker','podman','nerdctl') | Where-Object { $_ -like "$WordToComplete*" } }
 			if ($Elements.Count -le 2 -or ($Elements.Count -eq 3 -and $WordToComplete)) {
 				return @('create','list','status','kubeconfig','delete') + $helpValues | Where-Object { $_ -like "$WordToComplete*" }
 			}
 			$options = switch ($Elements[2]) {
-				'create' { @('-Provider','-Servers','-Workers','-ApiPort','-WaitSeconds','-Image','-Config') }
+				'create' { @('-Provider','-Engine','-Servers','-Workers','-ApiPort','-WaitSeconds','-Image','-Config') }
 				'list' { @('-Provider') }
 				'kubeconfig' { @('-Raw') }
 				default { @() }
@@ -56,8 +57,11 @@ function Get-ToolchainNestedCompletionValues {
 				Where-Object { $_ -like "$WordToComplete*" }
 		}
 		'doctor' { return @('-Strict','-PassThru','-Json','-Refresh') + $helpValues | Where-Object { $_ -like "$WordToComplete*" } }
+		'lock' { return @('-Packages','-Path','-Update') + $helpValues | Where-Object { $_ -like "$WordToComplete*" } }
+		'restore' { return @('-Path') + $helpValues | Where-Object { $_ -like "$WordToComplete*" } }
+		'verify' { return @('-Json') + $helpValues | Where-Object { $_ -like "$WordToComplete*" } }
 		'help' {
-			return @('version','remote','list','load','pull','exec','run','remove','save','prune','update','init','profile','cluster','k9s','doctor') |
+			return @('version','remote','list','load','pull','exec','run','remove','save','prune','update','init','lock','restore','verify','profile','cluster','k9s','doctor') |
 				Where-Object { $_ -like "$WordToComplete*" }
 		}
 	}
@@ -65,7 +69,7 @@ function Get-ToolchainNestedCompletionValues {
 }
 
 function Register-ToolchainArgumentCompleters {
-	$commands = @('version','remote','list','load','pull','exec','run','remove','save','prune','update','init','profile','cluster','k9s','doctor','help')
+	$commands = @('version','remote','list','load','pull','exec','run','remove','save','prune','update','init','lock','restore','verify','profile','cluster','k9s','doctor','help')
 	Register-ArgumentCompleter -CommandName Invoke-Toolchain,toolchain,tool,tlc -ParameterName Command -ScriptBlock {
 		param($commandName, $parameterName, $wordToComplete)
 		$commands | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object { New-ToolchainCompletionResult $_ }

@@ -6,22 +6,25 @@ SPDX-License-Identifier: MPL-2.0
 
 # cluster
 
-Creates and manages local Kubernetes development clusters backed by Docker.
+Creates and manages local Kubernetes development clusters backed by Docker,
+Podman, or nerdctl where the selected provider supports that engine.
 This command is intended for development and CI, not production clusters.
 
 ## Requirements
 
-- Docker Desktop or another Docker Engine must be running Linux containers.
+- A ready Linux container engine is required. `-Engine auto` checks Docker,
+  Podman, then nerdctl.
 - The `kind` provider uses the kind executable.
-- The `k3s` provider uses k3d to run K3s nodes in Docker.
+- The `k3s` provider uses k3d. Docker is preferred; Podman support is
+  experimental and requires its API service plus `DOCKER_HOST`.
 - The `k0s` provider runs the official k0s container image directly and requires
   privileged containers.
 
 When kind or k3d is absent from `PATH`, Toolchain automatically resolves and
 loads the platform-appropriate package from the Toolchains catalog. This uses
 the normal pull policy, integrity checks, signatures, and policy controls.
-Docker Engine itself remains an external prerequisite; the `docker` Toolchains
-package provides a client only and does not install or start an engine.
+The engine daemon or Podman machine remains an external prerequisite; Toolchains
+packages provide clients but do not silently start privileged host services.
 
 ## Create
 
@@ -29,6 +32,7 @@ Create a one-node kind cluster:
 
 ```powershell
 toolchain cluster create dev -Provider kind
+toolchain cluster create podman-dev -Provider kind -Engine podman
 ```
 
 Create kind or K3s clusters with workers and an optional fixed API port:

@@ -56,10 +56,11 @@ function Get-ToolchainCosignKey {
 
 function Invoke-ToolchainCosignVerify {
 	param(
-		[Parameter(Mandatory)][string]$RepoDigestRef
+		[Parameter(Mandatory)][string]$RepoDigestRef,
+		[switch]$Force
 	)
 
-	if (-not (Get-ToolchainCosignVerifyEnabled)) { return }
+	if (-not $Force -and -not (Get-ToolchainCosignVerifyEnabled)) { return }
 
 	$cosign = (Get-Command 'cosign' -ErrorAction SilentlyContinue)
 	if (-not $cosign) {

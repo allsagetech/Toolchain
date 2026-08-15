@@ -61,6 +61,34 @@ Describe 'Toolchain cluster validation' {
 		Assert-ToolchainDockerReady | Should -Be 'docker'
 	}
 
+	It 'selects the first ready supported container engine' {
+		Mock Get-Command {
+			if ($Name -eq 'podman') { [pscustomobject]@{ Source = 'podman.exe' } }
+		} -ParameterFilter { $Name -in @('docker','podman','nerdctl') }
+		Mock Invoke-ToolchainClusterProcess { New-TestClusterProcessResult -Output @('linux') }
+
+		$engine = Resolve-ToolchainContainerEngine -Provider kind
+		$engine.Name | Should -Be 'podman'
+		$engine.Path | Should -Be 'podman.exe'
+	}
+
+	It 'rejects a non-Linux engine and unsupported k3d engines' {
+		Mock Get-Command { [pscustomobject]@{ Source = "$Name.exe" } } -ParameterFilter { $Name -in @('docker','podman','nerdctl') }
+		Mock Invoke-ToolchainClusterProcess { New-TestClusterProcessResult -Output @('windows') }
+		{ Resolve-ToolchainContainerEngine -Engine docker -Provider kind } | Should -Throw '*no ready Linux container engine*'
+		{ Resolve-ToolchainContainerEngine -Engine nerdctl -Provider k3s } | Should -Throw '*no ready Linux container engine*'
+	}
+
+	It 'requires the Podman API socket for k3d' {
+		$previousDockerHost = $env:DOCKER_HOST
+		$env:DOCKER_HOST = $null
+		Mock Get-Command { [pscustomobject]@{ Source = 'podman.exe' } } -ParameterFilter { $Name -eq 'podman' }
+		Mock Invoke-ToolchainClusterProcess { New-TestClusterProcessResult -Output @('linux') }
+		try {
+			{ Resolve-ToolchainContainerEngine -Engine podman -Provider k3s } | Should -Throw '*DOCKER_HOST*'
+		} finally { $env:DOCKER_HOST = $previousDockerHost }
+	}
+
 	It 'provisions a missing provider executable from the Toolchains catalog' {
 		$script:clusterCommandChecks = 0
 		$script:catalogRefreshDuringResolve = $null
@@ -95,7 +123,7 @@ Describe 'Toolchain cluster lifecycle' {
 		$script:clusterRoot = Join-Path $TestDrive $case
 		$script:clusterCalls = [Collections.Generic.List[object]]::new()
 		Mock GetToolchainPath { $script:clusterRoot }
-		Mock Assert-ToolchainDockerReady { 'docker' }
+		Mock Resolve-ToolchainContainerEngine { [pscustomobject]@{ Name = 'docker'; Path = 'docker' } }
 		Mock Get-ToolchainClusterExecutable { param($Name, $InstallHint) $Name }
 		Mock Invoke-ToolchainClusterProcess {
 			param($FilePath, $Arguments, [switch]$AllowFailure)
@@ -171,7 +199,7 @@ Describe 'Toolchain cluster lifecycle' {
 	It 'requires an explicitly versioned image for k0s' {
 		{ Invoke-ToolchainCluster -Command create -Name dev -Provider k0s } | Should -Throw '*requires -Image*'
 		{ Invoke-ToolchainCluster -Command create -Name dev -Provider k0s -Image 'docker.io/k0sproject/k0s:latest' } | Should -Throw '*non-latest*'
-		Should -Invoke -CommandName Assert-ToolchainDockerReady -Times 0
+		Should -Invoke -CommandName Resolve-ToolchainContainerEngine -Times 0
 	}
 
 	It 'rejects unsupported k0s topologies' {
@@ -188,7 +216,7 @@ Describe 'Toolchain cluster lifecycle' {
 		[void][IO.Directory]::CreateDirectory($directory)
 		[IO.File]::WriteAllText((Join-Path $directory 'kubeconfig.yaml'), 'existing')
 		{ Invoke-ToolchainCluster -Command create -Name dev -Provider kind } | Should -Throw '*not empty*'
-		Should -Invoke -CommandName Assert-ToolchainDockerReady -Times 0
+		Should -Invoke -CommandName Resolve-ToolchainContainerEngine -Times 0
 	}
 
 	It 'does not combine provider configs with topology flags' {

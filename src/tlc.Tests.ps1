@@ -69,6 +69,9 @@ Describe 'Invoke-Toolchain dispatcher' {
 		Mock Invoke-ToolchainExec { param([string[]]$Packages,[scriptblock]$ScriptBlock) @($Packages).Count }
 		Mock Invoke-ToolchainRun { param([string]$FnName,[object[]]$ArgumentList) @($FnName) + @($ArgumentList) }
 		Mock Invoke-ToolchainInit { 'init' }
+		Mock Invoke-ToolchainLock { param([string[]]$Packages,[string[]]$Update) if ($Update) { @($Update) } elseif ($Packages) { @($Packages) } else { 'lock' } }
+		Mock Invoke-ToolchainRestore { 'restore' }
+		Mock Invoke-ToolchainVerify { param([string[]]$Packages) @($Packages) }
 		Mock Invoke-ToolchainProfile { param($Command,[string[]]$Packages) @($Command) + @($Packages) }
 		Mock Invoke-ToolchainCluster { param($Command,$Name,$Provider) @($Command,$Name,$Provider) }
 		Mock Invoke-ToolchainK9s { param($Cluster,$Kubeconfig,[object[]]$ArgumentList) [pscustomobject]@{ Cluster = $Cluster; Kubeconfig = $Kubeconfig; Arguments = @($ArgumentList) } }
@@ -123,6 +126,11 @@ Describe 'Invoke-Toolchain dispatcher' {
 		(Invoke-Toolchain -Command update) | Should -Be 'update'
 		(Invoke-Toolchain -Command save -ArgumentList @('-Output','out')) | Should -Be 'save'
 		(Invoke-Toolchain -Command init) | Should -Be 'init'
+		(Invoke-Toolchain -Command lock) | Should -Be 'lock'
+		@(Invoke-Toolchain -Command lock -ArgumentList @('node','git')) | Should -Be @('node','git')
+		@(Invoke-Toolchain -Command lock -ArgumentList @('-Update','node','git')) | Should -Be @('node','git')
+		(Invoke-Toolchain -Command restore) | Should -Be 'restore'
+		@(Invoke-Toolchain -Command verify -ArgumentList @('node','git')) | Should -Be @('node','git')
 		@(Invoke-Toolchain -Command profile -ArgumentList @('add','node','git')) | Should -Be @('add','node','git')
 		@(Invoke-Toolchain -Command cluster -ArgumentList @('create','dev','-Provider','kind')) | Should -Be @('create','dev','kind')
 		$k9s = Invoke-Toolchain -Command k9s -ArgumentList @('-Cluster','dev','-n','default')
@@ -142,7 +150,7 @@ Describe 'Invoke-Toolchain dispatcher' {
 	}
 
 	It 'routes suffix help for every top-level command without executing it' {
-		$commands = @('version','v','remote','list','load','pull','exec','run','remove','rm','save','prune','update','init','profile','cluster','k9s','doctor')
+		$commands = @('version','v','remote','list','load','pull','exec','run','remove','rm','save','prune','update','init','lock','restore','verify','profile','cluster','k9s','doctor')
 		foreach ($command in $commands) {
 			$expected = switch ($command) { 'v' { 'version' }; 'rm' { 'remove' }; default { $command } }
 			(Invoke-Toolchain -Command $command -ArgumentList @('help')) | Should -Be "help:$expected"
@@ -463,6 +471,13 @@ Describe 'Invoke-ToolchainRemote' {
 	It 'Exposes raw registry tags only through the diagnostic command' {
 		Mock GetRemoteRegistryTags { return @('package-1.0.0', 'sha256-digest.sig') }
 		@(Invoke-ToolchainRemote -Command tags) | Should -Be @('package-1.0.0', 'sha256-digest.sig')
+	}
+
+	It 'routes health and package info views' {
+		Mock Get-ToolchainPackageHealth { param($Package, [switch]$OnlyProblems, [switch]$Refresh) "$Package`:$([bool]$OnlyProblems):$([bool]$Refresh)" }
+		(Invoke-ToolchainRemote -Command health -OnlyProblems -Refresh) | Should -Be ':True:True'
+		(Invoke-ToolchainRemote -Command info -Package node) | Should -Be 'node:False:False'
+		{ Invoke-ToolchainRemote -Command info } | Should -Throw '*requires a package name*'
 	}
 }
 

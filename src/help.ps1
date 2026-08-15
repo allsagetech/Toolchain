@@ -41,6 +41,8 @@ function Get-ToolchainHelpTopics {
 			'list      List ordinary tooling packages or one package''s versions.',
 			'models    List AI model packages or one package''s versions.',
 			'all       List all packages or one package''s versions.',
+			'health    Show package availability and security health.',
+			'info      Show detailed health for one package.',
 			'tags      List raw registry tags for diagnostics.'
 		) `
 		-Examples @('tlc remote list', 'tlc remote list node', 'tlc remote models', 'tlc remote tags help')
@@ -65,6 +67,15 @@ function Get-ToolchainHelpTopics {
 		-Options @('-Refresh    Bypass the local registry-tag cache.', '-Json       Emit JSON instead of PowerShell objects.') `
 		-Examples @('tlc remote tags', 'tlc remote tags -Refresh') `
 		-Notes @('Use remote list, models, or all for installable package views.')
+	$topics.'remote health' = New-ToolchainHelpTopic `
+		-Description 'Shows the signed package availability and security-health catalog.' `
+		-Usage @('tlc remote health [PACKAGE] [-OnlyProblems] [-Refresh] [-Json]') `
+		-Options @('PACKAGE          Return only one package.', '-OnlyProblems    Show only unavailable, quarantined, or scan-blocked packages.', '-Refresh         Bypass cached registry data.', '-Json            Emit JSON.') `
+		-Examples @('tlc remote health', 'tlc remote health -OnlyProblems', 'tlc remote health k9s -Json')
+	$topics.'remote info' = New-ToolchainHelpTopic `
+		-Description 'Shows versions, platforms, provenance location, and health for one package.' `
+		-Usage @('tlc remote info PACKAGE [-Refresh] [-Json]') `
+		-Examples @('tlc remote info kubectl', 'tlc remote info k9s -Refresh')
 	$topics.pull = New-ToolchainHelpTopic `
 		-Description 'Downloads package content into the local Toolchain store.' `
 		-Usage @('tlc pull [PACKAGE[:TAG] ...]') `
@@ -112,6 +123,19 @@ function Get-ToolchainHelpTopics {
 		-Usage @('tlc init [-Force]') `
 		-Options @('-Force    Replace an existing Toolchain.ps1 file.') `
 		-Examples @('tlc init', 'tlc init -Force')
+	$topics.lock = New-ToolchainHelpTopic `
+		-Description 'Resolves project packages to exact platform manifest digests and writes Toolchain.lock.json.' `
+		-Usage @('tlc lock [PACKAGE...] [-Path PATH]', 'tlc lock -Update PACKAGE [PACKAGE...] [-Path PATH]') `
+		-Examples @('tlc lock', 'tlc lock -Update node', 'tlc lock -Path .\ci\Toolchain.lock.json')
+	$topics.restore = New-ToolchainHelpTopic `
+		-Description 'Restores every package from the exact digests in Toolchain.lock.json.' `
+		-Usage @('tlc restore [-Path PATH]') `
+		-Examples @('tlc restore', 'tlc restore -Path .\ci\Toolchain.lock.json')
+	$topics.verify = New-ToolchainHelpTopic `
+		-Description 'Verifies package index and platform-manifest signatures with Cosign.' `
+		-Usage @('tlc verify [PACKAGE[:TAG] ...] [-Json]') `
+		-Examples @('tlc verify kubectl', 'tlc verify kind:0.32.0 -Json') `
+		-Notes @('Cosign must be available on PATH and the configured identity or key policy is enforced.')
 
 	$topics.profile = New-ToolchainHelpTopic `
 		-Description 'Creates and manages Toolchain package loads in the current PowerShell profile.' `
@@ -149,7 +173,7 @@ function Get-ToolchainHelpTopics {
 		-Examples @('tlc profile path')
 
 	$topics.cluster = New-ToolchainHelpTopic `
-		-Description 'Creates and manages local Docker-backed Kubernetes development clusters.' `
+		-Description 'Creates and manages local container-engine-backed Kubernetes development clusters.' `
 		-Usage @('tlc cluster COMMAND [ARGUMENTS] [OPTIONS]', 'tlc cluster COMMAND help') `
 		-Commands @(
 			'create        Create a kind, k0s, or K3s-on-k3d cluster.',
@@ -159,12 +183,13 @@ function Get-ToolchainHelpTopics {
 			'delete        Delete a managed cluster and its local state.'
 		) `
 		-Examples @('tlc cluster create help', 'tlc cluster list') `
-		-Notes @('Cluster commands require Docker running Linux containers.')
+		-Notes @('Kind supports Docker, Podman, and nerdctl. K3d supports Docker and experimental Podman operation.')
 	$topics.'cluster create' = New-ToolchainHelpTopic `
 		-Description 'Creates an isolated local Kubernetes development cluster.' `
-		-Usage @('tlc cluster create NAME [-Provider kind|k0s|k3s] [-Servers COUNT] [-Workers COUNT] [-ApiPort PORT] [-WaitSeconds SECONDS] [-Image REF] [-Config PATH]') `
+		-Usage @('tlc cluster create NAME [-Provider kind|k0s|k3s] [-Engine auto|docker|podman|nerdctl] [-Servers COUNT] [-Workers COUNT] [-ApiPort PORT] [-WaitSeconds SECONDS] [-Image REF] [-Config PATH]') `
 		-Options @(
 			'-Provider VALUE       Cluster provider: kind, k0s, or k3s. Default: kind.',
+			'-Engine VALUE         Container engine: auto, docker, podman, or nerdctl. Default: auto.',
 			'-Servers COUNT        Server/control-plane count from 1 through 9. Default: 1.',
 			'-Workers COUNT        Worker count from 0 through 20. Default: 0.',
 			'-ApiPort PORT         Host API port from 0 through 65535. Zero selects automatically.',
