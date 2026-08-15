@@ -12,7 +12,9 @@ packages and are excluded from package views.
 ## Usage
 
 	toolchain remote list
+	toolchain remote list node
 	toolchain remote models
+	toolchain remote models qwen3-0.6b
 	toolchain remote all
 	toolchain remote tags
 	toolchain remote list -Refresh
@@ -22,6 +24,8 @@ packages and are excluded from package views.
   properties on the PowerShell object for compatibility with existing scripts.
 - `models` returns AI model packages.
 - `all` returns every installable package, including tools and models.
+- Supplying a package name to `list`, `models`, or `all` returns only that
+  package's normalized version strings in descending order.
 - `tags` returns raw registry tags for diagnostics. This view can include
   Cosign `sha256-<digest>.sig` tags, temporary `staging-*` tags, and Toolchain
   package-kind markers.
@@ -39,6 +43,25 @@ PS C:\example> toolchain remote list
 
 somepkg    : {1.2.3, 1.1.0}
 anotherpkg : 3.3.1
+```
+
+```
+PS C:\example> toolchain remote list node
+
+22.3.1
+22.2.0
+20.1.0
+```
+
+Use `-Json` with a package filter to emit a JSON array of version strings:
+
+```
+PS C:\example> toolchain remote list node -Json
+[
+  "22.3.1",
+  "22.2.0",
+  "20.1.0"
+]
 ```
 
 ```

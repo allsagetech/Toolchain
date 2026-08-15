@@ -5,6 +5,7 @@
 ### Added
 
 - Add `tlc k9s` with current-context, managed-cluster, and explicit-kubeconfig modes plus native K9s argument forwarding.
+- Add optional package filters to `tlc remote list`, `remote models`, and `remote all` for listing one package's versions.
 
 ## 2.3.3 - 2026-08-14
 

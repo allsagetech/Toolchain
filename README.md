@@ -153,7 +153,7 @@ toolchain run build -Configuration Debug
 |---|---|---|
 | `version` | Print module version | `doc/toolchain-version.md` |
 | `list` | List installed packages | `doc/toolchain-list.md` |
-| `remote list` / `models` / `all` / `tags` | List remote tools, models, all packages, or raw registry tags | `doc/toolchain-remote.md` |
+| `remote list` / `models` / `all` / `tags` | List remote tools, models, all packages, one package's versions, or raw registry tags | `doc/toolchain-remote.md` |
 | `pull` | Download packages | `doc/toolchain-pull.md` |
 | `load` | Load packages into current session | `doc/toolchain-load.md` |
 | `exec` | Run a scriptblock in a managed session | `doc/toolchain-exec.md` |

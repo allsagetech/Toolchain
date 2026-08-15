@@ -38,27 +38,27 @@ function Get-ToolchainHelpTopics {
 		-Description 'Lists installable packages or raw tags from the configured remote registry.' `
 		-Usage @('tlc remote COMMAND [OPTIONS]', 'tlc remote COMMAND help') `
 		-Commands @(
-			'list      List ordinary tooling packages and versions.',
-			'models    List AI model packages and versions.',
-			'all       List every installable package and version.',
+			'list      List ordinary tooling packages or one package''s versions.',
+			'models    List AI model packages or one package''s versions.',
+			'all       List all packages or one package''s versions.',
 			'tags      List raw registry tags for diagnostics.'
 		) `
-		-Examples @('tlc remote list', 'tlc remote models', 'tlc remote tags help')
+		-Examples @('tlc remote list', 'tlc remote list node', 'tlc remote models', 'tlc remote tags help')
 	$topics.'remote list' = New-ToolchainHelpTopic `
 		-Description 'Lists ordinary tooling packages and their available versions.' `
-		-Usage @('tlc remote list [-Refresh] [-Json]') `
-		-Options @('-Refresh    Bypass the local catalog cache.', '-Json       Emit JSON instead of PowerShell objects.') `
-		-Examples @('tlc remote list', 'tlc remote list -Refresh', 'tlc remote list -Json')
+		-Usage @('tlc remote list [PACKAGE] [-Refresh] [-Json]') `
+		-Options @('PACKAGE     Return only this tooling package''s versions.', '-Refresh    Bypass the local catalog cache.', '-Json       Emit JSON instead of PowerShell objects.') `
+		-Examples @('tlc remote list', 'tlc remote list node', 'tlc remote list node -Json', 'tlc remote list -Refresh')
 	$topics.'remote models' = New-ToolchainHelpTopic `
 		-Description 'Lists AI model packages and their available versions.' `
-		-Usage @('tlc remote models [-Refresh] [-Json]') `
-		-Options @('-Refresh    Bypass the local catalog cache.', '-Json       Emit JSON instead of PowerShell objects.') `
-		-Examples @('tlc remote models', 'tlc remote models -Json')
+		-Usage @('tlc remote models [PACKAGE] [-Refresh] [-Json]') `
+		-Options @('PACKAGE     Return only this model package''s versions.', '-Refresh    Bypass the local catalog cache.', '-Json       Emit JSON instead of PowerShell objects.') `
+		-Examples @('tlc remote models', 'tlc remote models qwen3-0.6b', 'tlc remote models -Json')
 	$topics.'remote all' = New-ToolchainHelpTopic `
 		-Description 'Lists every installable tooling and AI model package.' `
-		-Usage @('tlc remote all [-Refresh] [-Json]') `
-		-Options @('-Refresh    Bypass the local catalog cache.', '-Json       Emit JSON instead of PowerShell objects.') `
-		-Examples @('tlc remote all', 'tlc remote all -Refresh -Json')
+		-Usage @('tlc remote all [PACKAGE] [-Refresh] [-Json]') `
+		-Options @('PACKAGE     Return only this package''s versions.', '-Refresh    Bypass the local catalog cache.', '-Json       Emit JSON instead of PowerShell objects.') `
+		-Examples @('tlc remote all', 'tlc remote all node', 'tlc remote all -Refresh -Json')
 	$topics.'remote tags' = New-ToolchainHelpTopic `
 		-Description 'Lists raw registry tags, including signature, marker, and staging metadata.' `
 		-Usage @('tlc remote tags [-Refresh] [-Json]') `

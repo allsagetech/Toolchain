@@ -301,15 +301,18 @@ function Invoke-ToolchainExec {
 function Invoke-ToolchainRemote {
 	[CmdletBinding()]
 	param (
-		[Parameter(Mandatory)]
+		[Parameter(Mandatory, Position = 0)]
 		[ValidateSet('list', 'models', 'all', 'tags')]
 		[string]$Command,
+		[Parameter(Position = 1)]
+		[string]$Package,
 		[switch]$Refresh,
 		[switch]$Json
 	)
 	$result = switch ($Command) {
 		'list' {
-			GetDockerTags -Kind All -ToolingDefaultDisplay -Refresh:$Refresh
+			if ($Package) { GetDockerTags -Kind Tooling -Refresh:$Refresh }
+			else { GetDockerTags -Kind All -ToolingDefaultDisplay -Refresh:$Refresh }
 		}
 		'models' {
 			GetDockerTags -Kind Model -Refresh:$Refresh
@@ -318,8 +321,18 @@ function Invoke-ToolchainRemote {
 			GetDockerTags -Kind All -Refresh:$Refresh
 		}
 		'tags' {
+			if ($Package) { throw 'remote tags does not accept a package name' }
 			GetRemoteRegistryTags -Refresh:$Refresh
 		}
+	}
+	if ($Package) {
+		$property = $result.PSObject.Properties |
+			Where-Object { $_.Name -ieq $Package } |
+			Select-Object -First 1
+		if (-not $property) { throw "remote package not found in '$Command' catalog: $Package" }
+		$versions = @($property.Value | ForEach-Object { $_.ToString() })
+		if ($Json) { return (ConvertTo-Json -InputObject $versions -Depth 20) }
+		return $versions
 	}
 	if ($Json) { return ($result | ConvertTo-Json -Depth 20) }
 	return $result

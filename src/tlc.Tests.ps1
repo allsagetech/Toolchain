@@ -59,7 +59,7 @@ Describe 'Invoke-Toolchain dispatcher' {
 	BeforeEach {
 		Mock Invoke-ToolchainVersion { '1.0.0' }
 		Mock Invoke-ToolchainList { 'list' }
-		Mock Invoke-ToolchainRemote { param($Command) "remote:$Command" }
+		Mock Invoke-ToolchainRemote { param($Command,$Package) if ($Package) { "remote:$Command`:$Package" } else { "remote:$Command" } }
 		Mock Invoke-ToolchainLoad { param([string[]]$Packages) $Packages }
 		Mock Invoke-ToolchainPull { param([string[]]$Packages) $Packages }
 		Mock Invoke-ToolchainPrune { 'prune' }
@@ -83,6 +83,7 @@ Describe 'Invoke-Toolchain dispatcher' {
 
 	It 'Routes remote catalog commands' {
 		(Invoke-Toolchain -Command remote -ArgumentList @('list')) | Should -Be 'remote:list'
+		(Invoke-Toolchain -Command remote -ArgumentList @('list','node')) | Should -Be 'remote:list:node'
 		(Invoke-Toolchain -Command remote -ArgumentList @('models')) | Should -Be 'remote:models'
 		(Invoke-Toolchain -Command remote -ArgumentList @('all')) | Should -Be 'remote:all'
 		(Invoke-Toolchain -Command remote -ArgumentList @('tags')) | Should -Be 'remote:tags'
@@ -429,6 +430,28 @@ Describe 'Invoke-ToolchainRemote' {
 		(Invoke-ToolchainRemote -Command list) | Should -Be 'All:True:False'
 		(Invoke-ToolchainRemote -Command models) | Should -Be 'Model:False:False'
 		(Invoke-ToolchainRemote -Command all -Refresh) | Should -Be 'All:False:True'
+	}
+
+	It 'Returns normalized versions for one package' {
+		Mock GetDockerTags {
+			return [pscustomobject]@{
+				node = @([Tag]::new('22.3.1'), [Tag]::new('20.1.0'))
+			}
+		}
+		@(Invoke-ToolchainRemote -Command list -Package Node) | Should -Be @('22.3.1','20.1.0')
+		Should -Invoke GetDockerTags -Times 1 -Exactly -ParameterFilter { $Kind -eq 'Tooling' -and -not $ToolingDefaultDisplay }
+	}
+
+	It 'Returns package versions as a JSON array' {
+		Mock GetDockerTags { return [pscustomobject]@{ node = @([Tag]::new('22.3.1')) } }
+		$json = Invoke-ToolchainRemote -Command all -Package node -Json | ConvertFrom-Json
+		@($json) | Should -Be @('22.3.1')
+	}
+
+	It 'Rejects unknown packages and package filters on raw tags' {
+		Mock GetDockerTags { return [pscustomobject]@{ node = @([Tag]::new('22.3.1')) } }
+		{ Invoke-ToolchainRemote -Command list -Package missing } | Should -Throw "*remote package not found in 'list' catalog*"
+		{ Invoke-ToolchainRemote -Command tags -Package node } | Should -Throw '*remote tags does not accept a package name*'
 	}
 
 	It 'Supports JSON output' {
