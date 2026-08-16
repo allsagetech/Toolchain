@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2.4.0 - 2026-08-15
+
 ### Added
 
 - Add built-module regression tests plus expanded update scheduling, completion, and registry transport coverage.
