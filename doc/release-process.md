@@ -9,10 +9,18 @@ The protected `toolchain-release` environment performs these gates:
 3. create a SHA-256 checksum and SPDX SBOM;
 4. export the canonical versioned package-specification archive and checksum;
 5. create GitHub artifact-provenance and SBOM attestations for the module and provenance for the package specification;
-6. publish an immutable GitHub release only after every validation and attestation succeeds;
+6. stage every asset on a draft, publish it, and delete only that new release before failing unless GitHub confirms it is immutable;
 7. request a Toolchains consumer promotion using the exact release tag, version, and commit.
 
 Protect the environment with tag restrictions and required reviewers. Keep workflow actions pinned to reviewed commits. A release operator must verify the tag, module checksum, package-spec checksum, SBOM, and GitHub attestations before downstream repositories update their pinned Toolchain revision.
+
+Repository release immutability must be enabled before publishing. GitHub only
+applies that setting to future releases, so historical mutable releases remain
+historical evidence and are never rewritten. Published releases, tags, assets,
+checksums, SBOMs, and attestations are retained indefinitely. CI test logs are
+explicitly retained for 14 days. Repository administrators should configure
+Actions logs and artifacts to the 90-day repository maximum for public
+repositories; workflows may declare a shorter evidence-specific lifetime.
 
 After release publication, `TOOLCHAINS_PROMOTION_TOKEN` dispatches a promotion
 request to Toolchains. If that environment secret is unavailable, the release

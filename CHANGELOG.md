@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+
+- Add safe `tlc audit -Fix` remediation with preview, policy/health/signature refusal gates, atomic lock refresh, package restore, and post-fix verification.
+
+### Changed
+
+- Stage all release assets on a draft before publication and fail the release workflow unless GitHub confirms immutable-release enforcement.
+- Retain CI logs for an explicit 14-day period and document permanent release-evidence retention.
+
 ## 2.4.0 - 2026-08-15
 
 ### Added

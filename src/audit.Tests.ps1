@@ -27,6 +27,8 @@ BeforeAll {
 	function Get-ToolchainLockPath { param($Path) if ($Path) { $Path } else { Join-Path $TestDrive 'Toolchain.lock.json' } }
 	function Read-ToolchainLock { param($Path) Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json }
 	function GetConfigPackages { $script:projectPackages }
+	function Invoke-ToolchainLock { param($Packages,$Path) }
+	function Invoke-ToolchainRestore { param($Path) }
 	. $PSCommandPath.Replace('.Tests.ps1', '.ps1')
 }
 
@@ -109,5 +111,49 @@ Describe 'Toolchain project audit' {
 		$report.Packages[0].RemoteStatus | Should -Be 'Error'
 		$report.Packages[0].SignatureStatus | Should -Be 'Offline'
 		$report.Packages[0].Findings.Category | Should -Contain 'Signature'
+	}
+
+	It 'safely regenerates the lock, restores packages, and re-audits with Fix' {
+		$path = Join-Path $TestDrive 'fix.json'
+		$locked = 'sha256:' + ('b' * 64)
+		$fixed = 'sha256:' + ('c' * 64)
+		$script:remoteEntry = [pscustomobject]@{ digest=$fixed; version='2.0.0' }
+		@{ schemaVersion=1; packages=@(@{ package='demo'; reference='demo:latest'; version='1.0.0'; digest=$locked }) } |
+			ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $path
+		Mock Invoke-ToolchainLock {
+			@{ schemaVersion=1; packages=@(@{ package='demo'; reference='demo:latest'; version='2.0.0'; digest=$fixed }) } |
+				ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $Path
+		}
+		Mock Invoke-ToolchainRestore { $script:installedDigest = $fixed }
+
+		$report = Invoke-ToolchainAudit -Path $path -Fix -Confirm:$false
+		$report.HasProblems | Should -BeFalse
+		$report.Remediation.Requested | Should -BeTrue
+		$report.Remediation.Applied | Should -BeTrue
+		$report.Remediation.Changed | Should -BeTrue
+		$report.Remediation.Actions | Should -Contain 'RegenerateLock'
+		$report.Remediation.Actions | Should -Contain 'RestorePackages'
+		Should -Invoke Invoke-ToolchainLock -Times 1
+		Should -Invoke Invoke-ToolchainRestore -Times 1
+	}
+
+	It 'previews fixes without mutation and blocks fixes for unsafe findings' {
+		Mock Invoke-ToolchainLock {}
+		Mock Invoke-ToolchainRestore {}
+		$missing = Join-Path $TestDrive 'preview.json'
+		$preview = Invoke-ToolchainAudit -Path $missing -Fix -WhatIf
+		$preview.Remediation.Requested | Should -BeTrue
+		$preview.Remediation.Applied | Should -BeFalse
+		$preview.Remediation.Actions | Should -Contain 'RegenerateLock'
+		Should -Invoke Invoke-ToolchainLock -Times 0
+		Should -Invoke Invoke-ToolchainRestore -Times 0
+
+		$path = Join-Path $TestDrive 'blocked.json'
+		@{ schemaVersion=1; packages=@(@{ package='demo'; reference='demo:latest'; version='1.0.0'; digest=$script:installedDigest }) } |
+			ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $path
+		$script:healthEntry = [pscustomobject]@{ State='blocked'; Reason='unsafe payload' }
+		{ Invoke-ToolchainAudit -Path $path -Fix -Confirm:$false } | Should -Throw '*cannot safely fix*Health*'
+		Should -Invoke Invoke-ToolchainLock -Times 0
+		Should -Invoke Invoke-ToolchainRestore -Times 0
 	}
 }

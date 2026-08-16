@@ -167,7 +167,7 @@ jobs:
           subject-path: ${{ steps.package.outputs.archive }}
           sbom-path: dist/Toolchain-${{ github.ref_name }}.spdx.json
 
-      - name: Publish immutable GitHub release
+      - name: Stage and publish immutable GitHub release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -176,12 +176,20 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
+            --draft \
             --generate-notes \
             "dist/Toolchain-$GITHUB_REF_NAME.zip" \
             "dist/Toolchain-$GITHUB_REF_NAME.spdx.json" \
             "dist/toolchain-package-spec-v1.zip" \
             "dist/toolchain-package-spec-v1.zip.sha256" \
             "dist/SHA256SUMS"
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
+          immutable="$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isImmutable --jq .isImmutable)"
+          if [[ "$immutable" != "true" ]]; then
+            gh release delete "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --yes
+            echo "::error title=Release immutability is not enforced::Enable release immutability in repository settings before publishing another release."
+            exit 1
+          fi
 
       - name: Request Toolchains consumer promotion
         shell: pwsh

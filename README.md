@@ -167,7 +167,7 @@ toolchain run build -Configuration Debug
 | `init` | Write a starter `Toolchain.ps1` | `doc/toolchain-init.md` |
 | `lock` / `restore` | Pin project packages by platform digest and restore them exactly | `doc/toolchain-lock.md` |
 | `verify` | Verify package and platform-index signatures | `doc/toolchain-verify.md` |
-| `audit` | Report project/lock drift, installed and remote digest state, updates, package health, signatures, and policy findings | `doc/toolchain-audit.md` |
+| `audit` | Report project/lock drift, installed and remote digest state, updates, health, signatures, and policy findings; safely remediate lock/restore drift with `-Fix` | `doc/toolchain-audit.md` |
 | `profile init` / `add` / `remove` / `list` / `path` | Manage startup package loads in your PowerShell profile | `doc/toolchain-profile.md` |
 | `cluster create` / `list` / `status` / `kubeconfig` / `delete` | Manage local Docker-, Podman-, or nerdctl-backed Kubernetes clusters | `doc/toolchain-cluster.md` |
 | `k9s` | Launch K9s against the current context or a selected kubeconfig | `doc/toolchain-k9s.md` |

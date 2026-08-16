@@ -59,7 +59,7 @@ function Get-ToolchainNestedCompletionValues {
 		'doctor' { return @('-Strict','-PassThru','-Json','-Refresh') + $helpValues | Where-Object { $_ -like "$WordToComplete*" } }
 		'lock' { return @('-Packages','-Path','-Update') + $helpValues | Where-Object { $_ -like "$WordToComplete*" } }
 		'restore' { return @('-Path') + $helpValues | Where-Object { $_ -like "$WordToComplete*" } }
-		'audit' { return @('-Path','-Refresh','-VerifySignatures','-Strict','-Json') + $helpValues | Where-Object { $_ -like "$WordToComplete*" } }
+		'audit' { return @('-Path','-Refresh','-VerifySignatures','-Fix','-WhatIf','-Confirm','-Strict','-Json') + $helpValues | Where-Object { $_ -like "$WordToComplete*" } }
 		'verify' { return @('-Json') + $helpValues | Where-Object { $_ -like "$WordToComplete*" } }
 		'help' {
 			return @('version','remote','list','load','pull','exec','run','remove','save','prune','update','init','lock','restore','verify','audit','profile','cluster','k9s','doctor') |

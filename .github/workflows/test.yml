@@ -124,6 +124,7 @@ jobs:
           name: ${{ matrix.name }}-log
           path: artifacts/${{ matrix.log }}
           if-no-files-found: error
+          retention-days: 14
 
       - name: Upload coverage to Codecov
         if: matrix.shell == 'pwsh' && runner.os == 'Windows' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))

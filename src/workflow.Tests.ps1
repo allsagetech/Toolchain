@@ -8,6 +8,8 @@ BeforeAll {
 	$repositoryRoot = Split-Path $PSScriptRoot -Parent
 	$testWorkflowPath = Join-Path $repositoryRoot '.github/workflows/test.yml'
 	$testWorkflow = Get-Content -LiteralPath $testWorkflowPath -Raw
+	$releaseWorkflowPath = Join-Path $repositoryRoot '.github/workflows/release.yml'
+	$releaseWorkflow = Get-Content -LiteralPath $releaseWorkflowPath -Raw
 }
 
 Describe 'GitHub Actions test workflow' {
@@ -29,5 +31,16 @@ Describe 'GitHub Actions test workflow' {
 		$testWorkflow | Should -Match 'TOOLCHAIN_PASSWORD:\s*integration-password'
 		$testWorkflow | Should -Match 'Anonymous registry access was not denied'
 		$testWorkflow | Should -Match 'docker login localhost:5000'
+	}
+
+	It 'retains CI logs for the documented bounded period' {
+		$testWorkflow | Should -Match '(?ms)uses:\s*actions/upload-artifact@.*?retention-days:\s*14'
+	}
+
+	It 'publishes complete drafts and fails unless GitHub locks the release' {
+		$releaseWorkflow | Should -Match '(?ms)gh release create.*?--draft.*?gh release edit.*?--draft=false'
+		$releaseWorkflow | Should -Match 'gh release view .*--json isImmutable'
+		$releaseWorkflow | Should -Match 'gh release delete .*--yes'
+		$releaseWorkflow | Should -Match 'Release immutability is not enforced'
 	}
 }

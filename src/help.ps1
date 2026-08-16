@@ -138,16 +138,18 @@ function Get-ToolchainHelpTopics {
 		-Notes @('Cosign must be available on PATH and the configured identity or key policy is enforced.')
 	$topics.audit = New-ToolchainHelpTopic `
 		-Description 'Audits project lock drift, updates, package health, signatures, and policy compliance.' `
-		-Usage @('tlc audit [-Path PATH] [-Refresh] [-VerifySignatures] [-Strict] [-Json]') `
+		-Usage @('tlc audit [-Path PATH] [-Refresh] [-VerifySignatures] [-Fix] [-WhatIf] [-Strict] [-Json]') `
 		-Options @(
 			'-Path PATH          Select another Toolchain.lock.json file.',
 			'-Refresh            Bypass cached registry and health metadata.',
 			'-VerifySignatures   Verify every resolved digest with Cosign.',
+			'-Fix                 Atomically refresh the lock and restore packages when all safety gates pass.',
+			'-WhatIf              Preview fix actions without changing project state.',
 			'-Strict             Write the report and fail when findings exist.',
 			'-Json               Emit a structured JSON report.'
 		) `
-		-Examples @('tlc audit', 'tlc audit -Refresh -VerifySignatures -Strict', 'tlc audit -Path .\ci\Toolchain.lock.json -Json') `
-		-Notes @('Signature verification also runs automatically when required by Toolchain.policy.json or environment policy.')
+		-Examples @('tlc audit', 'tlc audit -Fix -WhatIf', 'tlc audit -Fix -Refresh -VerifySignatures -Strict', 'tlc audit -Path .\ci\Toolchain.lock.json -Json') `
+		-Notes @('Signature verification also runs automatically when required by Toolchain.policy.json or environment policy.', '-Fix refuses to run while health, policy, signature, remote, or project-definition errors remain.')
 
 	$topics.profile = New-ToolchainHelpTopic `
 		-Description 'Creates and manages Toolchain package loads in the current PowerShell profile.' `

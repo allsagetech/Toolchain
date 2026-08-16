@@ -186,11 +186,12 @@ function Get-ToolchainAuditPackageResult {
 }
 
 function Invoke-ToolchainAudit {
-	[CmdletBinding()]
+	[CmdletBinding(SupportsShouldProcess=$true, ConfirmImpact='Medium')]
 	param(
 		[string]$Path,
 		[switch]$Refresh,
 		[switch]$VerifySignatures,
+		[switch]$Fix,
 		[switch]$Strict,
 		[switch]$Json
 	)
@@ -257,6 +258,52 @@ function Invoke-ToolchainAudit {
 		}
 		Findings = @($globalFindings)
 		Packages = @($packages)
+		Remediation = [pscustomobject]@{
+			Requested = [bool]$Fix
+			Applied = $false
+			Changed = $false
+			Actions = @()
+		}
+	}
+
+	if ($Fix) {
+		$actions = [Collections.Generic.List[string]]::new()
+		$lockNeeded = (-not $lockDocument) -or [bool](@($packages | Where-Object {
+			$_.LockStatus -in @('Missing','Orphaned','ReferenceDrift','UpdateAvailable') -or $_.UpdateAvailable
+		}).Count)
+		$restoreNeeded = $lockNeeded -or [bool](@($packages | Where-Object {
+			-not $_.InstalledDigest -or $_.LockStatus -eq 'InstalledDrift'
+		}).Count)
+		if ($lockNeeded) { $actions.Add('RegenerateLock') }
+		if ($restoreNeeded) { $actions.Add('RestorePackages') }
+		$report.Remediation.Actions = @($actions)
+
+		$blockingFindings = @($allFindings | Where-Object { $_.Category -notin @('Lock','Install','Update') })
+		if ($projectReferences.Count -eq 0) {
+			$blockingFindings += New-ToolchainAuditFinding -Severity Error -Category Project -Message 'Toolchain.ps1 has no package references to lock and restore.'
+		}
+		if ($blockingFindings.Count -gt 0) {
+			$output = if ($Json) { $report | ConvertTo-Json -Depth 20 } else { $report }
+			Write-Output $output
+			$categories = @($blockingFindings.Category | Sort-Object -Unique) -join ', '
+			throw "Toolchain audit cannot safely fix state while blocking findings remain: $categories."
+		}
+
+		if ($actions.Count -eq 0) {
+			$report.Remediation.Applied = $true
+		} elseif ($PSCmdlet.ShouldProcess($lockPath, 'regenerate the Toolchain lock and restore its packages')) {
+			if ($lockNeeded) {
+				$null = Invoke-ToolchainLock -Packages $projectReferences -Path $lockPath
+			}
+			if ($restoreNeeded) {
+				$null = Invoke-ToolchainRestore -Path $lockPath
+			}
+			$report = Invoke-ToolchainAudit -Path $lockPath -Refresh:$Refresh -VerifySignatures:$VerifySignatures
+			$report.Remediation.Requested = $true
+			$report.Remediation.Applied = $true
+			$report.Remediation.Changed = $true
+			$report.Remediation.Actions = @($actions)
+		}
 	}
 
 	$output = if ($Json) { $report | ConvertTo-Json -Depth 20 } else { $report }
