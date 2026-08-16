@@ -305,7 +305,7 @@ function New-ToolchainKindCluster {
 	)
 
 	$kind = Get-ToolchainClusterExecutable -Name 'kind' -Package 'kind' -InstallHint 'Install kind and ensure its executable is available on PATH.'
-	$args = @('create', 'cluster', '--name', $Name, '--kubeconfig', $Kubeconfig, '--wait', "${WaitSeconds}s")
+	$kindArguments = @('create', 'cluster', '--name', $Name, '--kubeconfig', $Kubeconfig, '--wait', "${WaitSeconds}s")
 	$configPath = $null
 	if ($Config) {
 		$configPath = Resolve-ToolchainClusterConfigPath -Path $Config
@@ -313,12 +313,12 @@ function New-ToolchainKindCluster {
 		$configPath = Join-Path (Get-ToolchainClusterDirectory -Name $Name) 'kind.generated.yaml'
 		Write-ToolchainKindConfig -Path $configPath -Servers $Servers -Workers $Workers -ApiPort $ApiPort
 	}
-	if ($configPath) { $args += @('--config', $configPath) }
-	if ($Image) { $args += @('--image', $Image) }
+	if ($configPath) { $kindArguments += @('--config', $configPath) }
+	if ($Image) { $kindArguments += @('--image', $Image) }
 
 	$created = $false
 	try {
-		$null = Invoke-ToolchainKindProcess -FilePath $kind -Arguments $args -Engine $Engine
+		$null = Invoke-ToolchainKindProcess -FilePath $kind -Arguments $kindArguments -Engine $Engine
 		$created = $true
 		if (-not (Test-Path -LiteralPath $Kubeconfig -PathType Leaf)) {
 			throw 'kind reported success but did not write the requested kubeconfig'
@@ -344,18 +344,18 @@ function New-ToolchainK3dCluster {
 	)
 
 	$k3d = Get-ToolchainClusterExecutable -Name 'k3d' -Package 'k3d' -InstallHint 'Install k3d and ensure its executable is available on PATH.'
-	$args = @('cluster', 'create', $Name, '--wait', '--timeout', "${WaitSeconds}s", '--kubeconfig-update-default=false', '--kubeconfig-switch-context=false')
+	$k3dArguments = @('cluster', 'create', $Name, '--wait', '--timeout', "${WaitSeconds}s", '--kubeconfig-update-default=false', '--kubeconfig-switch-context=false')
 	if ($Config) {
-		$args += @('--config', (Resolve-ToolchainClusterConfigPath -Path $Config))
+		$k3dArguments += @('--config', (Resolve-ToolchainClusterConfigPath -Path $Config))
 	} else {
-		$args += @('--servers', [string]$Servers, '--agents', [string]$Workers)
-		if ($ApiPort -gt 0) { $args += @('--api-port', "127.0.0.1:$ApiPort") }
+		$k3dArguments += @('--servers', [string]$Servers, '--agents', [string]$Workers)
+		if ($ApiPort -gt 0) { $k3dArguments += @('--api-port', "127.0.0.1:$ApiPort") }
 	}
-	if ($Image) { $args += @('--image', $Image) }
+	if ($Image) { $k3dArguments += @('--image', $Image) }
 
 	$created = $false
 	try {
-		$null = Invoke-ToolchainClusterProcess -FilePath $k3d -Arguments $args
+		$null = Invoke-ToolchainClusterProcess -FilePath $k3d -Arguments $k3dArguments
 		$created = $true
 		$result = Invoke-ToolchainClusterProcess -FilePath $k3d -Arguments @('kubeconfig', 'get', $Name)
 		$content = ($result.Output -join "`n").Trim()
@@ -393,7 +393,7 @@ function New-ToolchainK0sCluster {
 
 	$container = "toolchain-k0s-$Name"
 	$publish = if ($ApiPort -gt 0) { "127.0.0.1:${ApiPort}:6443" } else { '127.0.0.1::6443' }
-	$args = @(
+	$containerArguments = @(
 		'run', '-d', '--name', $container, '--hostname', $container,
 		'--label', "io.allsagetech.toolchain.cluster=$Name",
 		'--label', 'io.allsagetech.toolchain.provider=k0s',
@@ -402,7 +402,7 @@ function New-ToolchainK0sCluster {
 	)
 	$created = $false
 	try {
-		$null = Invoke-ToolchainClusterProcess -FilePath $ContainerEngine -Arguments $args
+		$null = Invoke-ToolchainClusterProcess -FilePath $ContainerEngine -Arguments $containerArguments
 		$created = $true
 		$deadline = [datetime]::UtcNow.AddSeconds($WaitSeconds)
 		$ready = $false

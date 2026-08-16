@@ -68,11 +68,12 @@ function Get-ToolchainNestedCompletionValues {
 	return $helpValues | Where-Object { $_ -like "$WordToComplete*" }
 }
 
+$script:ToolchainCompletionCommands = @('version','remote','list','load','pull','exec','run','remove','save','prune','update','init','lock','restore','verify','profile','cluster','k9s','doctor','help')
+
 function Register-ToolchainArgumentCompleters {
-	$commands = @('version','remote','list','load','pull','exec','run','remove','save','prune','update','init','lock','restore','verify','profile','cluster','k9s','doctor','help')
 	Register-ArgumentCompleter -CommandName Invoke-Toolchain,toolchain,tool,tlc -ParameterName Command -ScriptBlock {
 		param($commandName, $parameterName, $wordToComplete)
-		$commands | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object { New-ToolchainCompletionResult $_ }
+		$script:ToolchainCompletionCommands | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object { New-ToolchainCompletionResult $_ }
 	}
 
 	Register-ArgumentCompleter -CommandName Invoke-Toolchain,toolchain,tool,tlc -ParameterName ArgumentList -ScriptBlock {
@@ -91,7 +92,7 @@ function Register-ToolchainArgumentCompleters {
 			if ($_ -is [Management.Automation.Language.CommandParameterAst]) { '-' + $_.ParameterName } else { [string]$_.Value }
 		})
 		if ($elements.Count -le 1 -or ($elements.Count -eq 2 -and $wordToComplete)) {
-			$commands | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object { New-ToolchainCompletionResult $_ }
+			$script:ToolchainCompletionCommands | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object { New-ToolchainCompletionResult $_ }
 			return
 		}
 		$subcommand = if ($elements.Count -gt 1) { $elements[1] } else { '' }

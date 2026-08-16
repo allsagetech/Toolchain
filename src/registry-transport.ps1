@@ -80,12 +80,12 @@ function Read-ToolchainBoundedResponseBytes {
 		throw "$Context exceeds limit of $MaximumBytes bytes"
 	}
 
-	$input = $Response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
+	$inputStream = $Response.Content.ReadAsStreamAsync().GetAwaiter().GetResult()
 	$output = [IO.MemoryStream]::new()
 	$buffer = New-Object byte[] 65536
 	try {
 		while ($true) {
-			$read = $input.Read($buffer, 0, $buffer.Length)
+			$read = $inputStream.Read($buffer, 0, $buffer.Length)
 			if ($read -eq 0) { break }
 			if (($output.Length + $read) -gt $MaximumBytes) {
 				throw "$Context exceeds limit of $MaximumBytes bytes"
@@ -98,7 +98,7 @@ function Read-ToolchainBoundedResponseBytes {
 		return $output.ToArray()
 	} finally {
 		$output.Dispose()
-		$input.Dispose()
+		$inputStream.Dispose()
 	}
 }
 
@@ -306,7 +306,7 @@ function GetRegistryBaseAuthHeader {
 
     $service = $params['service']
     $scope = $params['scope']
-    if (-not $scope) { $scope = "repository:$Repo:pull" }
+    if (-not $scope) { $scope = "repository:${Repo}:pull" }
 
     $token = GetBearerTokenFromRealm -Realm $realm -Service $service -Scope $scope -Username $user -Pass $pass
     $hdr = "Bearer $token"
@@ -357,7 +357,7 @@ function GetRegistryIndexAuthHeader {
 
     $service = $params['service']
     $scope = $params['scope']
-    if (-not $scope) { $scope = "repository:$Repo:pull" }
+    if (-not $scope) { $scope = "repository:${Repo}:pull" }
 
     $token = GetBearerTokenFromRealm -Realm $realm -Service $service -Scope $scope -Username $user -Pass $pass
     $hdr = "Bearer $token"

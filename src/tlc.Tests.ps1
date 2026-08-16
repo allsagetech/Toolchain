@@ -545,17 +545,17 @@ Describe 'Invoke-ToolchainModuleEntry' {
 		(Invoke-ToolchainModuleEntry) | Should -Be $false
 	}
 
-	It 'Runs CheckForUpdates/PrunePackages when forced' {
-		Mock CheckForUpdates { }
+	It 'Defers CheckForUpdates and runs pruning when forced' {
+		Mock Request-ToolchainDeferredUpdateCheck { }
 		Mock PrunePackages { }
 		(Invoke-ToolchainModuleEntry -Force) | Should -Be $true
-		Should -Invoke -CommandName CheckForUpdates -Times 1 -Exactly
+		Should -Invoke -CommandName Request-ToolchainDeferredUpdateCheck -Times 1 -Exactly
 		Should -Invoke -CommandName PrunePackages -Times 1 -Exactly
 	}
 
 	It 'Runs when env var is set' {
 		$env:TOOLCHAIN_RUN_MODULE_ENTRY = 'true'
-		Mock CheckForUpdates { }
+		Mock Request-ToolchainDeferredUpdateCheck { }
 		Mock PrunePackages { }
 		(Invoke-ToolchainModuleEntry) | Should -Be $true
 	}

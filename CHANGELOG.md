@@ -4,15 +4,18 @@
 
 ### Added
 
+- Add built-module regression tests plus expanded update scheduling, completion, and registry transport coverage.
 - Add `tlc k9s` with current-context, managed-cluster, and explicit-kubeconfig modes plus native K9s argument forwarding.
 - Add optional package filters to `tlc remote list`, `remote models`, and `remote all` for listing one package's versions.
 - Add `tlc remote health` and `tlc remote info` for the signed Toolchains package-health catalog.
 - Add digest-pinned `tlc lock` and `tlc restore` project workflows.
 - Add explicit `tlc verify` verification for package indexes and selected platform manifests.
 - Add Docker, Podman, and nerdctl engine selection for local clusters.
+- Add authenticated local-registry integration coverage and enforce startup and large-catalog performance budgets.
 
 ### Changed
 
+- Make builds root-independent and atomic, enforce the documented 80% coverage floor with exact test dependencies, defer network update checks until first command use, and gate actionable static-analysis rules.
 - Hide platform compatibility aliases from the default remote tooling display after a canonical multi-platform index is published.
 
 ## 2.3.3 - 2026-08-14

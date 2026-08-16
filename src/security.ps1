@@ -25,8 +25,8 @@ function Invoke-ToolchainCommand {
 		[string[]]$ArgumentList = @(),
 		[switch]$Quiet
 	)
-	$prev = $global:PSNativeCommandUseErrorActionPreference
-	$global:PSNativeCommandUseErrorActionPreference = $false
+	$prev = $PSNativeCommandUseErrorActionPreference
+	$PSNativeCommandUseErrorActionPreference = $false
 	try {
 		$out = & $File @ArgumentList 2>&1
 		$code = $LASTEXITCODE
@@ -37,7 +37,7 @@ function Invoke-ToolchainCommand {
 		if (-not $Quiet) { return $out }
 		return $null
 	} finally {
-		$global:PSNativeCommandUseErrorActionPreference = $prev
+		$PSNativeCommandUseErrorActionPreference = $prev
 	}
 }
 

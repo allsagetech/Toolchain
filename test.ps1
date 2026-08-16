@@ -7,10 +7,14 @@ SPDX-License-Identifier: MPL-2.0
 
 param (
 	[string[]]$Paths,
-	[string[]]$ExcludePaths
+	[string[]]$ExcludePaths,
+	[ValidateRange(0, 100)]
+	[double]$CoverageTarget = 80
 )
 
-$Paths = if ($Paths) { $Paths } else { @('.\src') }
+$ErrorActionPreference = 'Stop'
+
+$Paths = if ($Paths) { $Paths } else { @('.\src', '.\build.Tests.ps1') }
 
 if (-not $ExcludePaths -and $env:TOOLCHAIN_PESTER_EXCLUDE_PATHS) {
 	$ExcludePaths = $env:TOOLCHAIN_PESTER_EXCLUDE_PATHS -split '[,;\r\n]+' | Where-Object { $_ -and $_.Trim() } | ForEach-Object { $_.Trim() }
@@ -54,13 +58,19 @@ function Import-DevModule {
 		[Parameter(Mandatory)]
 		[string]$Name,
 		[Parameter(Mandatory)]
-		[Version]$MinimumVersion
+		[Version]$RequiredVersion
 	)
 
 	$localModuleDir = Join-Path $modules $Name
-	if (-not (Test-Path $localModuleDir)) {
+	$hasRequiredLocalVersion = $false
+	if (Test-Path $localModuleDir) {
+		$hasRequiredLocalVersion = $null -ne (Get-ChildItem -Path $localModuleDir -Recurse -File -Filter "$Name.psd1" -ErrorAction SilentlyContinue |
+			Where-Object { try { (Test-ModuleManifest -Path $_.FullName -ErrorAction Stop).Version -eq $RequiredVersion } catch { $false } } |
+			Select-Object -First 1)
+	}
+	if (-not $hasRequiredLocalVersion) {
 		try {
-			Save-Module -Name $Name -Path $modules -ErrorAction Stop
+			Save-Module -Name $Name -RequiredVersion $RequiredVersion -Path $modules -ErrorAction Stop
 		} catch {
 			Write-Warning "Could not download module '$Name' from PowerShell Gallery. Falling back to installed modules."
 		}
@@ -73,7 +83,7 @@ function Import-DevModule {
 		foreach ($manifest in $manifests) {
 			try {
 				$info = Test-ModuleManifest -Path $manifest.FullName -ErrorAction Stop
-				if ($info.Version -ge $MinimumVersion) {
+				if ($info.Version -eq $RequiredVersion) {
 					$candidates += [PSCustomObject]@{
 						Version = $info.Version
 						Path = $manifest.FullName
@@ -86,7 +96,7 @@ function Import-DevModule {
 	}
 
 	$globalCandidates = Get-Module -ListAvailable -Name $Name |
-		Where-Object { $_.Version -ge $MinimumVersion } |
+		Where-Object { $_.Version -eq $RequiredVersion } |
 		ForEach-Object {
 			[PSCustomObject]@{
 				Version = $_.Version
@@ -96,11 +106,7 @@ function Import-DevModule {
 	$candidates += $globalCandidates
 
 	if (-not $candidates -or $candidates.Count -eq 0) {
-		$highestFound = Get-Module -ListAvailable -Name $Name | Sort-Object Version -Descending | Select-Object -First 1
-		if ($highestFound) {
-			throw "$Name $MinimumVersion or newer is required. Highest installed version is $($highestFound.Version) at '$($highestFound.Path)'."
-		}
-		throw "$Name $MinimumVersion or newer is required but not available. Ensure internet access to PowerShell Gallery or pre-populate '$modules'."
+		throw "$Name $RequiredVersion is required but not available. Ensure internet access to PowerShell Gallery or pre-populate '$modules'."
 	}
 
 	$selected = $candidates | Sort-Object Version -Descending | Select-Object -First 1
@@ -109,37 +115,39 @@ function Import-DevModule {
 	Import-Module -Name $selected.Path -Force -ErrorAction Stop
 }
 
-$requiredModules = [ordered]@{
-	Pester = [Version]'5.0.0'
-	PSScriptAnalyzer = [Version]'1.20.0'
-}
+$dependencyPath = Join-Path $PSScriptRoot 'test.dependencies.psd1'
+$requiredModules = Import-PowerShellDataFile -Path $dependencyPath
 
 foreach ($kv in $requiredModules.GetEnumerator()) {
-	Import-DevModule -Name $kv.Key -MinimumVersion $kv.Value
+	Import-DevModule -Name $kv.Key -RequiredVersion ([Version]$kv.Value)
 }
 
 foreach ($path in $Paths) {
-	$analysis = @(Invoke-ScriptAnalyzer -Severity Error -Path $path -ExcludeRule 'PSAvoidUsingWriteHost', 'PSUseProcessBlockForPipelineCommand', 'PSUseBOMForUnicodeEncodedFile')
+	$analysis = @(Invoke-ScriptAnalyzer -Path $path -Settings (Join-Path $PSScriptRoot 'PSScriptAnalyzerSettings.psd1'))
 	if ($analysis.Count -gt 0) {
 		$analysis
 		throw "failed with $($analysis.Count) findings"
 	}
 }
 
+if ($env:TOOLCHAIN_COVERAGE_TARGET) {
+	[double]$CoverageTarget = $env:TOOLCHAIN_COVERAGE_TARGET
+}
 
 $runConfig = @{
 	Path = $Paths
-	Exit = $true
+	Exit = $false
+	PassThru = $true
 }
 
 if ($ExcludePaths -and $ExcludePaths.Count -gt 0) {
 	$runConfig.ExcludePath = $ExcludePaths
 }
 
-$global:PesterPreference = (New-PesterConfiguration -Hashtable @{
+$pesterConfiguration = New-PesterConfiguration -Hashtable @{
 	Run = $runConfig
 	CodeCoverage = @{
-		Enabled = $true
+		Enabled = ($CoverageTarget -gt 0)
 		Path = $coveragePaths
 		OutputFormat = 'JaCoCo'
 		OutputPath = 'coverage.xml'
@@ -150,13 +158,27 @@ $global:PesterPreference = (New-PesterConfiguration -Hashtable @{
 	Output = @{
 		Verbosity = 'Detailed'
 	}
-})
-
-$coverageTarget = 100
-if ($env:TOOLCHAIN_COVERAGE_TARGET) {
-	[int]$coverageTarget = $env:TOOLCHAIN_COVERAGE_TARGET
 }
 
-$global:PesterPreference.CodeCoverage.CoveragePercentTarget = $coverageTarget
+$pesterConfiguration.CodeCoverage.CoveragePercentTarget = $CoverageTarget
 
-Invoke-Pester -Configuration $PesterPreference
+$result = Invoke-Pester -Configuration $pesterConfiguration
+if ($result.Result -ne 'Passed' -or $result.FailedCount -gt 0) {
+	throw "Pester failed with $($result.FailedCount) failing test(s)."
+}
+
+if ($CoverageTarget -gt 0) {
+	$coveragePath = Join-Path (Get-Location) 'coverage.xml'
+	if (-not (Test-Path -LiteralPath $coveragePath -PathType Leaf)) {
+		throw "Coverage report was not created: $coveragePath"
+	}
+	$coverageDocument = [xml](Get-Content -LiteralPath $coveragePath -Raw)
+	$coverageCounter = $coverageDocument.DocumentElement.SelectSingleNode("counter[@type='INSTRUCTION']")
+	if (-not $coverageCounter) { throw 'Coverage report does not contain an INSTRUCTION counter.' }
+	$covered = [double]$coverageCounter.covered
+	$total = $covered + [double]$coverageCounter.missed
+	$coveragePercent = if ($total -eq 0) { 100.0 } else { 100.0 * $covered / $total }
+	if ($coveragePercent -lt $CoverageTarget) {
+		throw ('Code coverage {0:N2}% is below the required {1:N2}%.' -f $coveragePercent, $CoverageTarget)
+	}
+}

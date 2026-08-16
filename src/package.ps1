@@ -383,6 +383,7 @@ function ParseLocalPackageRef {
 	try {
 		$root = [Uri]::UnescapeDataString($root)
 	} catch {
+		Write-Debug "Leaving invalid URI escapes unchanged in local package reference '$Ref': $($_.Exception.Message)"
 	}
 	return @{
 		Root = $root

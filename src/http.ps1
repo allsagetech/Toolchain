@@ -129,14 +129,25 @@ function HttpSend {
 	param(
 		[Parameter(Mandatory, ValueFromPipeline)]
 		[Net.Http.HttpRequestMessage]$Req,
-		[switch]$NoRedirect
+		[switch]$NoRedirect,
+		[ValidateRange(1, 300)]
+		[int]$TimeoutSeconds
 	)
 	$cli = Get-ToolchainHttpClient -NoRedirect:$NoRedirect
+	$cancellation = $null
 	try {
-		return $cli.SendAsync($Req, [Net.Http.HttpCompletionOption]::ResponseHeadersRead, [System.Threading.CancellationToken]::None).GetAwaiter().GetResult()
+		$token = [System.Threading.CancellationToken]::None
+		if ($TimeoutSeconds) {
+			$cancellation = New-Object System.Threading.CancellationTokenSource
+			$cancellation.CancelAfter([TimeSpan]::FromSeconds($TimeoutSeconds))
+			$token = $cancellation.Token
+		}
+		return $cli.SendAsync($Req, [Net.Http.HttpCompletionOption]::ResponseHeadersRead, $token).GetAwaiter().GetResult()
 	} catch {
 		$url = if ($Req -and $Req.RequestUri) { $Req.RequestUri.AbsoluteUri } else { '<unknown url>' }
 		throw "failed to download $($url): $_"
+	} finally {
+		if ($cancellation) { $cancellation.Dispose() }
 	}
 }
 

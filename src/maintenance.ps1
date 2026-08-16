@@ -4,6 +4,18 @@ Copyright (c) 2026 AllSageTech
 SPDX-License-Identifier: MPL-2.0
 #>
 
+$script:ToolchainDeferredUpdateCheckPending = $false
+
+function Request-ToolchainDeferredUpdateCheck {
+	$script:ToolchainDeferredUpdateCheckPending = $true
+}
+
+function Invoke-ToolchainDeferredUpdateCheck {
+	if (-not $script:ToolchainDeferredUpdateCheckPending) { return }
+	$script:ToolchainDeferredUpdateCheckPending = $false
+	CheckForUpdates
+}
+
 function Get-ToolchainUpdateCheckTtl {
 	$value = if ($env:TOOLCHAIN_UPDATE_CHECK_TTL) { [string]$env:TOOLCHAIN_UPDATE_CHECK_TTL } else { '1.00:00:00' }
 	try { $ttl = [timespan]::Parse($value) } catch { throw "TOOLCHAIN_UPDATE_CHECK_TTL must be a TimeSpan value: $value" }

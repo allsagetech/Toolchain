@@ -14,7 +14,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -23,6 +22,9 @@ concurrency:
 jobs:
   test:
     name: ${{ matrix.name }}
+    permissions:
+      contents: read
+      id-token: write
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
@@ -32,12 +34,12 @@ jobs:
           - name: Windows PowerShell 7
             os: windows-2022
             shell: pwsh
-            coverage: 60
+            coverage: 80
             log: windows-pwsh-test.log
           - name: Windows PowerShell 5.1
             os: windows-2022
             shell: powershell
-            coverage: 60
+            coverage: 80
             log: windows-powershell51-test.log
           - name: Linux PowerShell 7
             os: ubuntu-22.04
@@ -56,7 +58,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ps_modules
-          key: psmodules-${{ runner.os }}-${{ matrix.shell }}-${{ hashFiles('test.ps1') }}
+          key: psmodules-${{ runner.os }}-${{ matrix.shell }}-${{ hashFiles('test.ps1', 'test.dependencies.psd1') }}
 
       - name: Create temporary signing certificate
         if: runner.os == 'Windows' && matrix.shell == 'pwsh'
@@ -134,24 +136,46 @@ jobs:
           use_oidc: true
 
   registry-integration:
-    name: Local OCI registry integration
+    name: Authenticated OCI registry integration
     runs-on: ubuntu-22.04
     timeout-minutes: 20
-    services:
-      registry:
-        image: registry:2@sha256:46faa9a1ae6813194b53921a370f2f4f8c5e1aae228a89bceafef5847a6a3278
-        ports:
-          - 5000:5000
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Publish fixture image
+      - name: Start authenticated local registry
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path .registry-auth -Force | Out-Null
+          [IO.File]::WriteAllText('.registry-auth/htpasswd', 'integration:$2b$10$4pIR69tlif14QBS8ONfMk.an1oZ4vo/o3bPmMoeG4fT5f0bCpGFh6')
+          $authDirectory = (Resolve-Path .registry-auth).Path
+          docker run --detach --name toolchain-auth-registry --publish 5000:5000 `
+            --mount "type=bind,source=$authDirectory,target=/auth,readonly" `
+            --env REGISTRY_AUTH=htpasswd `
+            --env REGISTRY_AUTH_HTPASSWD_REALM='Toolchain integration registry' `
+            --env REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd `
+          registry:2@sha256:46faa9a1ae6813194b53921a370f2f4f8c5e1aae228a89bceafef5847a6a3278
+          for ($attempt = 1; $attempt -le 30; $attempt++) {
+            try {
+              $response = Invoke-WebRequest -Uri http://localhost:5000/v2/ -SkipHttpErrorCheck
+              if ([int]$response.StatusCode -eq 401) { break }
+            }
+            catch {
+              if ($attempt -eq 30) { throw }
+            }
+            if ($attempt -eq 30) { throw 'Authenticated registry did not become ready or failed open.' }
+            Start-Sleep -Seconds 1
+          }
+
+      - name: Publish fixture image with registry credentials
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          'integration-password' | docker login localhost:5000 --username integration --password-stdin
+          if ($LASTEXITCODE -ne 0) { throw 'Authenticated registry login failed.' }
           New-Item -ItemType Directory -Path .registry-fixture -Force | Out-Null
           [IO.File]::WriteAllText('.registry-fixture/.tlc', '{"env":{"PATH":"${.}/bin"}}')
           [IO.File]::WriteAllText('.registry-fixture/Dockerfile', @'
@@ -161,16 +185,28 @@ jobs:
           docker build -t localhost:5000/acme/toolchains:demo-1.0.0 .registry-fixture
           docker push localhost:5000/acme/toolchains:demo-1.0.0
 
-      - name: Exercise Registry V2 discovery and manifest retrieval
+      - name: Deny anonymous access and exercise authenticated Registry V2 requests
         shell: pwsh
         env:
           TOOLCHAIN_REGISTRY: http://localhost:5000
           TOOLCHAIN_INDEX_REGISTRY: http://localhost:5000
           TOOLCHAIN_REPOSITORY: acme/toolchains
           TOOLCHAIN_CATALOG_CACHE_TTL: 00:00:00
+          TOOLCHAIN_USERNAME: integration
+          TOOLCHAIN_PASSWORD: integration-password
         run: |
           $ErrorActionPreference = 'Stop'
           . .\src\registry.ps1
+          $username = $env:TOOLCHAIN_USERNAME
+          $password = $env:TOOLCHAIN_PASSWORD
+          $env:TOOLCHAIN_USERNAME = $null
+          $env:TOOLCHAIN_PASSWORD = $null
+          $anonymousDenied = $false
+          try { GetTagsList -Refresh | Out-Null } catch { $anonymousDenied = "$_" -match 'HTTP 401|requires Basic auth' }
+          if (-not $anonymousDenied) { throw 'Anonymous registry access was not denied.' }
+          $env:TOOLCHAIN_USERNAME = $username
+          $env:TOOLCHAIN_PASSWORD = $password
+          $script:RegistryAuthHeaderCache = @{}
           $catalog = GetTagsList -Refresh
           if ('demo-1.0.0' -notin @($catalog.Tags)) { throw 'Local registry tag discovery failed.' }
           $manifest = GetManifestJson -Ref 'demo-1.0.0'

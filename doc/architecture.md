@@ -1,5 +1,7 @@
 # Architecture
 
+CI enforces explicit performance budgets for fresh-process startup and complete 10,000-marker catalog classification. The defaults are 3,000 ms and 2,000 ms and can be tightened through `TOOLCHAIN_STARTUP_BUDGET_MS` and `TOOLCHAIN_CATALOG_BUDGET_MS`.
+
 Toolchain builds its source files into one PowerShell module for distribution,
 while keeping development responsibilities separated:
 

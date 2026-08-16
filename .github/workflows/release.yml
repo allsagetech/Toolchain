@@ -29,11 +29,11 @@ jobs:
           - name: Windows PowerShell 7
             os: windows-2022
             shell: pwsh
-            coverage: 60
+            coverage: 80
           - name: Windows PowerShell 5.1
             os: windows-2022
             shell: powershell
-            coverage: 60
+            coverage: 80
           - name: Linux PowerShell 7
             os: ubuntu-22.04
             shell: pwsh
@@ -50,7 +50,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ps_modules
-          key: release-psmodules-${{ runner.os }}-${{ matrix.shell }}-${{ hashFiles('test.ps1') }}
+          key: release-psmodules-${{ runner.os }}-${{ matrix.shell }}-${{ hashFiles('test.ps1', 'test.dependencies.psd1') }}
 
       - name: Create temporary signing certificate
         if: runner.os == 'Windows' && matrix.shell == 'pwsh'

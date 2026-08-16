@@ -64,11 +64,11 @@ jobs:
           - name: Windows PowerShell 7
             os: windows-2022
             shell: pwsh
-            coverage: 60
+            coverage: 80
           - name: Windows PowerShell 5.1
             os: windows-2022
             shell: powershell
-            coverage: 60
+            coverage: 80
           - name: Linux PowerShell 7
             os: ubuntu-22.04
             shell: pwsh

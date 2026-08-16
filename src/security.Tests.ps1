@@ -150,7 +150,7 @@ Describe 'CMS signatures' {
 	AfterAll {
 		try {
 			Remove-Item -LiteralPath ("Cert:\\CurrentUser\\My\\" + $script:cert.Thumbprint) -Force -ErrorAction SilentlyContinue
-		} catch { }
+		} catch { Write-Debug "Certificate cleanup failed: $($_.Exception.Message)" }
 		Remove-Item Env:TOOLCHAIN_MANIFEST_SIGN_THUMBPRINT -ErrorAction Ignore
 	}
 

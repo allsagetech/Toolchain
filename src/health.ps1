@@ -8,16 +8,16 @@ function Expand-ToolchainHealthCatalogLabel {
 	param([Parameter(Mandatory)][string]$Value)
 
 	$compressed = [Convert]::FromBase64String($Value)
-	$input = [IO.MemoryStream]::new($compressed, $false)
+	$inputStream = [IO.MemoryStream]::new($compressed, $false)
 	$output = [IO.MemoryStream]::new()
 	try {
-		$gzip = [IO.Compression.GZipStream]::new($input, [IO.Compression.CompressionMode]::Decompress)
+		$gzip = [IO.Compression.GZipStream]::new($inputStream, [IO.Compression.CompressionMode]::Decompress)
 		try { $gzip.CopyTo($output) } finally { $gzip.Dispose() }
 		if ($output.Length -gt 4194304) { throw 'health catalog exceeds the 4 MiB decoded limit' }
 		return [Text.Encoding]::UTF8.GetString($output.ToArray())
 	} finally {
 		$output.Dispose()
-		$input.Dispose()
+		$inputStream.Dispose()
 	}
 }
 

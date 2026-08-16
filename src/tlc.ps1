@@ -34,6 +34,7 @@ function Invoke-Toolchain {
 		[Parameter(ValueFromRemainingArguments)]
 		[object[]]$ArgumentList
 	)
+	Invoke-ToolchainDeferredUpdateCheck
 	try {
 		$helpRequest = Get-ToolchainHelpRequest -Command $Command -ArgumentList $ArgumentList
 		if ($helpRequest.Requested) {
@@ -90,13 +91,13 @@ function Invoke-Toolchain {
 				Invoke-ToolchainExec @params @remaining
 			}
 			'run' {
-				$args = @($ArgumentList)
-				if ($args.Count -lt 1) {
+				$runArguments = @($ArgumentList)
+				if ($runArguments.Count -lt 1) {
 					Write-Error "run requires a function name (example: toolchain run build)"
 					break
 				}
-				$fnName = [string]$args[0]
-				$rest = if ($args.Count -gt 1) { $args[1..($args.Count - 1)] } else { @() }
+				$fnName = [string]$runArguments[0]
+				$rest = if ($runArguments.Count -gt 1) { $runArguments[1..($runArguments.Count - 1)] } else { @() }
 				Invoke-ToolchainRun -FnName $fnName -ArgumentList $rest
 			}
 			'init' {
@@ -516,7 +517,7 @@ function CheckForUpdates {
 			URL = "https://www.powershellgallery.com/packages/toolchain"
 			Method = 'HEAD'
 		}
-		$resp = HttpRequest @params | HttpSend -NoRedirect
+		$resp = HttpRequest @params | HttpSend -NoRedirect -TimeoutSeconds 3
 		if ($resp.Headers.Location) {
 			$docker = [Version]::new($resp.Headers.Location.OriginalString.Substring('/packages/toolchain/'.Length))
 			$local = [Version]::new((Import-PowerShellDataFile -Path "$PSScriptRoot\Toolchain.psd1").ModuleVersion)
@@ -547,7 +548,7 @@ function Invoke-ToolchainModuleEntry {
 	$isModuleEntry = ('Toolchain.psm1' -eq (Split-Path $MyInvocation.ScriptName -Leaf))
 	$forceModuleEntry = ($Force -or (Test-TruthyValue $env:TOOLCHAIN_RUN_MODULE_ENTRY))
 	if ($isModuleEntry -or $forceModuleEntry) {
-		CheckForUpdates
+		Request-ToolchainDeferredUpdateCheck
 		PrunePackages -Auto
 		return $true
 	}
