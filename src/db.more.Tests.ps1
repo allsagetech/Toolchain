@@ -35,6 +35,7 @@ Describe 'Db extra coverage' {
 		([Db]::DecodeKey($b64) -join ',') | Should -Be ($key -join ',')
 		[Db]::HasPrefix($b64, @('a','b')) | Should -BeTrue
 		[Db]::HasPrefix($b64, @('a','x')) | Should -BeFalse
+		[Db]::HasPrefix('remote-catalog.json', @('pkgdb')) | Should -BeFalse
 	}
 
 	It 'FileLock Put/Get/Unlock writes, Revert does not, Remove deletes' {

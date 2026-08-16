@@ -26,6 +26,7 @@ Describe 'Toolchain nested argument completion' {
 		@(Get-ToolchainNestedCompletionValues -Subcommand lock -Elements @('tlc','lock','-U') -WordToComplete '-U') | Should -Be @('-Update')
 		@(Get-ToolchainNestedCompletionValues -Subcommand restore -Elements @('tlc','restore') -WordToComplete '') | Should -Contain '-Path'
 		@(Get-ToolchainNestedCompletionValues -Subcommand verify -Elements @('tlc','verify') -WordToComplete '') | Should -Contain '-Json'
+		@(Get-ToolchainNestedCompletionValues -Subcommand audit -Elements @('tlc','audit','-V') -WordToComplete '-V') | Should -Be @('-VerifySignatures')
 		@(Get-ToolchainNestedCompletionValues -Subcommand unknown -Elements @('tlc','unknown') -WordToComplete '--') | Should -Be @('--help')
 	}
 

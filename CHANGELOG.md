@@ -12,11 +12,17 @@
 - Add explicit `tlc verify` verification for package indexes and selected platform manifests.
 - Add Docker, Podman, and nerdctl engine selection for local clusters.
 - Add authenticated local-registry integration coverage and enforce startup and large-catalog performance budgets.
+- Add `tlc audit` with structured and JSON reporting for project/lock drift, installed and remote digests, updates, package health, signature status, and policy violations, plus strict CI enforcement.
+- Dispatch successful immutable releases to Toolchains for automated consumer and package-contract promotion.
 
 ### Changed
 
 - Make builds root-independent and atomic, enforce the documented 80% coverage floor with exact test dependencies, defer network update checks until first command use, and gate actionable static-analysis rules.
 - Hide platform compatibility aliases from the default remote tooling display after a canonical multi-platform index is published.
+
+### Fixed
+
+- Keep auxiliary cache files such as `remote-catalog.json` out of local package-database key enumeration.
 
 ## 2.3.3 - 2026-08-14
 

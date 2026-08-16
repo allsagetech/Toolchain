@@ -14,7 +14,7 @@ Describe 'Toolchain command help catalog' {
 			'version','list','remote','remote list','remote models','remote all','remote tags',
 			'remote health','remote info',
 			'pull','load','exec','run','update','prune','remove','save','init',
-			'lock','restore','verify',
+			'lock','restore','verify','audit',
 			'profile','profile init','profile add','profile remove','profile list','profile path',
 			'cluster','cluster create','cluster list','cluster status','cluster kubeconfig','cluster delete',
 			'k9s','doctor','help'
@@ -37,6 +37,7 @@ Describe 'Toolchain command help catalog' {
 		$text | Should -Match 'remote'
 		$text | Should -Match 'cluster'
 		$text | Should -Match 'k9s'
+		$text | Should -Match 'audit'
 	}
 
 	It 'normalizes command aliases in help paths' {

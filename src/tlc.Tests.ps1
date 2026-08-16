@@ -72,6 +72,7 @@ Describe 'Invoke-Toolchain dispatcher' {
 		Mock Invoke-ToolchainLock { param([string[]]$Packages,[string[]]$Update) if ($Update) { @($Update) } elseif ($Packages) { @($Packages) } else { 'lock' } }
 		Mock Invoke-ToolchainRestore { 'restore' }
 		Mock Invoke-ToolchainVerify { param([string[]]$Packages) @($Packages) }
+		Mock Invoke-ToolchainAudit { param($Path,[switch]$Strict) "audit:$Path`:$([bool]$Strict)" }
 		Mock Invoke-ToolchainProfile { param($Command,[string[]]$Packages) @($Command) + @($Packages) }
 		Mock Invoke-ToolchainCluster { param($Command,$Name,$Provider) @($Command,$Name,$Provider) }
 		Mock Invoke-ToolchainK9s { param($Cluster,$Kubeconfig,[object[]]$ArgumentList) [pscustomobject]@{ Cluster = $Cluster; Kubeconfig = $Kubeconfig; Arguments = @($ArgumentList) } }
@@ -131,6 +132,7 @@ Describe 'Invoke-Toolchain dispatcher' {
 		@(Invoke-Toolchain -Command lock -ArgumentList @('-Update','node','git')) | Should -Be @('node','git')
 		(Invoke-Toolchain -Command restore) | Should -Be 'restore'
 		@(Invoke-Toolchain -Command verify -ArgumentList @('node','git')) | Should -Be @('node','git')
+		(Invoke-Toolchain -Command audit -ArgumentList @('-Path','audit.lock.json','-Strict')) | Should -Be 'audit:audit.lock.json:True'
 		@(Invoke-Toolchain -Command profile -ArgumentList @('add','node','git')) | Should -Be @('add','node','git')
 		@(Invoke-Toolchain -Command cluster -ArgumentList @('create','dev','-Provider','kind')) | Should -Be @('create','dev','kind')
 		$k9s = Invoke-Toolchain -Command k9s -ArgumentList @('-Cluster','dev','-n','default')
@@ -150,7 +152,7 @@ Describe 'Invoke-Toolchain dispatcher' {
 	}
 
 	It 'routes suffix help for every top-level command without executing it' {
-		$commands = @('version','v','remote','list','load','pull','exec','run','remove','rm','save','prune','update','init','lock','restore','verify','profile','cluster','k9s','doctor')
+		$commands = @('version','v','remote','list','load','pull','exec','run','remove','rm','save','prune','update','init','lock','restore','verify','audit','profile','cluster','k9s','doctor')
 		foreach ($command in $commands) {
 			$expected = switch ($command) { 'v' { 'version' }; 'rm' { 'remove' }; default { $command } }
 			(Invoke-Toolchain -Command $command -ArgumentList @('help')) | Should -Be "help:$expected"

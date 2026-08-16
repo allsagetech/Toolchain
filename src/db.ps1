@@ -141,7 +141,13 @@ class Db {
 	}
 
 	static [bool] HasPrefix([string]$b64, [string[]]$key) {
-		$s = [Db]::DecodeKey($b64)
+		try {
+			$s = [Db]::DecodeKey($b64)
+		} catch {
+			# The cache directory also contains bounded auxiliary files such as
+			# remote-catalog.json and last-update-check.txt. They are not DB keys.
+			return $false
+		}
 		for($i=0; $i -lt $key.Length; $i+=1) {
 			if ($key[$i] -ne $s[$i]) {
 				return $false

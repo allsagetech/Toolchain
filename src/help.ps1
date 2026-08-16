@@ -136,6 +136,18 @@ function Get-ToolchainHelpTopics {
 		-Usage @('tlc verify [PACKAGE[:TAG] ...] [-Json]') `
 		-Examples @('tlc verify kubectl', 'tlc verify kind:0.32.0 -Json') `
 		-Notes @('Cosign must be available on PATH and the configured identity or key policy is enforced.')
+	$topics.audit = New-ToolchainHelpTopic `
+		-Description 'Audits project lock drift, updates, package health, signatures, and policy compliance.' `
+		-Usage @('tlc audit [-Path PATH] [-Refresh] [-VerifySignatures] [-Strict] [-Json]') `
+		-Options @(
+			'-Path PATH          Select another Toolchain.lock.json file.',
+			'-Refresh            Bypass cached registry and health metadata.',
+			'-VerifySignatures   Verify every resolved digest with Cosign.',
+			'-Strict             Write the report and fail when findings exist.',
+			'-Json               Emit a structured JSON report.'
+		) `
+		-Examples @('tlc audit', 'tlc audit -Refresh -VerifySignatures -Strict', 'tlc audit -Path .\ci\Toolchain.lock.json -Json') `
+		-Notes @('Signature verification also runs automatically when required by Toolchain.policy.json or environment policy.')
 
 	$topics.profile = New-ToolchainHelpTopic `
 		-Description 'Creates and manages Toolchain package loads in the current PowerShell profile.' `
@@ -333,6 +345,10 @@ function Invoke-ToolchainHelp {
 			'remove         Remove local package tags and content.',
 			'save           Create an offline package repository.',
 			'init           Create a starter Toolchain.ps1 file.',
+			'lock           Pin project packages to immutable platform digests.',
+			'restore        Restore packages from Toolchain.lock.json.',
+			'verify         Verify package signatures.',
+			'audit          Audit project reproducibility and supply-chain status.',
 			'profile        Manage PowerShell profile package loads.',
 			'cluster        Manage local Docker-backed Kubernetes clusters.',
 			'k9s            Launch a terminal UI for a Kubernetes cluster.',

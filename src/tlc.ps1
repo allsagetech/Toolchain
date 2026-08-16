@@ -12,6 +12,7 @@ SPDX-License-Identifier: MPL-2.0
 . $PSScriptRoot\k9s.ps1
 . $PSScriptRoot\health.ps1
 . $PSScriptRoot\project-lock.ps1
+. $PSScriptRoot\audit.ps1
 . $PSScriptRoot\help.ps1
 . $PSScriptRoot\completion.ps1
 
@@ -29,7 +30,7 @@ function Invoke-Toolchain {
 	[CmdletBinding()]
 	param (
 		[Parameter(Mandatory)]
-		[ValidateSet('version', 'v', 'remote', 'list', 'load', 'pull', 'exec', 'run', 'remove', 'rm', 'save', 'prune', 'update', 'init', 'lock', 'restore', 'verify', 'profile', 'cluster', 'k9s', 'doctor', 'help', 'h')]
+		[ValidateSet('version', 'v', 'remote', 'list', 'load', 'pull', 'exec', 'run', 'remove', 'rm', 'save', 'prune', 'update', 'init', 'lock', 'restore', 'verify', 'audit', 'profile', 'cluster', 'k9s', 'doctor', 'help', 'h')]
 		[string]$Command,
 		[Parameter(ValueFromRemainingArguments)]
 		[object[]]$ArgumentList
@@ -120,6 +121,10 @@ function Invoke-Toolchain {
 				$params, $remaining = ResolveParameters 'Invoke-ToolchainVerify' $ArgumentList
 				if ($remaining) { $params.Packages = @($remaining | ForEach-Object { [string]$_ }) }
 				Invoke-ToolchainVerify @params
+			}
+			'audit' {
+				$params, $remaining = ResolveParameters 'Invoke-ToolchainAudit' $ArgumentList
+				Invoke-ToolchainAudit @params @remaining
 			}
 			'profile' {
 				$params, $remaining = ResolveParameters 'Invoke-ToolchainProfile' $ArgumentList

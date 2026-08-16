@@ -183,6 +183,27 @@ jobs:
             "dist/toolchain-package-spec-v1.zip.sha256" \
             "dist/SHA256SUMS"
 
+      - name: Request Toolchains consumer promotion
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.TOOLCHAINS_PROMOTION_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
+            Write-Output '::warning title=Toolchains promotion dispatch skipped::Configure TOOLCHAINS_PROMOTION_TOKEN in the toolchain-release environment; the scheduled promotion workflow remains a fallback.'
+            return
+          }
+          $payload = @{
+            event_type = 'toolchain-released'
+            client_payload = @{
+              ref = $env:GITHUB_SHA
+              version = $env:GITHUB_REF_NAME.TrimStart('v')
+              tag = $env:GITHUB_REF_NAME
+            }
+          } | ConvertTo-Json -Depth 5 -Compress
+          $payload | gh api repos/allsagetech/Toolchains/dispatches --method POST --input -
+          if ($LASTEXITCODE -ne 0) { throw 'Could not dispatch Toolchains consumer promotion.' }
+
       - name: Publish matching PowerShell Gallery package
         shell: pwsh
         env:
