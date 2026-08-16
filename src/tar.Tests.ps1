@@ -49,9 +49,10 @@ Describe "Untargz" {
 				foreach ($entry in $Entries) {
 					$data = if ($null -ne $entry.Data) { [Text.Encoding]::UTF8.GetBytes([string]$entry.Data) } else { [byte[]]@() }
 					$declaredSize = if ($null -ne $entry.Size) { [long]$entry.Size } else { [long]$data.Length }
+					$mode = if ($null -ne $entry.Mode) { [int]$entry.Mode } else { 420 }
 					$header = New-Object byte[] 512
 					Set-TarAsciiField $header 0 100 ([string]$entry.Name)
-					Set-TarAsciiField $header 100 8 '0000777'
+					Set-TarAsciiField $header 100 8 (([Convert]::ToString($mode, 8)).PadLeft(7, '0') + [char]0)
 					Set-TarAsciiField $header 108 8 '0000000'
 					Set-TarAsciiField $header 116 8 '0000000'
 					Set-TarAsciiField $header 124 12 (([Convert]::ToString($declaredSize, 8)).PadLeft(11, '0') + [char]0)
@@ -129,6 +130,22 @@ Describe "Untargz" {
 			if (Test-Path -LiteralPath $work) {
 				Remove-Item -LiteralPath $work -Recurse -Force
 			}
+		}
+	}
+
+	It 'preserves Unix execute permissions from regular-file headers' {
+		if ($isWindowsPlatform) { return }
+		$work = Join-Path $root ("unix-mode-" + [Guid]::NewGuid().ToString('N'))
+		try {
+			$archive = New-TestTarGz -Directory $work -Entries @(
+				@{ Name='bin/toolchain-mode-test'; Type='0'; Mode=493; Data="#!/bin/sh`nexit 0`n" }
+			)
+			$archive | ExtractTarGz -Digest ('sha256:' + ('e' * 64))
+			$executable = Join-Path (Join-Path (ResolvePackagePath '_') 'bin') 'toolchain-mode-test'
+			& $executable
+			$LASTEXITCODE | Should -Be 0
+		} finally {
+			Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
 		}
 	}
 

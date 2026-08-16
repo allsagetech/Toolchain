@@ -22,6 +22,7 @@
 
 ### Fixed
 
+- Preserve safe Unix permission bits while extracting OCI layers so Linux package executables remain runnable after `tlc pull`.
 - Keep auxiliary cache files such as `remote-catalog.json` out of local package-database key enumeration.
 
 ## 2.3.3 - 2026-08-14

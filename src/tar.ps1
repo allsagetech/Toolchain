@@ -165,6 +165,50 @@ function ExtractTar {
 		return $Path
 	}
 
+	$unixFileModeType = $null
+	$setUnixFileMode = $null
+	$chmodPath = $null
+	if (-not $isWindowsPlatform) {
+		$unixFileModeType = [IO.File].Assembly.GetType('System.IO.UnixFileMode')
+		if ($unixFileModeType) {
+			$setUnixFileMode = @([IO.File].GetMethods() | Where-Object {
+				$parameters = $_.GetParameters()
+				$_.Name -eq 'SetUnixFileMode' -and
+				$parameters.Count -eq 2 -and
+				$parameters[0].ParameterType -eq [string]
+			}) | Select-Object -First 1
+		}
+		if (-not $setUnixFileMode) {
+			$chmodPath = (Get-Command chmod -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+		}
+	}
+
+	function Set-TarRegularFileMode {
+		param(
+			[Parameter(Mandatory)][string]$Path,
+			[AllowNull()][object]$Mode
+		)
+		if ($isWindowsPlatform -or $null -eq $Mode) { return }
+
+		# OCI layers carry Unix permission bits in their tar headers. Files
+		# created through FileStream otherwise inherit a non-executable mode,
+		# which makes Linux tool packages impossible to invoke after pulling.
+		$permissions = [int]([long]$Mode -band 511) # Preserve rwxrwxrwx only.
+		try {
+			if ($setUnixFileMode) {
+				$modeValue = [Enum]::ToObject($unixFileModeType, $permissions)
+				$null = $setUnixFileMode.Invoke($null, [object[]]@($Path, $modeValue))
+				return
+			}
+
+			$octalMode = [Convert]::ToString($permissions, 8).PadLeft(3, '0')
+			& $chmodPath $octalMode '--' $Path
+			if ($LASTEXITCODE -ne 0) { throw "chmod exited with code $LASTEXITCODE" }
+		} catch {
+			throw "failed to apply tar mode to '$Path': $($_.Exception.Message)"
+		}
+	}
+
 	$root = ResolvePackagePath -Digest $Digest
 	MakeDirIfNotExist -Path $root | Out-Null
 
@@ -574,6 +618,7 @@ function ExtractTar {
 					} finally {
 						$fs.Dispose()
 					}
+					Set-TarRegularFileMode -Path $dest -Mode $hdr.Mode
 					$xhdr = $null
 				}
 			} else {
