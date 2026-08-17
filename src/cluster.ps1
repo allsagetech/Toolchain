@@ -591,7 +591,7 @@ function Invoke-ToolchainCluster {
 		[switch]$Raw,
 		[string]$Kubeconfig,
 		[switch]$Confirm,
-		[ValidateSet('git-server')][string[]]$Components,
+		[ValidateSet('git-server', 'none')][string[]]$Components,
 		[ValidateSet('all', 'labeled')][string]$AgentMutationPolicy = 'all',
 		[string]$AgentImage,
 		[string]$RegistryImage,
@@ -609,7 +609,7 @@ function Invoke-ToolchainCluster {
 				Name = $Name
 				Kubeconfig = $Kubeconfig
 				Confirm = $Confirm
-				Components = $Components
+				PromptForComponents = -not $PSBoundParameters.ContainsKey('Components')
 				AgentMutationPolicy = $AgentMutationPolicy
 				StorageClass = $StorageClass
 				RegistryStorage = $RegistryStorage
@@ -618,6 +618,7 @@ function Invoke-ToolchainCluster {
 				WaitSeconds = $WaitSeconds
 				PassThru = $PassThru
 			}
+			if ($PSBoundParameters.ContainsKey('Components')) { $params.Components = $Components }
 			if ($AgentImage) { $params.AgentImage = $AgentImage }
 			if ($RegistryImage) { $params.RegistryImage = $RegistryImage }
 			if ($GitImage) { $params.GitImage = $GitImage }

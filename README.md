@@ -96,7 +96,8 @@ cluster—or any explicit kubeconfig—without another bootstrap CLI:
 
 ```powershell
 tlc cluster init dev -Confirm
-# Optional non-interactive Git service:
+# The optional Git-server prompt defaults to no. For automation:
+tlc cluster init dev -Confirm -Components none
 tlc cluster init dev -Confirm -Components git-server
 ```
 

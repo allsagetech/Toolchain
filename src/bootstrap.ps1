@@ -743,13 +743,31 @@ spec:
 	return $manifest
 }
 
+function Select-ToolchainClusterInitComponents {
+	[CmdletBinding()]
+	param()
+
+	while ($true) {
+		try {
+			$response = Read-Host 'Initialize optional Git server? [y/N]'
+		} catch {
+			throw "component selection requires interactive input; rerun with '-Components git-server' or '-Components none'"
+		}
+		$answer = if ($null -eq $response) { '' } else { ([string]$response).Trim().ToLowerInvariant() }
+		if (-not $answer -or $answer -in @('n', 'no')) { return }
+		if ($answer -in @('y', 'yes')) { return 'git-server' }
+		Write-Warning "Please answer 'y' or 'n'."
+	}
+}
+
 function Invoke-ToolchainClusterInit {
 	[CmdletBinding()]
 	param(
 		[string]$Name,
 		[string]$Kubeconfig,
 		[switch]$Confirm,
-		[ValidateSet('git-server')][string[]]$Components,
+		[ValidateSet('git-server', 'none')][string[]]$Components,
+		[switch]$PromptForComponents,
 		[ValidateSet('all', 'labeled')][string]$AgentMutationPolicy = 'all',
 		[string]$AgentImage = (Get-ToolchainBootstrapAgentImage),
 		[string]$RegistryImage = $script:ToolchainRegistryImage,
@@ -762,7 +780,14 @@ function Invoke-ToolchainClusterInit {
 		[switch]$PassThru
 	)
 	if (-not $Confirm) { throw "cluster init changes Kubernetes cluster state; rerun with -Confirm after reviewing 'tlc cluster init help'" }
-	$componentsNormalized = @($Components | Where-Object { $_ } | Sort-Object -Unique)
+	if ($PromptForComponents -or -not $PSBoundParameters.ContainsKey('Components')) {
+		$Components = @(Select-ToolchainClusterInitComponents)
+	}
+	$componentsRequested = @($Components | Where-Object { $_ } | Sort-Object -Unique)
+	if ('none' -in $componentsRequested -and $componentsRequested.Count -gt 1) {
+		throw "component 'none' cannot be combined with another component"
+	}
+	$componentsNormalized = @($componentsRequested | Where-Object { $_ -ne 'none' })
 	$kubeconfigPath = Resolve-ToolchainBootstrapKubeconfig -Name $Name -Kubeconfig $Kubeconfig
 	$kubectl = Get-ToolchainClusterExecutable -Name kubectl -Package kubectl -InstallHint 'Install kubectl and ensure its executable is available on PATH.'
 	$null = Invoke-ToolchainBootstrapKubectl -Kubectl $kubectl -Kubeconfig $kubeconfigPath -Arguments @('get', '--request-timeout=10s', 'namespace', 'kube-system', '-o', 'name')

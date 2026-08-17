@@ -69,6 +69,44 @@ Describe 'Toolchain native cluster bootstrap manifests' {
 	}
 }
 
+Describe 'Toolchain cluster component selection' {
+	BeforeEach {
+		Mock Write-Warning { }
+	}
+
+	It 'defaults the Git server prompt to no' {
+		Mock Read-Host { '' }
+
+		@(Select-ToolchainClusterInitComponents).Count | Should -Be 0
+		Should -Invoke Read-Host -Times 1 -Exactly
+	}
+
+	It 'accepts yes and no answers without case sensitivity' {
+		Mock Read-Host { 'YES' }
+		@(Select-ToolchainClusterInitComponents) | Should -Be @('git-server')
+
+		Mock Read-Host { 'No' }
+		@(Select-ToolchainClusterInitComponents).Count | Should -Be 0
+	}
+
+	It 'reprompts after an invalid answer' {
+		$script:componentAnswers = [Collections.Generic.Queue[string]]::new()
+		$script:componentAnswers.Enqueue('maybe')
+		$script:componentAnswers.Enqueue('y')
+		Mock Read-Host { $script:componentAnswers.Dequeue() }
+
+		@(Select-ToolchainClusterInitComponents) | Should -Be @('git-server')
+		Should -Invoke Read-Host -Times 2 -Exactly
+		Should -Invoke Write-Warning -Times 1 -Exactly
+	}
+
+	It 'explains how non-interactive callers can select components' {
+		Mock Read-Host { throw 'non-interactive host' }
+
+		{ Select-ToolchainClusterInitComponents } | Should -Throw '*-Components git-server*Components none*'
+	}
+}
+
 Describe 'Toolchain native cluster initialization' {
 	BeforeEach {
 		$script:kubectlCalls = [Collections.Generic.List[object]]::new()
@@ -90,6 +128,7 @@ Describe 'Toolchain native cluster initialization' {
 			[pscustomobject]@{ ExitCode=0; Output=@('ok') }
 		}
 		Mock Write-ToolchainInfo { }
+		Mock Select-ToolchainClusterInitComponents { }
 	}
 
 	It 'requires explicit non-interactive confirmation before contacting a cluster' {
@@ -113,6 +152,7 @@ Describe 'Toolchain native cluster initialization' {
 		@($script:kubectlCalls | Where-Object { $_.Arguments -contains 'deployment/toolchain-agent' }).Count | Should -Be 2
 		@($script:kubectlCalls | Where-Object { $_.Arguments -contains 'deployment/toolchain-registry-gateway' }).Count | Should -Be 1
 		Should -Invoke Write-ToolchainInfo -Times 2 -Exactly
+		Should -Invoke Select-ToolchainClusterInitComponents -Times 1 -Exactly
 	}
 
 	It 'uses an isolated managed kubeconfig and waits for the optional Git service' {
@@ -131,6 +171,20 @@ Describe 'Toolchain native cluster initialization' {
 		$script:appliedManifest | Should -Match 'name: toolchain-git'
 		@($script:kubectlCalls | Where-Object { $_.Arguments -contains 'deployment/toolchain-git' }).Count | Should -Be 1
 		foreach ($call in $script:kubectlCalls) { $call.Arguments | Should -Contain '--kubeconfig' }
+		Should -Invoke Select-ToolchainClusterInitComponents -Times 0 -Exactly
+	}
+
+	It 'supports an explicit non-interactive no-components selection' {
+		$result = Invoke-ToolchainClusterInit -Confirm -PassThru -Components none -AgentImage 'ghcr.io/allsagetech/toolchain-agent:2.4.0'
+
+		@($result.Components).Count | Should -Be 0
+		$script:appliedManifest | Should -Not -Match 'name: toolchain-git'
+		Should -Invoke Select-ToolchainClusterInitComponents -Times 0 -Exactly
+	}
+
+	It 'rejects none combined with another component before contacting a cluster' {
+		{ Invoke-ToolchainClusterInit -Confirm -Components none,git-server } | Should -Throw '*cannot be combined*'
+		Should -Invoke Get-ToolchainClusterExecutable -Times 0 -Exactly
 	}
 
 	It 'preserves existing generated registry credentials across upgrades' {

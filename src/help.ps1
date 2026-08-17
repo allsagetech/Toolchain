@@ -233,12 +233,12 @@ function Get-ToolchainHelpTopics {
 		-Notes @('k0s requires an explicitly versioned image and supports one combined controller/worker container.', '-Config cannot be combined with -Servers, -Workers, or -ApiPort.')
 	$topics.'cluster init' = New-ToolchainHelpTopic `
 		-Description 'Natively prepares a Kubernetes cluster with Toolchain registry, state, and image-mutation infrastructure.' `
-		-Usage @('tlc cluster init [NAME] -Confirm [-Kubeconfig PATH] [-Components git-server] [-AgentMutationPolicy all|labeled] [-StorageClass NAME] [-RegistryStorage SIZE] [-GitStorage SIZE] [-RegistryNodePort PORT] [-WaitSeconds SECONDS] [-PassThru]') `
+		-Usage @('tlc cluster init [NAME] -Confirm [-Kubeconfig PATH] [-Components git-server|none] [-AgentMutationPolicy all|labeled] [-StorageClass NAME] [-RegistryStorage SIZE] [-GitStorage SIZE] [-RegistryNodePort PORT] [-WaitSeconds SECONDS] [-PassThru]') `
 		-Options @(
 			'NAME                         Initialize a Toolchain-managed cluster.',
 			'-Kubeconfig PATH             Initialize an external cluster through an explicit kubeconfig.',
-			'-Confirm                     Required non-interactive acknowledgement of cluster changes.',
-			'-Components git-server      Also install the Toolchain Git service.',
+			'-Confirm                     Required acknowledgement of cluster changes.',
+			'-Components VALUE           Skip the prompt: git-server installs Git; none installs no optional components.',
 			'-AgentMutationPolicy VALUE  Mutate known images globally (all) or only labeled Pods (labeled).',
 			'-StorageClass NAME          Storage class for persistent registry and Git volumes.',
 			'-RegistryStorage SIZE       Registry PVC size. Default: 20Gi.',
@@ -250,8 +250,8 @@ function Get-ToolchainHelpTopics {
 			'-WaitSeconds SECONDS        Rollout timeout from 30 through 1800. Default: 120.',
 			'-PassThru                   Return structured initialization details.'
 		) `
-		-Examples @('tlc cluster init -Confirm', 'tlc cluster init dev -Confirm', 'tlc cluster init -Kubeconfig .\kubeconfig.yaml -Confirm -Components git-server') `
-		-Notes @('This is a Toolchain-native implementation and does not install or invoke third-party bootstrap tooling.', 'Only exact image references present in the Toolchain mapping ConfigMap are mutated.', 'Registry pulls are anonymous through the node-local gateway; writes require the generated Kubernetes Secret.', 'Repeated runs preserve credentials and mappings, then use server-side apply as an upgrade.')
+		-Examples @('tlc cluster init -Confirm', 'tlc cluster init dev -Confirm', 'tlc cluster init dev -Confirm -Components none', 'tlc cluster init -Kubeconfig .\kubeconfig.yaml -Confirm -Components git-server') `
+		-Notes @("When -Components is omitted, Toolchain asks whether to install the optional Git server; the default answer is no.", 'This is a Toolchain-native implementation and does not install or invoke third-party bootstrap tooling.', 'Only exact image references present in the Toolchain mapping ConfigMap are mutated.', 'Registry pulls are anonymous through the node-local gateway; writes require the generated Kubernetes Secret.', 'Repeated runs preserve credentials and mappings, then use server-side apply as an upgrade.')
 	$topics.'cluster list' = New-ToolchainHelpTopic `
 		-Description 'Lists clusters managed by Toolchain.' `
 		-Usage @('tlc cluster list [-Provider kind|k0s|k3s]') `

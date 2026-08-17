@@ -44,6 +44,8 @@ Describe 'Toolchain nested argument completion' {
 			Should -Be @('-RegistryNodePort')
 		@(Get-ToolchainNestedCompletionValues -Subcommand cluster -Elements @('toolchain','cluster','init','-Components','g') -WordToComplete 'g') |
 			Should -Be @('git-server')
+		@(Get-ToolchainNestedCompletionValues -Subcommand cluster -Elements @('toolchain','cluster','init','-Components','n') -WordToComplete 'n') |
+			Should -Be @('none')
 		@(Get-ToolchainNestedCompletionValues -Subcommand cluster -Elements @('toolchain','cluster','create') -WordToComplete '') |
 			Should -Contain 'help'
 		@(Get-ToolchainNestedCompletionValues -Subcommand cluster -Elements @('toolchain','cluster','u') -WordToComplete 'u') |

@@ -11,7 +11,7 @@ BeforeAll {
 	function ResolvePackage { param([string]$Ref) }
 	function LoadPackage { param($Pkg) }
 	function Invoke-ToolchainClusterInit {
-		param($Name,$Kubeconfig,[switch]$Confirm,$Components,$AgentMutationPolicy,$AgentImage,$RegistryImage,$GitImage,$StorageClass,$RegistryStorage,$GitStorage,$RegistryNodePort,$WaitSeconds,[switch]$PassThru)
+		param($Name,$Kubeconfig,[switch]$Confirm,$Components,[switch]$PromptForComponents,$AgentMutationPolicy,$AgentImage,$RegistryImage,$GitImage,$StorageClass,$RegistryStorage,$GitStorage,$RegistryNodePort,$WaitSeconds,[switch]$PassThru)
 	}
 
 	function New-TestClusterProcessResult {
@@ -125,6 +125,20 @@ Describe 'Toolchain cluster validation' {
 		Should -Invoke Invoke-ToolchainClusterInit -Times 1 -Exactly -ParameterFilter {
 			$Name -eq 'dev' -and $Confirm -and $Components -contains 'git-server' -and $AgentMutationPolicy -eq 'labeled' -and $PassThru
 		}
+	}
+
+	It 'preserves interactive component selection when Components is omitted' {
+		$script:clusterInitShouldPrompt = $null
+		Mock Invoke-ToolchainClusterInit {
+			param([switch]$PromptForComponents)
+			$script:clusterInitShouldPrompt = [bool]$PromptForComponents
+		}
+
+		Invoke-ToolchainCluster -Command init -Name dev -Confirm
+		$script:clusterInitShouldPrompt | Should -BeTrue
+
+		Invoke-ToolchainCluster -Command init -Name dev -Confirm -Components none
+		$script:clusterInitShouldPrompt | Should -BeFalse
 	}
 }
 

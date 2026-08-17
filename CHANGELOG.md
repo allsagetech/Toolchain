@@ -12,6 +12,7 @@
 - Add Docker and Podman auth-file discovery plus Docker credential-helper support for private registries.
 - Add Toolchain-native Kubernetes initialization with persistent cluster state, a write-protected node-local OCI registry, exact-match admission mutation, and optional non-interactive Git service setup.
 - Add session-scoped `tlc cluster use` and `tlc cluster current` commands for switching between isolated managed cluster kubeconfigs.
+- Prompt for optional cluster-init components when `-Components` is omitted, with Git server defaulting to no and explicit non-interactive choices retained.
 
 ### Changed
 

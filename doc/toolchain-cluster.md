@@ -118,10 +118,22 @@ tlc cluster init dev -Confirm
 tlc cluster init -Kubeconfig .\external-kubeconfig.yaml -Confirm
 ```
 
+When `-Components` is omitted, Toolchain asks whether to initialize each
+optional component. The Git server prompt is `Initialize optional Git server?
+[y/N]`; pressing Enter selects no. Core registry, state, gateway, and admission
+agent components are always initialized.
+
+For non-interactive automation, skip the prompt explicitly:
+
+```powershell
+tlc cluster init dev -Confirm -Components none
+tlc cluster init dev -Confirm -Components git-server
+```
+
 Initialization creates the `toolchain-system` namespace, persistent OCI
 registry, node-local registry gateway, cluster state, exact-match image-mapping
 configuration, and Toolchain admission agent. `-Confirm` is required so
-automation is explicit and non-interactive. A managed cluster name and an
+cluster changes are explicitly acknowledged. A managed cluster name and an
 explicit `-Kubeconfig` are mutually exclusive; with neither, kubectl's current
 context is used.
 
@@ -138,7 +150,7 @@ rewrites. `-AgentMutationPolicy all` applies known mappings by default;
 Pod `toolchain.dev/agent: ignore` to exclude it. The webhook begins fail-open
 while establishing its generated TLS trust, then changes itself to fail-closed.
 
-Add the optional Git service without an installation wizard:
+Add the optional Git service interactively or explicitly:
 
 ```powershell
 tlc cluster init dev -Confirm -Components git-server

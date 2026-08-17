@@ -42,7 +42,7 @@ function Get-ToolchainNestedCompletionValues {
 			if ($previous -eq '-Provider') { return @('kind','k0s','k3s') | Where-Object { $_ -like "$WordToComplete*" } }
 			if ($previous -eq '-Engine') { return @('auto','docker','podman','nerdctl') | Where-Object { $_ -like "$WordToComplete*" } }
 			if ($previous -eq '-AgentMutationPolicy') { return @('all','labeled') | Where-Object { $_ -like "$WordToComplete*" } }
-			if ($previous -eq '-Components') { return @('git-server') | Where-Object { $_ -like "$WordToComplete*" } }
+			if ($previous -eq '-Components') { return @('git-server','none') | Where-Object { $_ -like "$WordToComplete*" } }
 			if ($Elements.Count -le 2 -or ($Elements.Count -eq 3 -and $WordToComplete)) {
 				return @('create','init','list','status','kubeconfig','use','current','delete') + $helpValues | Where-Object { $_ -like "$WordToComplete*" }
 			}
