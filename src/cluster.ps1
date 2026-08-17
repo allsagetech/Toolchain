@@ -291,6 +291,53 @@ function Get-ToolchainClusterStates {
 	return $states
 }
 
+function New-ToolchainClusterContext {
+	param(
+		[Parameter(Mandatory)]$State,
+		[Parameter(Mandatory)][string]$Kubeconfig
+	)
+	return [pscustomobject]@{
+		PSTypeName = 'Toolchain.ClusterContext'
+		Name = [string]$State.name
+		Provider = [string]$State.provider
+		Kubeconfig = $Kubeconfig
+	}
+}
+
+function Resolve-ToolchainClusterContext {
+	param([Parameter(Mandatory)][string]$Name)
+
+	$state = Read-ToolchainClusterState -Name $Name
+	if (-not $state) { throw "Toolchain cluster not found: $Name" }
+	$path = Get-ToolchainClusterKubeconfigPath -Name $Name
+	if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "cluster kubeconfig is missing: $path" }
+	$item = Get-Item -LiteralPath $path -Force
+	if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+		throw "refusing to select a cluster kubeconfig through a link or reparse point: $path"
+	}
+	return (New-ToolchainClusterContext -State $state -Kubeconfig ([IO.Path]::GetFullPath($item.FullName)))
+}
+
+function Get-ToolchainCurrentClusterContext {
+	if ([string]::IsNullOrWhiteSpace($env:KUBECONFIG)) { return $null }
+	$separator = [regex]::Escape([string][IO.Path]::PathSeparator)
+	$entries = @($env:KUBECONFIG -split $separator | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+	if ($entries.Count -ne 1) { return $null }
+	try { $selectedPath = [IO.Path]::GetFullPath($entries[0]) } catch { return $null }
+	$comparison = if ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)) {
+		[StringComparison]::OrdinalIgnoreCase
+	} else {
+		[StringComparison]::Ordinal
+	}
+	foreach ($state in @(Get-ToolchainClusterStates)) {
+		$path = [IO.Path]::GetFullPath((Get-ToolchainClusterKubeconfigPath -Name ([string]$state.name)))
+		if ([string]::Equals($selectedPath, $path, $comparison)) {
+			return (Resolve-ToolchainClusterContext -Name ([string]$state.name))
+		}
+	}
+	return $null
+}
+
 function New-ToolchainKindCluster {
 	param(
 		[Parameter(Mandatory)][string]$Name,
@@ -523,7 +570,7 @@ function Invoke-ToolchainCluster {
 	[CmdletBinding()]
 	param(
 		[Parameter(Mandatory, Position = 0)]
-		[ValidateSet('create', 'init', 'list', 'status', 'kubeconfig', 'delete')]
+		[ValidateSet('create', 'init', 'list', 'status', 'kubeconfig', 'use', 'current', 'delete')]
 		[string]$Command,
 		[Parameter(Position = 1)]
 		[string]$Name,
@@ -646,12 +693,34 @@ function Invoke-ToolchainCluster {
 			if ($Raw) { return (Get-Content -LiteralPath $path -Raw) }
 			return $path
 		}
+		'use' {
+			if (-not $Name) { throw 'cluster use requires a name' }
+			$context = Resolve-ToolchainClusterContext -Name $Name
+			$env:KUBECONFIG = $context.Kubeconfig
+			Write-ToolchainInfo "Switched to Toolchain cluster '$Name' for this PowerShell process."
+			if ($PassThru) { return $context }
+		}
+		'current' {
+			if ($Name) { throw 'cluster current does not accept a cluster name' }
+			$context = Get-ToolchainCurrentClusterContext
+			if (-not $context) {
+				if ([string]::IsNullOrWhiteSpace($env:KUBECONFIG)) {
+					throw "no Toolchain-managed cluster is selected; run 'tlc cluster use NAME'"
+				}
+				throw 'KUBECONFIG does not select exactly one Toolchain-managed cluster'
+			}
+			if ($PassThru) { return $context }
+			return $context.Name
+		}
 		'delete' {
 			if (-not $Name) { throw 'cluster delete requires a name' }
 			$state = Read-ToolchainClusterState -Name $Name
 			if (-not $state) { throw "Toolchain cluster not found: $Name" }
+			$current = Get-ToolchainCurrentClusterContext
+			$wasCurrent = $current -and $current.Name -ceq $Name
 			Remove-ToolchainProviderCluster -State $state
 			Remove-ToolchainClusterDirectory -Name $Name
+			if ($wasCurrent) { Remove-Item Env:KUBECONFIG -ErrorAction SilentlyContinue }
 			Write-ToolchainInfo "Deleted $($state.provider) cluster '$Name'."
 		}
 	}

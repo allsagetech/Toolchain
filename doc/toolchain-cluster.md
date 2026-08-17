@@ -66,17 +66,30 @@ toolchain cluster list
 toolchain cluster list -Provider kind
 toolchain cluster status dev
 toolchain cluster kubeconfig dev
+toolchain cluster use dev
+toolchain cluster current
 ```
 
-`kubeconfig` returns the managed file path. Toolchain never merges it into
-`$HOME/.kube/config` or switches the current context. To use it in the current
-PowerShell session:
+`kubeconfig` returns the managed file path. `use` assigns that isolated file to
+`KUBECONFIG` for the current PowerShell process and its child processes, so
+subsequent Kubernetes commands target the selected cluster:
 
 ```powershell
 toolchain load kubectl
-$env:KUBECONFIG = toolchain cluster kubeconfig dev
+toolchain cluster use dev
 kubectl get nodes
 ```
+
+Switch between managed clusters by running `use` again. `current` prints the
+selected Toolchain cluster name; add `-PassThru` to return its name, provider,
+and kubeconfig path as an object. Both commands reject missing or tampered
+managed state. `current` also rejects an unset, external, or multi-file
+`KUBECONFIG` because those values do not identify exactly one managed cluster.
+
+The selection is intentionally session-scoped. Toolchain does not merge or
+modify `$HOME/.kube/config`, and a new PowerShell process starts with its normal
+environment. Deleting the selected cluster clears `KUBECONFIG` so the session
+does not retain a path to a deleted file.
 
 Or launch K9s with the managed kubeconfig without changing the session:
 
@@ -85,7 +98,8 @@ tlc k9s -Cluster dev
 ```
 
 Use `toolchain cluster kubeconfig dev -Raw` when an automation step needs the
-file contents instead of its path.
+file contents instead of its path. Use `toolchain cluster use dev -PassThru`
+when automation needs structured details about the new selection.
 
 Cluster state and kubeconfigs are stored beneath the Toolchain data directory in
 `clusters/<name>`. Container images are not embedded in Toolchain packages;

@@ -46,6 +46,10 @@ Describe 'Toolchain nested argument completion' {
 			Should -Be @('git-server')
 		@(Get-ToolchainNestedCompletionValues -Subcommand cluster -Elements @('toolchain','cluster','create') -WordToComplete '') |
 			Should -Contain 'help'
+		@(Get-ToolchainNestedCompletionValues -Subcommand cluster -Elements @('toolchain','cluster','u') -WordToComplete 'u') |
+			Should -Be @('use')
+		@(Get-ToolchainNestedCompletionValues -Subcommand cluster -Elements @('toolchain','cluster','current') -WordToComplete '') |
+			Should -Contain '-PassThru'
 	}
 
 	It 'completes cluster providers after the nested provider option' {

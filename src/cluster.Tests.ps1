@@ -133,6 +133,8 @@ Describe 'Toolchain cluster lifecycle' {
 		$case = 'case-' + [guid]::NewGuid().ToString('n')
 		$script:clusterRoot = Join-Path $TestDrive $case
 		$script:clusterCalls = [Collections.Generic.List[object]]::new()
+		$script:previousKubeconfig = $env:KUBECONFIG
+		Remove-Item Env:KUBECONFIG -ErrorAction SilentlyContinue
 		Mock GetToolchainPath { $script:clusterRoot }
 		Mock Resolve-ToolchainContainerEngine { [pscustomobject]@{ Name = 'docker'; Path = 'docker' } }
 		Mock Get-ToolchainClusterExecutable { param($Name, $InstallHint) $Name }
@@ -164,6 +166,14 @@ Describe 'Toolchain cluster lifecycle' {
 				return (New-TestClusterProcessResult -Output @('running'))
 			}
 			return (New-TestClusterProcessResult)
+		}
+	}
+
+	AfterEach {
+		if ($null -eq $script:previousKubeconfig) {
+			Remove-Item Env:KUBECONFIG -ErrorAction SilentlyContinue
+		} else {
+			$env:KUBECONFIG = $script:previousKubeconfig
 		}
 	}
 
@@ -252,12 +262,39 @@ Describe 'Toolchain cluster lifecycle' {
 		Invoke-ToolchainCluster -Command kubeconfig -Name dev -Raw | Should -Match 'kind: Config'
 	}
 
+	It 'switches between isolated managed kubeconfigs in the current process' {
+		$dev = Invoke-ToolchainCluster -Command create -Name dev -Provider kind
+		$null = Invoke-ToolchainCluster -Command create -Name qa -Provider kind
+
+		$selected = Invoke-ToolchainCluster -Command use -Name dev -PassThru
+		$env:KUBECONFIG | Should -BeExactly ([IO.Path]::GetFullPath($dev.Kubeconfig))
+		$selected.Name | Should -Be 'dev'
+		$selected.Provider | Should -Be 'kind'
+		Invoke-ToolchainCluster -Command current | Should -Be 'dev'
+
+		$null = Invoke-ToolchainCluster -Command use -Name qa
+		$current = Invoke-ToolchainCluster -Command current -PassThru
+		$current.Name | Should -Be 'qa'
+		$current.Kubeconfig | Should -BeExactly $env:KUBECONFIG
+	}
+
+	It 'rejects unknown and non-managed cluster selections' {
+		{ Invoke-ToolchainCluster -Command use -Name missing } | Should -Throw '*not found*'
+		{ Invoke-ToolchainCluster -Command current } | Should -Throw '*no Toolchain-managed cluster*'
+		$env:KUBECONFIG = Join-Path $TestDrive 'external.yaml'
+		{ Invoke-ToolchainCluster -Command current } | Should -Throw '*does not select exactly one*'
+		$env:KUBECONFIG = "a$([IO.Path]::PathSeparator)b"
+		{ Invoke-ToolchainCluster -Command current } | Should -Throw '*does not select exactly one*'
+	}
+
 	It 'deletes the provider cluster before removing local state' {
 		$result = Invoke-ToolchainCluster -Command create -Name dev -Provider kind
+		$null = Invoke-ToolchainCluster -Command use -Name dev
 
 		Invoke-ToolchainCluster -Command delete -Name dev
 
 		Test-Path -LiteralPath (Split-Path -Parent $result.Kubeconfig) | Should -BeFalse
+		$env:KUBECONFIG | Should -BeNullOrEmpty
 		$delete = $script:clusterCalls | Where-Object { $_.FilePath -eq 'kind' -and ($_.Arguments -join ' ') -eq 'delete cluster --name dev' }
 		@($delete).Count | Should -Be 1
 	}

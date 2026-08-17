@@ -82,6 +82,15 @@ stay under Toolchain's managed data directory and are never merged into the
 default kubeconfig. See [`cluster`](doc/toolchain-cluster.md) for requirements,
 topology options, and cleanup commands.
 
+Select a managed cluster for Kubernetes commands in the current PowerShell
+process, then inspect the selection at any time:
+
+```powershell
+tlc cluster use dev
+tlc cluster current
+kubectl get nodes
+```
+
 Bootstrap Toolchain's registry, state, and exact-match admission agent into that
 cluster—or any explicit kubeconfig—without another bootstrap CLI:
 
@@ -192,7 +201,7 @@ toolchain run build -Configuration Debug
 | `verify` | Verify package and platform-index signatures | `doc/toolchain-verify.md` |
 | `audit` | Report project/lock drift, installed and remote digest state, updates, health, signatures, and policy findings; safely remediate lock/restore drift with `-Fix` | `doc/toolchain-audit.md` |
 | `profile init` / `add` / `remove` / `list` / `path` | Manage startup package loads in your PowerShell profile | `doc/toolchain-profile.md` |
-| `cluster create` / `init` / `list` / `status` / `kubeconfig` / `delete` | Manage local clusters and natively bootstrap Toolchain deployment infrastructure | `doc/toolchain-cluster.md` |
+| `cluster create` / `init` / `list` / `status` / `kubeconfig` / `use` / `current` / `delete` | Manage, select, and natively bootstrap local Toolchain clusters | `doc/toolchain-cluster.md` |
 | `k9s` | Launch K9s against the current context or a selected kubeconfig | `doc/toolchain-k9s.md` |
 | `doctor` | Print diagnostics for your Toolchain setup | `doc/toolchain-doctor.md` |
 | `help` | Show CLI help | `doc/toolchain-help.md` |

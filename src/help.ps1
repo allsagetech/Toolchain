@@ -210,6 +210,8 @@ function Get-ToolchainHelpTopics {
 			'list          List managed clusters.',
 			'status        Show one managed cluster and its runtime status.',
 			'kubeconfig    Return a managed kubeconfig path or contents.',
+			'use           Select a managed cluster for the current PowerShell process.',
+			'current       Print the selected Toolchain-managed cluster.',
 			'delete        Delete a managed cluster and its local state.'
 		) `
 		-Examples @('tlc cluster create help', 'tlc cluster init -Confirm', 'tlc cluster list') `
@@ -263,8 +265,20 @@ function Get-ToolchainHelpTopics {
 		-Description 'Returns the managed kubeconfig path or its raw contents.' `
 		-Usage @('tlc cluster kubeconfig NAME [-Raw]') `
 		-Options @('-Raw    Return kubeconfig file contents instead of its path.') `
-		-Examples @('tlc cluster kubeconfig dev', '$env:KUBECONFIG = tlc cluster kubeconfig dev', 'tlc cluster kubeconfig dev -Raw') `
-		-Notes @('Toolchain does not merge this file into the default kubeconfig or switch contexts.')
+		-Examples @('tlc cluster kubeconfig dev', 'tlc cluster kubeconfig dev -Raw') `
+		-Notes @("Use 'tlc cluster use NAME' to select this file for the current PowerShell process.")
+	$topics.'cluster use' = New-ToolchainHelpTopic `
+		-Description 'Selects a Toolchain-managed cluster for commands in the current PowerShell process.' `
+		-Usage @('tlc cluster use NAME [-PassThru]') `
+		-Options @('-PassThru    Return the selected cluster context object.') `
+		-Examples @('tlc cluster use dev', 'kubectl get nodes') `
+		-Notes @('Sets KUBECONFIG to the isolated managed kubeconfig. It does not merge or modify the default Kubernetes configuration file.', 'The selection lasts only for the current PowerShell process and its child processes.')
+	$topics.'cluster current' = New-ToolchainHelpTopic `
+		-Description 'Prints the Toolchain-managed cluster selected by KUBECONFIG.' `
+		-Usage @('tlc cluster current [-PassThru]') `
+		-Options @('-PassThru    Return the cluster name, provider, and kubeconfig path as an object.') `
+		-Examples @('tlc cluster current', 'tlc cluster current -PassThru') `
+		-Notes @('Returns an error when KUBECONFIG is unset, contains multiple files, or points outside Toolchain-managed cluster storage.')
 	$topics.'cluster delete' = New-ToolchainHelpTopic `
 		-Description 'Deletes a managed provider cluster and then removes its Toolchain state.' `
 		-Usage @('tlc cluster delete NAME') `
