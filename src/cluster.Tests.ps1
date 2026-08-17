@@ -11,7 +11,7 @@ BeforeAll {
 	function ResolvePackage { param([string]$Ref) }
 	function LoadPackage { param($Pkg) }
 	function Invoke-ToolchainClusterInit {
-		param($Name,$Kubeconfig,[switch]$Confirm,$Components,[switch]$PromptForComponents,$AgentMutationPolicy,$AgentImage,$RegistryImage,$GitImage,$StorageClass,$RegistryStorage,$GitStorage,$RegistryNodePort,$WaitSeconds,[switch]$PassThru)
+		param($Name,$Kubeconfig,[switch]$Confirm,$Components,[switch]$PromptForComponents,$AgentMutationPolicy,$AgentImage,[switch]$BuildLocalAgent,$RegistryImage,$GitImage,$StorageClass,$RegistryStorage,$GitStorage,$RegistryNodePort,$WaitSeconds,[switch]$PassThru)
 	}
 
 	function New-TestClusterProcessResult {
@@ -29,10 +29,6 @@ BeforeAll {
 }
 
 Describe 'Toolchain cluster validation' {
-	BeforeEach {
-		Mock Publish-ToolchainLocalAgentImage { 'toolchain-agent:2.4.0-local-test' }
-	}
-
 	It 'accepts portable DNS-label cluster names' {
 		{ Assert-ToolchainClusterName -Name 'dev-1' } | Should -Not -Throw
 	}
@@ -126,22 +122,20 @@ Describe 'Toolchain cluster validation' {
 	It 'routes native cluster initialization without invoking a provider' {
 		Mock Invoke-ToolchainClusterInit { 'initialized' }
 		Invoke-ToolchainCluster -Command init -Name dev -Confirm -Components git-server -AgentMutationPolicy labeled -PassThru | Should -Be 'initialized'
-		Should -Invoke Publish-ToolchainLocalAgentImage -Times 1 -Exactly -ParameterFilter { $Name -eq 'dev' }
 		Should -Invoke Invoke-ToolchainClusterInit -Times 1 -Exactly -ParameterFilter {
 			$Name -eq 'dev' -and $Confirm -and $Components -contains 'git-server' -and $AgentMutationPolicy -eq 'labeled' -and
-			$AgentImage -eq 'toolchain-agent:2.4.0-local-test' -and $PassThru
+			-not $AgentImage -and $BuildLocalAgent -and $PassThru
 		}
 	}
 
-	It 'uses the selected managed cluster for initialization and its local agent build' {
-		Mock Get-ToolchainCurrentClusterContext { [pscustomobject]@{ Name = 'dev'; Provider = 'k3s'; Kubeconfig = 'managed.yaml' } }
+	It 'uses the selected managed cluster for initialization' {
+		Mock Resolve-ToolchainCurrentClusterContext { [pscustomobject]@{ Name = 'dev'; Provider = 'k3s'; Kubeconfig = 'managed.yaml' } }
 		Mock Invoke-ToolchainClusterInit {}
 
 		Invoke-ToolchainCluster -Command init -Confirm -Components none
 
-		Should -Invoke Publish-ToolchainLocalAgentImage -Times 1 -Exactly -ParameterFilter { $Name -eq 'dev' }
 		Should -Invoke Invoke-ToolchainClusterInit -Times 1 -Exactly -ParameterFilter {
-			$Name -eq 'dev' -and $AgentImage -eq 'toolchain-agent:2.4.0-local-test'
+			$Name -eq 'dev' -and -not $AgentImage -and $BuildLocalAgent
 		}
 	}
 
@@ -150,8 +144,16 @@ Describe 'Toolchain cluster validation' {
 
 		Invoke-ToolchainCluster -Command init -Name dev -Confirm -Components none -AgentImage 'registry.example/agent:1'
 
-		Should -Invoke Publish-ToolchainLocalAgentImage -Times 0 -Exactly
-		Should -Invoke Invoke-ToolchainClusterInit -Times 1 -Exactly -ParameterFilter { $AgentImage -eq 'registry.example/agent:1' }
+		Should -Invoke Invoke-ToolchainClusterInit -Times 1 -Exactly -ParameterFilter {
+			$AgentImage -eq 'registry.example/agent:1' -and -not $BuildLocalAgent
+		}
+	}
+
+	It 'reports stopped K3s servers instead of treating any list row as running' {
+		Mock Get-ToolchainClusterExecutable { 'k3d.exe' }
+		Mock Invoke-ToolchainClusterProcess { New-TestClusterProcessResult -Output @('dev 0/1 0/0 false') }
+
+		Get-ToolchainClusterRuntimeStatus -State ([pscustomobject]@{ name = 'dev'; provider = 'k3s' }) | Should -Be 'Stopped'
 	}
 
 	It 'preserves interactive component selection when Components is omitted' {
@@ -201,6 +203,20 @@ Describe 'Toolchain local cluster agent image' {
 		}
 		Should -Invoke Invoke-ToolchainClusterProcess -Times 1 -Exactly -ParameterFilter {
 			$FilePath -eq 'k3d.exe' -and ($Arguments -join ' ') -eq 'image import toolchain-agent:2.4.0-local-test --cluster dev'
+		}
+	}
+
+	It 'refreshes a managed K3s kubeconfig from the live provider' {
+		$kubeconfig = Join-Path $TestDrive 'kubeconfig.yaml'
+		Mock Get-ToolchainClusterExecutable { 'k3d.exe' }
+		Mock Get-ToolchainClusterKubeconfigPath { $kubeconfig }
+		Mock Invoke-ToolchainClusterProcess { New-TestClusterProcessResult -Output @('apiVersion: v1', 'clusters: []') }
+
+		Sync-ToolchainClusterKubeconfig -State ([pscustomobject]@{ name = 'dev'; provider = 'k3s' })
+
+		Get-Content -LiteralPath $kubeconfig -Raw | Should -BeExactly "apiVersion: v1`nclusters: []`n"
+		Should -Invoke Invoke-ToolchainClusterProcess -Times 1 -Exactly -ParameterFilter {
+			$FilePath -eq 'k3d.exe' -and ($Arguments -join ' ') -eq 'kubeconfig get dev'
 		}
 	}
 }
@@ -353,6 +369,25 @@ Describe 'Toolchain cluster lifecycle' {
 		$current = Invoke-ToolchainCluster -Command current -PassThru
 		$current.Name | Should -Be 'qa'
 		$current.Kubeconfig | Should -BeExactly $env:KUBECONFIG
+	}
+
+	It 'automatically selects the only managed cluster when no context is set' {
+		$dev = Invoke-ToolchainCluster -Command create -Name dev -Provider kind
+
+		$env:KUBECONFIG | Should -BeExactly ([IO.Path]::GetFullPath($dev.Kubeconfig))
+		Remove-Item Env:KUBECONFIG
+		$current = Invoke-ToolchainCluster -Command current -PassThru
+		$current.Name | Should -Be 'dev'
+		$env:KUBECONFIG | Should -BeExactly ([IO.Path]::GetFullPath($dev.Kubeconfig))
+	}
+
+	It 'requires an explicit selection when multiple managed clusters exist' {
+		$null = Invoke-ToolchainCluster -Command create -Name dev -Provider kind
+		Remove-Item Env:KUBECONFIG
+		$null = Invoke-ToolchainCluster -Command create -Name qa -Provider kind
+
+		$env:KUBECONFIG | Should -BeNullOrEmpty
+		{ Invoke-ToolchainCluster -Command current } | Should -Throw '*cluster use NAME*'
 	}
 
 	It 'rejects unknown and non-managed cluster selections' {

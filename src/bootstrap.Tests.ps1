@@ -9,6 +9,8 @@ BeforeAll {
 	function Read-ToolchainClusterState { }
 	function Get-ToolchainClusterRuntimeStatus { }
 	function Get-ToolchainClusterKubeconfigPath { }
+	function Sync-ToolchainClusterKubeconfig { param($State) }
+	function Publish-ToolchainLocalAgentImage { param($Name) }
 	function Get-ToolchainClusterExecutable { }
 	function Invoke-ToolchainClusterProcess { }
 	function Write-ToolchainClusterTextFile { param($Path, $Content) [IO.File]::WriteAllText($Path, $Content) }
@@ -129,6 +131,8 @@ Describe 'Toolchain native cluster initialization' {
 		}
 		Mock Write-ToolchainInfo { }
 		Mock Select-ToolchainClusterInitComponents { }
+		Mock Sync-ToolchainClusterKubeconfig { }
+		Mock Publish-ToolchainLocalAgentImage { 'toolchain-agent:2.4.0-local-test' }
 	}
 
 	It 'requires explicit non-interactive confirmation before contacting a cluster' {
@@ -145,7 +149,8 @@ Describe 'Toolchain native cluster initialization' {
 		$script:appliedManifest | Should -Not -Match '(?i)zarf'
 		$result.Registry | Should -Be '127.0.0.1:31999'
 		$result.RegistryCredentialSecret | Should -Be 'toolchain-registry-credentials'
-		@($script:kubectlCalls).Count | Should -Be 9
+		@($script:kubectlCalls).Count | Should -Be 10
+		@($script:kubectlCalls | Where-Object { $_.Arguments -contains '--raw=/readyz' }).Count | Should -Be 1
 		($script:kubectlCalls | Where-Object { $_.Arguments -contains 'apply' }).Arguments | Should -Contain '--server-side'
 		$script:appliedManifest | Should -Match ([regex]::Escape('docker.io/example:1'))
 		@($script:kubectlCalls | Where-Object { $_.Arguments -contains 'restart' }).Count | Should -Be 1
@@ -171,7 +176,35 @@ Describe 'Toolchain native cluster initialization' {
 		$script:appliedManifest | Should -Match 'name: toolchain-git'
 		@($script:kubectlCalls | Where-Object { $_.Arguments -contains 'deployment/toolchain-git' }).Count | Should -Be 1
 		foreach ($call in $script:kubectlCalls) { $call.Arguments | Should -Contain '--kubeconfig' }
+		Should -Invoke Sync-ToolchainClusterKubeconfig -Times 1 -Exactly
 		Should -Invoke Select-ToolchainClusterInitComponents -Times 0 -Exactly
+	}
+
+	It 'builds the local agent only after a managed cluster passes API preflight' {
+		$script:managedKubeconfig = Join-Path $TestDrive 'kubeconfig.yaml'
+		[IO.File]::WriteAllText($script:managedKubeconfig, "apiVersion: v1`nclusters:`n- cluster:`n    server: https://127.0.0.1:6443`n")
+		Mock Read-ToolchainClusterState { [pscustomobject]@{ name='dev'; provider='k3s' } }
+		Mock Get-ToolchainClusterRuntimeStatus { 'Running' }
+		Mock Get-ToolchainClusterKubeconfigPath { $script:managedKubeconfig }
+
+		Invoke-ToolchainClusterInit -Name dev -Confirm -Components none -BuildLocalAgent
+
+		Should -Invoke Publish-ToolchainLocalAgentImage -Times 1 -Exactly -ParameterFilter { $Name -eq 'dev' }
+		$script:appliedManifest | Should -Match 'toolchain-agent:2\.4\.0-local-test'
+	}
+
+	It 'reports the managed endpoint and underlying kubectl API failure' {
+		$kubeconfig = Join-Path $TestDrive 'unreachable.yaml'
+		[IO.File]::WriteAllText($kubeconfig, "apiVersion: v1`nclusters:`n- cluster:`n    server: https://127.0.0.1:65535`n")
+		Mock Invoke-ToolchainClusterProcess {
+			param($FilePath, $Arguments, [switch]$AllowFailure)
+			if ($Arguments -contains '--raw=/readyz') { throw 'dial tcp 127.0.0.1:65535: connect refused' }
+			return [pscustomobject]@{ ExitCode=0; Output=@('ok') }
+		}
+
+		{ Invoke-ToolchainClusterInit -Kubeconfig $kubeconfig -Confirm -Components none -AgentImage agent:1 } |
+			Should -Throw '*API preflight*https://127.0.0.1:65535*dial tcp*'
+		Should -Invoke Publish-ToolchainLocalAgentImage -Times 0 -Exactly
 	}
 
 	It 'supports an explicit non-interactive no-components selection' {

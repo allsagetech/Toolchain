@@ -80,11 +80,14 @@ toolchain cluster use dev
 kubectl get nodes
 ```
 
-Switch between managed clusters by running `use` again. `current` prints the
-selected Toolchain cluster name; add `-PassThru` to return its name, provider,
-and kubeconfig path as an object. Both commands reject missing or tampered
-managed state. `current` also rejects an unset, external, or multi-file
-`KUBECONFIG` because those values do not identify exactly one managed cluster.
+When the first and only managed cluster is created, Toolchain selects it
+automatically. `current` also selects that sole cluster if `KUBECONFIG` is
+unset, including in a new PowerShell session. Switch between managed clusters
+by running `use`. `current` prints the selected Toolchain cluster name; add
+`-PassThru` to return its name, provider, and kubeconfig path as an object. Both
+commands reject missing or tampered managed state. `current` rejects an
+external or multi-file `KUBECONFIG` and requires `use` when more than one
+managed cluster exists without a selection.
 
 The selection is intentionally session-scoped. Toolchain does not merge or
 modify `$HOME/.kube/config`, and a new PowerShell process starts with its normal
@@ -136,7 +139,10 @@ configuration, and Toolchain admission agent. `-Confirm` is required so
 cluster changes are explicitly acknowledged. A managed cluster name and an
 explicit `-Kubeconfig` are mutually exclusive; with neither, kubectl's current
 context is used. If `tlc cluster use` selected a managed cluster, `init` detects
-that selection and treats it as the managed cluster target.
+that selection and treats it as the managed cluster target. When no context is
+selected and exactly one managed cluster exists, `init` selects it
+automatically. Before applying resources, K3s initialization refreshes the
+managed kubeconfig from k3d and checks the Kubernetes `/readyz` endpoint.
 
 For a Toolchain-managed kind, K3s, or k0s cluster, initialization builds the
 admission agent from the source bundled with the installed module and imports

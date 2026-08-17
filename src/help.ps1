@@ -274,11 +274,11 @@ function Get-ToolchainHelpTopics {
 		-Examples @('tlc cluster use dev', 'kubectl get nodes') `
 		-Notes @('Sets KUBECONFIG to the isolated managed kubeconfig. It does not merge or modify the default Kubernetes configuration file.', 'The selection lasts only for the current PowerShell process and its child processes.')
 	$topics.'cluster current' = New-ToolchainHelpTopic `
-		-Description 'Prints the Toolchain-managed cluster selected by KUBECONFIG.' `
+		-Description 'Prints the selected Toolchain-managed cluster, automatically selecting the only managed cluster when unambiguous.' `
 		-Usage @('tlc cluster current [-PassThru]') `
 		-Options @('-PassThru    Return the cluster name, provider, and kubeconfig path as an object.') `
 		-Examples @('tlc cluster current', 'tlc cluster current -PassThru') `
-		-Notes @('Returns an error when KUBECONFIG is unset, contains multiple files, or points outside Toolchain-managed cluster storage.')
+		-Notes @('When KUBECONFIG is unset and exactly one managed cluster exists, selects that cluster for the current PowerShell process.', 'Returns an error for an external or multi-file KUBECONFIG, or when multiple managed clusters exist without a selection.')
 	$topics.'cluster delete' = New-ToolchainHelpTopic `
 		-Description 'Deletes a managed provider cluster and then removes its Toolchain state.' `
 		-Usage @('tlc cluster delete NAME') `

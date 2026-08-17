@@ -91,6 +91,10 @@ tlc cluster current
 kubectl get nodes
 ```
 
+When exactly one managed cluster exists and `KUBECONFIG` is unset, Toolchain
+selects it automatically. Use `cluster use` only when switching among multiple
+managed clusters or away from an explicitly selected context.
+
 Bootstrap Toolchain's registry, state, and exact-match admission agent into that
 cluster—or any explicit kubeconfig—without another bootstrap CLI. For managed
 clusters, Toolchain builds the admission agent locally and imports it into the

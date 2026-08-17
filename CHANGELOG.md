@@ -23,6 +23,7 @@
 ### Fixed
 
 - Build and import the admission agent locally when initializing managed clusters, removing the dependency on an unpublished versioned agent image.
+- Automatically select a sole managed cluster, refresh K3s kubeconfigs before initialization, distinguish stopped K3s servers, and report actionable Kubernetes API preflight failures.
 
 ## 2.4.0 - 2026-08-15
 

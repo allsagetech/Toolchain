@@ -54,12 +54,25 @@ function Resolve-ToolchainBootstrapKubeconfig {
 		if (-not $state) { throw "Toolchain cluster not found: $Name" }
 		$status = Get-ToolchainClusterRuntimeStatus -State $state
 		if ($status -ne 'Running') { throw "Toolchain cluster '$Name' is not running (status: $status)" }
+		Sync-ToolchainClusterKubeconfig -State $state
 		$Kubeconfig = Get-ToolchainClusterKubeconfigPath -Name $Name
 	}
 	if (-not $Kubeconfig) { return $null }
 	$path = [IO.Path]::GetFullPath($Kubeconfig)
 	if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "cluster kubeconfig is not a file: $path" }
 	return $path
+}
+
+function Get-ToolchainBootstrapApiServer {
+	param([string]$Kubeconfig)
+
+	if (-not $Kubeconfig -or -not (Test-Path -LiteralPath $Kubeconfig -PathType Leaf)) { return 'the current Kubernetes context' }
+	foreach ($line in [IO.File]::ReadLines($Kubeconfig)) {
+		if ($line -match '^\s*server:\s*(?<Server>\S+)\s*$') {
+			return $Matches.Server.Trim('''', '"')
+		}
+	}
+	return "the API endpoint in '$Kubeconfig'"
 }
 
 function Invoke-ToolchainBootstrapKubectl {
@@ -770,6 +783,7 @@ function Invoke-ToolchainClusterInit {
 		[switch]$PromptForComponents,
 		[ValidateSet('all', 'labeled')][string]$AgentMutationPolicy = 'all',
 		[string]$AgentImage = (Get-ToolchainBootstrapAgentImage),
+		[switch]$BuildLocalAgent,
 		[string]$RegistryImage = $script:ToolchainRegistryImage,
 		[string]$GitImage = $script:ToolchainGitImage,
 		[string]$StorageClass,
@@ -790,7 +804,18 @@ function Invoke-ToolchainClusterInit {
 	$componentsNormalized = @($componentsRequested | Where-Object { $_ -ne 'none' })
 	$kubeconfigPath = Resolve-ToolchainBootstrapKubeconfig -Name $Name -Kubeconfig $Kubeconfig
 	$kubectl = Get-ToolchainClusterExecutable -Name kubectl -Package kubectl -InstallHint 'Install kubectl and ensure its executable is available on PATH.'
+	$apiServer = Get-ToolchainBootstrapApiServer -Kubeconfig $kubeconfigPath
+	$target = if ($Name) { "Toolchain cluster '$Name'" } else { 'the selected Kubernetes context' }
+	try {
+		$null = Invoke-ToolchainBootstrapKubectl -Kubectl $kubectl -Kubeconfig $kubeconfigPath -Arguments @('get', '--request-timeout=10s', '--raw=/readyz')
+	} catch {
+		throw "Kubernetes API preflight failed for $target at $apiServer. Confirm the provider is running and the endpoint is reachable. kubectl reported: $($_.Exception.Message)"
+	}
 	$null = Invoke-ToolchainBootstrapKubectl -Kubectl $kubectl -Kubeconfig $kubeconfigPath -Arguments @('get', '--request-timeout=10s', 'namespace', 'kube-system', '-o', 'name')
+	if ($BuildLocalAgent) {
+		if (-not $Name) { throw 'local agent builds require a Toolchain-managed cluster name' }
+		$AgentImage = Publish-ToolchainLocalAgentImage -Name $Name
+	}
 	$mappingResult = Invoke-ToolchainBootstrapKubectl -Kubectl $kubectl -Kubeconfig $kubeconfigPath -Arguments @(
 		'get', 'configmap/toolchain-image-mappings', '-n', 'toolchain-system', '--ignore-not-found', '-o', 'jsonpath={.data.mappings\.json}'
 	)

@@ -427,6 +427,32 @@ function Get-ToolchainCurrentClusterContext {
 	return $null
 }
 
+function Resolve-ToolchainCurrentClusterContext {
+	param([switch]$SelectSingle)
+
+	$context = Get-ToolchainCurrentClusterContext
+	if ($context -or -not $SelectSingle -or -not [string]::IsNullOrWhiteSpace($env:KUBECONFIG)) { return $context }
+	$states = @(Get-ToolchainClusterStates)
+	if ($states.Count -ne 1) { return $null }
+	$context = Resolve-ToolchainClusterContext -Name ([string]$states[0].name)
+	$env:KUBECONFIG = $context.Kubeconfig
+	Write-ToolchainInfo "Selected the only Toolchain-managed cluster '$($context.Name)' for this PowerShell process."
+	return $context
+}
+
+function Sync-ToolchainClusterKubeconfig {
+	param([Parameter(Mandatory)]$State)
+
+	if ([string]$State.provider -ne 'k3s') { return }
+	$name = [string]$State.name
+	$k3d = Get-ToolchainClusterExecutable -Name 'k3d' -Package 'k3d' -InstallHint 'Install k3d to refresh this cluster kubeconfig.'
+	$result = Invoke-ToolchainClusterProcess -FilePath $k3d -Arguments @('kubeconfig', 'get', $name)
+	$content = ($result.Output -join "`n").Trim()
+	if (-not $content) { throw "k3d returned an empty kubeconfig for cluster '$name'" }
+	$path = Get-ToolchainClusterKubeconfigPath -Name $name
+	Write-ToolchainClusterTextFile -Path $path -Content ($content + "`n")
+}
+
 function New-ToolchainKindCluster {
 	param(
 		[Parameter(Mandatory)][string]$Name,
@@ -583,7 +609,15 @@ function Get-ToolchainClusterRuntimeStatus {
 				$k3d = Get-ToolchainClusterExecutable -Name 'k3d' -Package 'k3d' -InstallHint 'Install k3d to inspect this cluster.'
 				$result = Invoke-ToolchainClusterProcess -FilePath $k3d -Arguments @('cluster', 'list', '--no-headers') -AllowFailure
 				if ($result.ExitCode -ne 0) { return 'Unknown' }
-				if (@($result.Output | Where-Object { ($_ -split '\s+')[0] -ceq [string]$State.name }).Count -gt 0) { return 'Running' }
+				$row = $result.Output | Where-Object { ($_ -split '\s+')[0] -ceq [string]$State.name } | Select-Object -First 1
+				if ($row) {
+					$fields = @($row.Trim() -split '\s+')
+					if ($fields.Count -gt 1 -and $fields[1] -match '^(?<Ready>\d+)/(?<Total>\d+)$') {
+						if ([int]$Matches.Total -gt 0 -and [int]$Matches.Ready -eq [int]$Matches.Total) { return 'Running' }
+						return 'Stopped'
+					}
+					return 'Unknown'
+				}
 				return 'Missing'
 			}
 			'k0s' {
@@ -696,7 +730,7 @@ function Invoke-ToolchainCluster {
 		'init' {
 			if (-not $Confirm) { throw "cluster init changes Kubernetes cluster state; rerun with -Confirm after reviewing 'tlc cluster init help'" }
 			if (-not $Name -and -not $Kubeconfig) {
-				$currentContext = Get-ToolchainCurrentClusterContext
+				$currentContext = Resolve-ToolchainCurrentClusterContext -SelectSingle
 				if ($currentContext) { $Name = $currentContext.Name }
 			}
 			$params = @{
@@ -716,7 +750,7 @@ function Invoke-ToolchainCluster {
 			if ($PSBoundParameters.ContainsKey('AgentImage')) {
 				$params.AgentImage = $AgentImage
 			} elseif ($Name) {
-				$params.AgentImage = Publish-ToolchainLocalAgentImage -Name $Name
+				$params.BuildLocalAgent = $true
 			}
 			if ($RegistryImage) { $params.RegistryImage = $RegistryImage }
 			if ($GitImage) { $params.GitImage = $GitImage }
@@ -759,6 +793,9 @@ function Invoke-ToolchainCluster {
 				Write-ToolchainClusterState -Name $Name -Provider $Provider -Servers $Servers -Workers $Workers -Image $Image -Engine $containerEngine.Name
 				$state = Read-ToolchainClusterState -Name $Name
 				Write-ToolchainInfo "Created $Provider cluster '$Name'. Kubeconfig: $kubeconfig"
+				if ([string]::IsNullOrWhiteSpace($env:KUBECONFIG)) {
+					$null = Resolve-ToolchainCurrentClusterContext -SelectSingle
+				}
 				return (ConvertTo-ToolchainClusterObject -State $state -Status 'Running')
 			} catch {
 				if ($created) {
@@ -801,7 +838,7 @@ function Invoke-ToolchainCluster {
 		}
 		'current' {
 			if ($Name) { throw 'cluster current does not accept a cluster name' }
-			$context = Get-ToolchainCurrentClusterContext
+			$context = Resolve-ToolchainCurrentClusterContext -SelectSingle
 			if (-not $context) {
 				if ([string]::IsNullOrWhiteSpace($env:KUBECONFIG)) {
 					throw "no Toolchain-managed cluster is selected; run 'tlc cluster use NAME'"
