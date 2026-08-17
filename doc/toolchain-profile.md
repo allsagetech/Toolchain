@@ -10,9 +10,10 @@ Creates or manages Toolchain package loads in the current user's
 `Microsoft.PowerShell_profile.ps1` for the current PowerShell host.
 
 `profile init` creates the profile and its parent directory only when they are
-missing. A new profile sets the current-user execution policy to `Unrestricted`
-and prints a green `Toolchain by AllSageTech` heading when PowerShell starts. An existing
-profile is never overwritten by `profile init`.
+missing. On Windows, a new profile sets the current-user execution policy to
+`Unrestricted`; every platform prints a green `Toolchain by AllSageTech` heading
+when PowerShell starts. Linux and macOS omit the Windows-only execution-policy
+line. An existing profile is never overwritten by `profile init`.
 
 ## Usage
 

@@ -167,6 +167,11 @@ function ResolveDockerRef {
 	}
   if ($want.ContainsKey('Raw') -and $want.Raw) {
     $raw = [string]$want.Raw
+	if ((Get-Command Test-ToolchainConstraintExpression -ErrorAction SilentlyContinue) -and (Test-ToolchainConstraintExpression -Value $raw)) {
+		$selectedVersion = Select-ToolchainPackageVersion -Name $Pkg.Package -Constraints @($raw) -Catalog $docker
+		$Pkg.Version = $selectedVersion
+		return BuildRemoteRef $Pkg.Package $selectedVersion $legacy
+	}
     $found = FindFirstTag @($raw, "v$raw")
     if (-not $found -and $raw -match '^v(.+)$') {
       $found = FindFirstTag @($Matches[1])

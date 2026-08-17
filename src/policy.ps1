@@ -14,7 +14,7 @@ function GetToolchainPolicyPath {
 	if ($env:ToolchainPolicyPath) { return $env:ToolchainPolicyPath }
 	if ($env:TOOLCHAIN_POLICY_PATH) { return $env:TOOLCHAIN_POLICY_PATH }
 
-	$cfg = FindConfig
+	$cfg = if (Get-Command Find-ToolchainProjectConfig -ErrorAction SilentlyContinue) { Find-ToolchainProjectConfig } else { FindConfig }
 	$base = if ($cfg) { Split-Path -Parent $cfg } else { (Get-Location).Path }
 	return (Join-Path $base 'Toolchain.policy.json')
 }

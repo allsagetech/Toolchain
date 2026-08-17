@@ -41,11 +41,14 @@ function Get-ToolchainNestedCompletionValues {
 		'cluster' {
 			if ($previous -eq '-Provider') { return @('kind','k0s','k3s') | Where-Object { $_ -like "$WordToComplete*" } }
 			if ($previous -eq '-Engine') { return @('auto','docker','podman','nerdctl') | Where-Object { $_ -like "$WordToComplete*" } }
+			if ($previous -eq '-AgentMutationPolicy') { return @('all','labeled') | Where-Object { $_ -like "$WordToComplete*" } }
+			if ($previous -eq '-Components') { return @('git-server') | Where-Object { $_ -like "$WordToComplete*" } }
 			if ($Elements.Count -le 2 -or ($Elements.Count -eq 3 -and $WordToComplete)) {
-				return @('create','list','status','kubeconfig','delete') + $helpValues | Where-Object { $_ -like "$WordToComplete*" }
+				return @('create','init','list','status','kubeconfig','delete') + $helpValues | Where-Object { $_ -like "$WordToComplete*" }
 			}
 			$options = switch ($Elements[2]) {
 				'create' { @('-Provider','-Engine','-Servers','-Workers','-ApiPort','-WaitSeconds','-Image','-Config') }
+				'init' { @('-Kubeconfig','-Confirm','-Components','-AgentMutationPolicy','-StorageClass','-RegistryStorage','-GitStorage','-RegistryNodePort','-WaitSeconds','-PassThru') }
 				'list' { @('-Provider') }
 				'kubeconfig' { @('-Raw') }
 				default { @() }
@@ -59,17 +62,20 @@ function Get-ToolchainNestedCompletionValues {
 		'doctor' { return @('-Strict','-PassThru','-Json','-Refresh') + $helpValues | Where-Object { $_ -like "$WordToComplete*" } }
 		'lock' { return @('-Packages','-Path','-Update') + $helpValues | Where-Object { $_ -like "$WordToComplete*" } }
 		'restore' { return @('-Path') + $helpValues | Where-Object { $_ -like "$WordToComplete*" } }
+		'sync' { return @('-Path','-Update','-Frozen','-NoRestore','-Activate','-PassThru') + $helpValues | Where-Object { $_ -like "$WordToComplete*" } }
+		'activate' { return @('-Path','-NoSync','-PassThru') + $helpValues | Where-Object { $_ -like "$WordToComplete*" } }
+		'deactivate' { return @('-PassThru') + $helpValues | Where-Object { $_ -like "$WordToComplete*" } }
 		'audit' { return @('-Path','-Refresh','-VerifySignatures','-Fix','-WhatIf','-Confirm','-Strict','-Json') + $helpValues | Where-Object { $_ -like "$WordToComplete*" } }
 		'verify' { return @('-Json') + $helpValues | Where-Object { $_ -like "$WordToComplete*" } }
 		'help' {
-			return @('version','remote','list','load','pull','exec','run','remove','save','prune','update','init','lock','restore','verify','audit','profile','cluster','k9s','doctor') |
+			return @('version','remote','list','load','pull','exec','run','remove','save','prune','update','init','lock','restore','sync','activate','deactivate','verify','audit','profile','cluster','k9s','doctor') |
 				Where-Object { $_ -like "$WordToComplete*" }
 		}
 	}
 	return $helpValues | Where-Object { $_ -like "$WordToComplete*" }
 }
 
-$script:ToolchainCompletionCommands = @('version','remote','list','load','pull','exec','run','remove','save','prune','update','init','lock','restore','verify','audit','profile','cluster','k9s','doctor','help')
+$script:ToolchainCompletionCommands = @('version','remote','list','load','pull','exec','run','remove','save','prune','update','init','lock','restore','sync','activate','deactivate','verify','audit','profile','cluster','k9s','doctor','help')
 
 function Register-ToolchainArgumentCompleters {
 	Register-ArgumentCompleter -CommandName Invoke-Toolchain,toolchain,tool,tlc -ParameterName Command -ScriptBlock {

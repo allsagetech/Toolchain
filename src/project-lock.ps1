@@ -7,7 +7,7 @@ SPDX-License-Identifier: MPL-2.0
 function Get-ToolchainLockPath {
 	param([string]$Path)
 	if ($Path) { return [IO.Path]::GetFullPath($Path) }
-	$config = FindConfig
+	$config = if (Get-Command Find-ToolchainProjectConfig -ErrorAction SilentlyContinue) { Find-ToolchainProjectConfig } else { FindConfig }
 	$root = if ($config) { Split-Path -Parent $config } else { (Get-Location).Path }
 	return (Join-Path $root 'Toolchain.lock.json')
 }
@@ -36,11 +36,20 @@ function Invoke-ToolchainLock {
 	param(
 		[string[]]$Packages,
 		[string]$Path,
-		[string[]]$Update
+		[string[]]$Update,
+		[string]$ProjectDigest
 	)
 
-	if (-not $Packages) { $Packages = GetConfigPackages }
-	if (-not $Packages) { throw 'no packages provided and no Toolchain.ps1 package list was found' }
+	if (-not $Packages) {
+		if (Get-Command Read-ToolchainProject -ErrorAction SilentlyContinue) {
+			$project = Read-ToolchainProject
+			$Packages = @($project.Packages)
+			$ProjectDigest = [string]$project.Digest
+		} else {
+			$Packages = GetConfigPackages
+		}
+	}
+	if (-not $Packages) { throw 'no packages provided and no Toolchain project package list was found' }
 	$lockPath = Get-ToolchainLockPath -Path $Path
 	$existing = @{}
 	if ($Update -and (Test-Path -LiteralPath $lockPath -PathType Leaf)) {
@@ -57,6 +66,7 @@ function Invoke-ToolchainLock {
 		generatedAt = [datetime]::UtcNow.ToString('o')
 		registry = GetRegistryBaseUrl
 		repository = GetRegistryRepoName
+		projectDigest = $ProjectDigest
 		packages = @($entries)
 	}
 	$parent = Split-Path -Parent $lockPath
@@ -81,6 +91,7 @@ function Read-ToolchainLock {
 	if (-not (Test-Path -LiteralPath $lockPath -PathType Leaf)) { throw "Toolchain lock file not found: $lockPath" }
 	$document = Get-Content -LiteralPath $lockPath -Raw | ConvertFrom-Json
 	if ([int]$document.schemaVersion -ne 1 -or $null -eq $document.packages) { throw "invalid Toolchain lock file: $lockPath" }
+	if ($document.projectDigest -and [string]$document.projectDigest -notmatch '^sha256:[0-9a-fA-F]{64}$') { throw "invalid project digest in Toolchain lock file: $lockPath" }
 	foreach ($entry in @($document.packages)) {
 		if ([string]$entry.package -notmatch '^[a-zA-Z0-9][a-zA-Z0-9._-]*$' -or [string]$entry.digest -notmatch '^sha256:[0-9a-fA-F]{64}$') {
 			throw "invalid package entry in Toolchain lock file: $lockPath"

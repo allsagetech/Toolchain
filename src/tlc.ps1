@@ -9,9 +9,12 @@ SPDX-License-Identifier: MPL-2.0
 . $PSScriptRoot\maintenance.ps1
 . $PSScriptRoot\profile.ps1
 . $PSScriptRoot\cluster.ps1
+. $PSScriptRoot\bootstrap.ps1
 . $PSScriptRoot\k9s.ps1
 . $PSScriptRoot\health.ps1
+. $PSScriptRoot\project.ps1
 . $PSScriptRoot\project-lock.ps1
+. $PSScriptRoot\environment.ps1
 . $PSScriptRoot\audit.ps1
 . $PSScriptRoot\help.ps1
 . $PSScriptRoot\completion.ps1
@@ -30,7 +33,7 @@ function Invoke-Toolchain {
 	[CmdletBinding()]
 	param (
 		[Parameter(Mandatory)]
-		[ValidateSet('version', 'v', 'remote', 'list', 'load', 'pull', 'exec', 'run', 'remove', 'rm', 'save', 'prune', 'update', 'init', 'lock', 'restore', 'verify', 'audit', 'profile', 'cluster', 'k9s', 'doctor', 'help', 'h')]
+		[ValidateSet('version', 'v', 'remote', 'list', 'load', 'pull', 'exec', 'run', 'remove', 'rm', 'save', 'prune', 'update', 'init', 'lock', 'restore', 'sync', 'activate', 'deactivate', 'verify', 'audit', 'profile', 'cluster', 'k9s', 'doctor', 'help', 'h')]
 		[string]$Command,
 		[Parameter(ValueFromRemainingArguments)]
 		[object[]]$ArgumentList
@@ -117,6 +120,18 @@ function Invoke-Toolchain {
 				$params, $remaining = ResolveParameters 'Invoke-ToolchainRestore' $ArgumentList
 				Invoke-ToolchainRestore @params @remaining
 			}
+			'sync' {
+				$params, $remaining = ResolveParameters 'Invoke-ToolchainSync' $ArgumentList
+				Invoke-ToolchainSync @params @remaining
+			}
+			'activate' {
+				$params, $remaining = ResolveParameters 'Invoke-ToolchainActivate' $ArgumentList
+				Invoke-ToolchainActivate @params @remaining
+			}
+			'deactivate' {
+				$params, $remaining = ResolveParameters 'Invoke-ToolchainDeactivate' $ArgumentList
+				Invoke-ToolchainDeactivate @params @remaining
+			}
 			'verify' {
 				$params, $remaining = ResolveParameters 'Invoke-ToolchainVerify' $ArgumentList
 				if ($remaining) { $params.Packages = @($remaining | ForEach-Object { [string]$_ }) }
@@ -149,11 +164,10 @@ function Invoke-Toolchain {
 }
 
 function GetConfigPackages {
-	$cfg = FindConfig
-	if ($cfg) {
-		. $cfg
-	}
-	[string[]]$ToolchainPackages
+	$config = Find-ToolchainProjectConfig
+	if (-not $config) { return $null }
+	$project = Read-ToolchainProject -Path $config
+	return @($project.Packages)
 }
 
 function ResolveParameters {
@@ -298,8 +312,9 @@ function Invoke-ToolchainRun {
 
 	$params, $remaining = ResolveParameters $toolchainFnName $ArgumentList
 	$script = { & $fn @params @remaining }
-	if ($ToolchainPackages) {
-		Invoke-ToolchainExec -Packages $ToolchainPackages -ScriptBlock $script
+	$projectPackages = GetConfigPackages
+	if ($projectPackages) {
+		Invoke-ToolchainExec -Packages $projectPackages -ScriptBlock $script
 	} else {
 		& $script
 	}
@@ -412,16 +427,17 @@ function Invoke-ToolchainSave {
 function Invoke-ToolchainInit {
   [CmdletBinding()]
   param(
-    [switch]$Force
+    [switch]$Force,
+    [switch]$Legacy
   )
 
-  $cfgPath = Join-Path (Get-Location).Path 'Toolchain.ps1'
+  $cfgPath = Join-Path (Get-Location).Path $(if ($Legacy) { 'Toolchain.ps1' } else { 'toolchain.yaml' })
   if ((Test-Path -LiteralPath $cfgPath -PathType Leaf) -and (-not $Force)) {
-    Write-ToolchainInfo "Toolchain.ps1 already exists at $cfgPath (use -Force to overwrite)"
+    Write-ToolchainInfo "Toolchain project already exists at $cfgPath (use -Force to overwrite)"
     return
   }
 
-  $content = @'
+  $content = if ($Legacy) { @'
 # Toolchain project file
 #
 # Set the packages you want in this repo:
@@ -438,6 +454,13 @@ $ToolchainPackages = @(
 # Example project command:
 # function ToolchainBuild { param([string]$Configuration='Release') Write-Host "Build $Configuration" }
 '@
+  } else { @'
+schemaVersion: 1
+packages:
+  - name: git
+    version: latest
+'@
+  }
 
   Set-Content -LiteralPath $cfgPath -Value $content -Encoding utf8
   Write-ToolchainInfo "Wrote $cfgPath"
@@ -458,6 +481,9 @@ function Invoke-ToolchainDoctor {
   $registry = $null
   $repository = $null
   $tagCount = $null
+  $platform = $null
+  $signatureVerification = $null
+  $credentialSource = $null
   $structured = $PassThru -or $Json
 
   try {
@@ -472,6 +498,11 @@ function Invoke-ToolchainDoctor {
   }
 
   $repoPath = GetToolchainRepo
+  try { $platform = "$(GetRegistryPlatformOs)/$(GetRegistryPlatformArch)" } catch { $errors += "Platform detection failed: $_" }
+  $signatureVerification = if ($repoPath) { 'offline-policy' } elseif (Get-ToolchainCosignVerifyEnabled) { 'required' } else { 'optional' }
+	if ($signatureVerification -eq 'required' -and -not (Get-Command cosign -CommandType Application -ErrorAction SilentlyContinue)) {
+		$errors += 'Cosign verification is required, but cosign was not found in PATH.'
+	}
   if ($repoPath) {
     if (-not $structured) { Write-ToolchainInfo "Offline repository: $repoPath" }
     if (-not (Test-Path -LiteralPath $repoPath -PathType Container)) {
@@ -480,6 +511,13 @@ function Invoke-ToolchainDoctor {
   } else {
     $registry = GetRegistryBaseUrl
     $repository = GetRegistryRepoName
+	if ($env:TOOLCHAIN_TOKEN) { $credentialSource = 'environment-token' }
+	else {
+		try {
+			$credential = Get-ToolchainRegistryCredential -RegistryUrl $registry
+			if ($credential) { $credentialSource = [string]$credential.Source }
+		} catch { $errors += "Registry credential discovery failed: $_" }
+	}
     if (-not $structured) {
       Write-ToolchainInfo "Registry: $registry"
       Write-ToolchainInfo "Repository: $repository"
@@ -500,6 +538,9 @@ function Invoke-ToolchainDoctor {
     OfflineRepository = $repoPath
     Registry = $registry
     Repository = $repository
+    Platform = $platform
+    SignatureVerification = $signatureVerification
+    CredentialSource = $credentialSource
     TagCount = $tagCount
     Errors = @($errors)
   }

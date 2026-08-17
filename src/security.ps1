@@ -41,10 +41,23 @@ function Invoke-ToolchainCommand {
 	}
 }
 
+function Test-ToolchainOfficialRepository {
+	try {
+		$hostName = ([Uri]::new((GetRegistryBaseUrl))).Host
+		$officialRegistry = $hostName -in @('registry-1.docker.io', 'index.docker.io')
+		$officialRepository = [string]::Equals((GetRegistryRepoName), 'allsagetech/toolchains', [StringComparison]::OrdinalIgnoreCase)
+		return ($officialRegistry -and $officialRepository)
+	} catch {
+		return $false
+	}
+}
+
 function Get-ToolchainCosignVerifyEnabled {
+	$explicit = [Environment]::GetEnvironmentVariable('TOOLCHAIN_COSIGN_VERIFY', [EnvironmentVariableTarget]::Process)
+	if (-not [string]::IsNullOrEmpty($explicit)) { return (Test-TruthyValue $explicit) }
 	if (Get-ToolchainPolicyRequireCosign) { return $true }
-	if (Test-TruthyValue $env:TOOLCHAIN_COSIGN_VERIFY) { return $true }
-	return $false
+	if (GetToolchainRepo) { return $false }
+	return (Test-ToolchainOfficialRepository)
 }
 
 function Get-ToolchainCosignKey {
@@ -70,8 +83,14 @@ function Invoke-ToolchainCosignVerify {
 	$cosignArgs = @('verify')
 	$key = Get-ToolchainCosignKey
 	if ($key) { $cosignArgs += @('--key', $key) }
-	if ($env:TOOLCHAIN_COSIGN_CERT_IDENTITY) { $cosignArgs += @('--certificate-identity', $env:TOOLCHAIN_COSIGN_CERT_IDENTITY) }
-	if ($env:TOOLCHAIN_COSIGN_OIDC_ISSUER) { $cosignArgs += @('--certificate-oidc-issuer', $env:TOOLCHAIN_COSIGN_OIDC_ISSUER) }
+	$identity = [string]$env:TOOLCHAIN_COSIGN_CERT_IDENTITY
+	$issuer = [string]$env:TOOLCHAIN_COSIGN_OIDC_ISSUER
+	if (-not $key -and -not $identity -and (Test-ToolchainOfficialRepository)) {
+		$identity = 'https://github.com/allsagetech/Toolchains/.github/workflows/build-push.yml@refs/heads/main'
+		$issuer = 'https://token.actions.githubusercontent.com'
+	}
+	if ($identity) { $cosignArgs += @('--certificate-identity', $identity) }
+	if ($issuer) { $cosignArgs += @('--certificate-oidc-issuer', $issuer) }
 	$cosignArgs += @($RepoDigestRef)
 
 	$null = Invoke-ToolchainCommand -File $cosign.Source -ArgumentList $cosignArgs -Quiet

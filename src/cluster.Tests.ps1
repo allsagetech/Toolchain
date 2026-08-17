@@ -10,6 +10,9 @@ BeforeAll {
 	. $PSCommandPath.Replace('.Tests.ps1', '.ps1')
 	function ResolvePackage { param([string]$Ref) }
 	function LoadPackage { param($Pkg) }
+	function Invoke-ToolchainClusterInit {
+		param($Name,$Kubeconfig,[switch]$Confirm,$Components,$AgentMutationPolicy,$AgentImage,$RegistryImage,$GitImage,$StorageClass,$RegistryStorage,$GitStorage,$RegistryNodePort,$WaitSeconds,[switch]$PassThru)
+	}
 
 	function New-TestClusterProcessResult {
 		param([int]$ExitCode = 0, [string[]]$Output = @())
@@ -113,6 +116,14 @@ Describe 'Toolchain cluster validation' {
 			Should -Invoke LoadPackage -Times 1
 		} finally {
 			$env:TOOLCHAIN_CATALOG_REFRESH = $previousCatalogRefresh
+		}
+	}
+
+	It 'routes native cluster initialization without invoking a provider' {
+		Mock Invoke-ToolchainClusterInit { 'initialized' }
+		Invoke-ToolchainCluster -Command init -Name dev -Confirm -Components git-server -AgentMutationPolicy labeled -PassThru | Should -Be 'initialized'
+		Should -Invoke Invoke-ToolchainClusterInit -Times 1 -Exactly -ParameterFilter {
+			$Name -eq 'dev' -and $Confirm -and $Components -contains 'git-server' -and $AgentMutationPolicy -eq 'labeled' -and $PassThru
 		}
 	}
 }

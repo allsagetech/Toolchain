@@ -6,26 +6,27 @@ SPDX-License-Identifier: MPL-2.0
 
 # init
 
-Writes a starter `Toolchain.ps1` in the current directory.
+Writes a starter declarative `toolchain.yaml` in the current directory.
 
-Toolchain uses `Toolchain.ps1` as the *project file*:
+Toolchain uses `toolchain.yaml` as the project manifest:
 
-- `$ToolchainPackages` lists the packages that should be available for `pull`, `load`, and `exec`.
-- Functions named `Toolchain<Name>` can be invoked via `toolchain run <name>`.
+- `packages` lists tools, version constraints, named configurations, and explicit dependencies.
+- `tlc sync` resolves and locks the complete graph before restoring exact package digests.
 
-Toolchain will search upward from the current directory to find the nearest `Toolchain.ps1`.
+Toolchain searches upward for the nearest `toolchain.yaml`, `toolchain.yml`, or
+legacy `Toolchain.ps1`. YAML is preferred at the same directory level.
 
 ## Usage
 
-    toolchain init [-Force]
+    toolchain init [-Force] [-Legacy]
 
 ## Example
 
 ```powershell
 PS C:\repo> toolchain init
-Wrote C:\repo\Toolchain.ps1
+Wrote C:\repo\toolchain.yaml
 
-PS C:\repo> notepad .\Toolchain.ps1
+PS C:\repo> notepad .\toolchain.yaml
 ```
 
 To overwrite an existing file:
@@ -33,3 +34,7 @@ To overwrite an existing file:
 ```powershell
 PS C:\repo> toolchain init -Force
 ```
+
+Use `tlc init -Legacy` only when an executable `Toolchain.ps1` package list is
+required. Optional `Toolchain<Name>` functions for `tlc run` can remain in a
+neighboring `Toolchain.ps1` while packages move to YAML.

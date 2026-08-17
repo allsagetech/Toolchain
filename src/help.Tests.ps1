@@ -14,9 +14,9 @@ Describe 'Toolchain command help catalog' {
 			'version','list','remote','remote list','remote models','remote all','remote tags',
 			'remote health','remote info',
 			'pull','load','exec','run','update','prune','remove','save','init',
-			'lock','restore','verify','audit',
+			'lock','restore','sync','activate','deactivate','verify','audit',
 			'profile','profile init','profile add','profile remove','profile list','profile path',
-			'cluster','cluster create','cluster list','cluster status','cluster kubeconfig','cluster delete',
+			'cluster','cluster create','cluster init','cluster list','cluster status','cluster kubeconfig','cluster delete',
 			'k9s','doctor','help'
 		)
 		$topics = Get-ToolchainHelpTopics
@@ -38,6 +38,8 @@ Describe 'Toolchain command help catalog' {
 		$text | Should -Match 'cluster'
 		$text | Should -Match 'k9s'
 		$text | Should -Match 'audit'
+		$text | Should -Match 'sync'
+		$text | Should -Match 'activate'
 	}
 
 	It 'normalizes command aliases in help paths' {
@@ -70,6 +72,7 @@ Describe 'Toolchain help request routing' {
 		$request.Requested | Should -BeTrue
 		$request.CommandPath | Should -Be @('cluster','create')
 		(Get-ToolchainHelpRequest -Command cluster -ArgumentList @('create','dev','--help')).CommandPath | Should -Be @('cluster','create')
+		(Get-ToolchainHelpRequest -Command cluster -ArgumentList @('init','--help')).CommandPath | Should -Be @('cluster','init')
 		(Get-ToolchainHelpRequest -Command remote -ArgumentList @('-Refresh','help')).CommandPath | Should -Be @('remote')
 	}
 

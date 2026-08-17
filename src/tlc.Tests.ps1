@@ -12,12 +12,13 @@ Describe 'GetConfigPackages' {
 	It 'Loads ToolchainPackages from config file' {
 		$cfg = Join-Path $TestDrive 'Toolchain.ps1'
 		Set-Content -LiteralPath $cfg -Value "`$ToolchainPackages = @('a','b')" -Encoding utf8
-		Mock FindConfig { return $cfg }
+		Mock Find-ToolchainProjectConfig { return $cfg }
+		Mock Read-ToolchainProject { [pscustomobject]@{ Packages=@('a','b') } }
 		(GetConfigPackages) | Should -Be @('a','b')
 	}
 
 	It 'Returns $null when no config is found' {
-		Mock FindConfig { return $null }
+		Mock Find-ToolchainProjectConfig { return $null }
 		(GetConfigPackages) | Should -Be $null
 	}
 }
@@ -71,6 +72,9 @@ Describe 'Invoke-Toolchain dispatcher' {
 		Mock Invoke-ToolchainInit { 'init' }
 		Mock Invoke-ToolchainLock { param([string[]]$Packages,[string[]]$Update) if ($Update) { @($Update) } elseif ($Packages) { @($Packages) } else { 'lock' } }
 		Mock Invoke-ToolchainRestore { 'restore' }
+		Mock Invoke-ToolchainSync { 'sync' }
+		Mock Invoke-ToolchainActivate { 'activate' }
+		Mock Invoke-ToolchainDeactivate { 'deactivate' }
 		Mock Invoke-ToolchainVerify { param([string[]]$Packages) @($Packages) }
 		Mock Invoke-ToolchainAudit { param($Path,[switch]$Strict) "audit:$Path`:$([bool]$Strict)" }
 		Mock Invoke-ToolchainProfile { param($Command,[string[]]$Packages) @($Command) + @($Packages) }
@@ -131,10 +135,14 @@ Describe 'Invoke-Toolchain dispatcher' {
 		@(Invoke-Toolchain -Command lock -ArgumentList @('node','git')) | Should -Be @('node','git')
 		@(Invoke-Toolchain -Command lock -ArgumentList @('-Update','node','git')) | Should -Be @('node','git')
 		(Invoke-Toolchain -Command restore) | Should -Be 'restore'
+		(Invoke-Toolchain -Command sync) | Should -Be 'sync'
+		(Invoke-Toolchain -Command activate) | Should -Be 'activate'
+		(Invoke-Toolchain -Command deactivate) | Should -Be 'deactivate'
 		@(Invoke-Toolchain -Command verify -ArgumentList @('node','git')) | Should -Be @('node','git')
 		(Invoke-Toolchain -Command audit -ArgumentList @('-Path','audit.lock.json','-Strict')) | Should -Be 'audit:audit.lock.json:True'
 		@(Invoke-Toolchain -Command profile -ArgumentList @('add','node','git')) | Should -Be @('add','node','git')
 		@(Invoke-Toolchain -Command cluster -ArgumentList @('create','dev','-Provider','kind')) | Should -Be @('create','dev','kind')
+		@(Invoke-Toolchain -Command cluster -ArgumentList @('init','dev','-Confirm','-RegistryNodePort','32000')) | Should -Be @('init','dev',$null)
 		$k9s = Invoke-Toolchain -Command k9s -ArgumentList @('-Cluster','dev','-n','default')
 		$k9s.Cluster | Should -Be 'dev'
 		$k9s.Kubeconfig | Should -BeNullOrEmpty
@@ -152,7 +160,7 @@ Describe 'Invoke-Toolchain dispatcher' {
 	}
 
 	It 'routes suffix help for every top-level command without executing it' {
-		$commands = @('version','v','remote','list','load','pull','exec','run','remove','rm','save','prune','update','init','lock','restore','verify','audit','profile','cluster','k9s','doctor')
+		$commands = @('version','v','remote','list','load','pull','exec','run','remove','rm','save','prune','update','init','lock','restore','sync','activate','deactivate','verify','audit','profile','cluster','k9s','doctor')
 		foreach ($command in $commands) {
 			$expected = switch ($command) { 'v' { 'version' }; 'rm' { 'remove' }; default { $command } }
 			(Invoke-Toolchain -Command $command -ArgumentList @('help')) | Should -Be "help:$expected"
@@ -268,6 +276,7 @@ Describe 'Invoke-ToolchainRun' {
 function ToolchainHello { param([string]$Name='world') return "hi $Name" }
 '@ -Encoding utf8
 		Mock FindConfig { return $cfg }
+		Mock GetConfigPackages { return $null }
 		(Invoke-ToolchainRun -FnName 'Hello' -ArgumentList @('bob')) | Should -Be 'hi bob'
 	}
 
@@ -278,6 +287,7 @@ $ToolchainPackages = @('git')
 function ToolchainHello { return 'ok' }
 '@ -Encoding utf8
 		Mock FindConfig { return $cfg }
+		Mock GetConfigPackages { return @('git') }
 		Mock Invoke-ToolchainExec { param([string[]]$Packages,[scriptblock]$ScriptBlock) & $ScriptBlock }
 		(Invoke-ToolchainRun -FnName 'Hello') | Should -Be 'ok'
 		Should -Invoke -CommandName Invoke-ToolchainExec -Times 1 -Exactly -ParameterFilter { $Packages[0] -eq 'git' }
@@ -361,7 +371,7 @@ Describe 'Invoke-ToolchainInit' {
 		$cwd = Get-Location
 		try {
 			Set-Location $TestDrive
-			$cfg = Join-Path (Get-Location).Path 'Toolchain.ps1'
+			$cfg = Join-Path (Get-Location).Path 'toolchain.yaml'
 			Set-Content -LiteralPath $cfg -Value 'x' -Encoding utf8
 			Mock Write-ToolchainInfo { }
 			Invoke-ToolchainInit
@@ -373,10 +383,21 @@ Describe 'Invoke-ToolchainInit' {
 		$cwd = Get-Location
 		try {
 			Set-Location $TestDrive
-			$cfg = Join-Path (Get-Location).Path 'Toolchain.ps1'
+			$cfg = Join-Path (Get-Location).Path 'toolchain.yaml'
 			Set-Content -LiteralPath $cfg -Value 'x' -Encoding utf8
 			Mock Write-ToolchainInfo { }
 			Invoke-ToolchainInit -Force
+			(Get-Content -LiteralPath $cfg -Raw) | Should -Match 'schemaVersion: 1'
+		} finally { Set-Location $cwd }
+	}
+
+	It 'Writes the legacy PowerShell format only when requested' {
+		$cwd = Get-Location
+		try {
+			Set-Location $TestDrive
+			$cfg = Join-Path (Get-Location).Path 'Toolchain.ps1'
+			Mock Write-ToolchainInfo { }
+			Invoke-ToolchainInit -Legacy -Force
 			(Get-Content -LiteralPath $cfg -Raw) | Should -Match 'ToolchainPackages'
 		} finally { Set-Location $cwd }
 	}
@@ -390,6 +411,10 @@ Describe 'Invoke-ToolchainDoctor' {
 		Mock MakeDirIfNotExist { param($Path) New-Item -ItemType Directory -Path $Path -Force | Out-Null; return $Path }
 		Mock GetRegistryBaseUrl { 'https://registry.example' }
 		Mock GetRegistryRepoName { 'acme/toolchains' }
+		Mock GetRegistryPlatformOs { 'windows' }
+		Mock GetRegistryPlatformArch { 'amd64' }
+		Mock Get-ToolchainCosignVerifyEnabled { $false }
+		Mock Get-ToolchainRegistryCredential { $null }
 	}
 
 	It 'Reports ok for offline repo that exists' {

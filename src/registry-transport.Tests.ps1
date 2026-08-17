@@ -48,6 +48,14 @@ Describe 'Registry transport primitives' {
 		Test-DockerHubRegistryUrl -Url 'not a uri' | Should -BeFalse
 	}
 
+	It 'detects the native OCI operating system and architecture by default' {
+		Remove-Item Env:TOOLCHAIN_OS,Env:TOOLCHAIN_ARCH -ErrorAction SilentlyContinue
+		$expectedOs = if ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)) { 'windows' } elseif ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Linux)) { 'linux' } else { 'darwin' }
+		$expectedArch = switch ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()) { 'X64' { 'amd64' }; 'X86' { '386' }; 'Arm64' { 'arm64' }; 'Arm' { 'arm' } }
+		GetRegistryPlatformOs | Should -Be $expectedOs
+		GetRegistryPlatformArch | Should -Be $expectedArch
+	}
+
 	It 'bounds response bodies and validates expected size' {
 		$declaredTooLarge = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::OK)
 		$declaredTooLarge.Content = [Net.Http.ByteArrayContent]::new([byte[]](1,2,3,4,5,6))
@@ -118,6 +126,12 @@ Describe 'Registry transport authentication' {
 		Remove-Item Env:TOOLCHAIN_TOKEN,Env:TOOLCHAIN_USERNAME,Env:TOOLCHAIN_PASSWORD -ErrorAction SilentlyContinue
 		Mock GetRegistryBaseUrl { 'https://registry.example.test' }
 		Mock GetRegistryIndexUrl { 'https://index.example.test' }
+		Mock Get-ToolchainRegistryCredential {
+			if ($env:TOOLCHAIN_USERNAME -and $env:TOOLCHAIN_PASSWORD) {
+				return [pscustomobject]@{ Username=$env:TOOLCHAIN_USERNAME; Secret=$env:TOOLCHAIN_PASSWORD; Source='environment' }
+			}
+			return $null
+		}
 	}
 
 	It 'rejects non-absolute token realms' {

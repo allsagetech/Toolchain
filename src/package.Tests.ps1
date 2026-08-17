@@ -8,6 +8,7 @@ SPDX-License-Identifier: MPL-2.0
 BeforeAll {
 	. $PSCommandPath.Replace('.Tests.ps1', '.ps1')
 	Mock Write-ToolchainInfo {}
+	Mock Invoke-ToolchainCosignVerify {}
 	$script:root = (Resolve-Path "$PSScriptRoot\..\test").Path
 	$script:ToolchainPath = "$root\toolchain"
 }
@@ -511,6 +512,7 @@ Describe 'PullPackage' {
 				$response = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::OK)
 				$response.Headers.TryAddWithoutValidation('Docker-Content-Digest', $script:pullDigest) | Out-Null
 				$response.Content = [Net.Http.StringContent]::new('{"schemaVersion":2,"layers":[]}')
+				$response.Content.Headers.ContentType = [Net.Http.Headers.MediaTypeHeaderValue]::new('application/vnd.oci.image.manifest.v1+json')
 				return $response
 			}
 			Mock GetImageConfigJsonFromRef { $null }
@@ -555,6 +557,25 @@ Describe 'PullPackage' {
 			$got = (Get-FileHash "$testPath\ref\somepkg\file.txt").Hash
 			$got | Should -Be $want
 		}
+		It 'verifies both a signed index and its selected platform digest before saving layers' {
+			$platformDigest = 'sha256:' + ('1' * 64)
+			$platformOs = GetRegistryPlatformOs
+			$platformArch = GetRegistryPlatformArch
+			Mock GetVerifiedManifestResponse {
+				$response = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::OK)
+				$response.Headers.TryAddWithoutValidation('Docker-Content-Digest', $script:pullDigest) | Out-Null
+				$response.Content = [Net.Http.StringContent]::new((@{
+					schemaVersion=2
+					manifests=@(@{ digest=$platformDigest; size=10; platform=@{ os=$platformOs; architecture=$platformArch } })
+				} | ConvertTo-Json -Depth 8 -Compress))
+				$response.Content.Headers.ContentType = [Net.Http.Headers.MediaTypeHeaderValue]::new('application/vnd.oci.image.index.v1+json')
+				return $response
+			}
+			$pkg = @{ Package='somepkg'; Tag=@{ Latest=$true } }
+			$pkg | PullPackage
+			Should -Invoke Invoke-ToolchainCosignVerify -Times 2 -Exactly
+			Should -Invoke Invoke-ToolchainCosignVerify -Times 1 -Exactly -ParameterFilter { $RepoDigestRef -like "*@$platformDigest" }
+		}
 	}
 	Context 'DB Contains Key' {
 		BeforeAll {
@@ -570,6 +591,7 @@ Describe 'PullPackage' {
 				$response = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::OK)
 				$response.Headers.TryAddWithoutValidation('Docker-Content-Digest', $script:cachedDigest) | Out-Null
 				$response.Content = [Net.Http.StringContent]::new('{"schemaVersion":2,"layers":[]}')
+				$response.Content.Headers.ContentType = [Net.Http.Headers.MediaTypeHeaderValue]::new('application/vnd.oci.image.manifest.v1+json')
 				return $response
 			}
 			Mock GetImageConfigJsonFromRef { $null }
@@ -659,7 +681,7 @@ Describe 'SavePackage' {
 		$script:testPath = "$testRoot\save_package_test"
 		BeforeAll {
 			Mock ResolveDockerRef { 'none' }
-			$script:saveManifestText = 'none manifest'
+			$script:saveManifestText = '{"schemaVersion":2,"layers":[]}'
 			$script:saveDigest = Get-ToolchainBytesSha256Digest -Bytes ([Text.Encoding]::UTF8.GetBytes($script:saveManifestText))
 
 			Mock GetVerifiedManifestResponse {
@@ -673,6 +695,7 @@ Describe 'SavePackage' {
 				$response = [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::OK)
 				$response.Headers.Add('Docker-Content-Digest', $script:saveDigest)
 				$response.Content = [Net.Http.StringContent]::new($script:saveManifestText)
+				$response.Content.Headers.ContentType = [Net.Http.Headers.MediaTypeHeaderValue]::new('application/vnd.oci.image.manifest.v1+json')
 				return $response
 			}
 			Mock GetImageConfigJsonFromRef { $null }
@@ -708,7 +731,7 @@ Describe 'SavePackage' {
 			}
 			$pkg | PullPackage -Output "$testPath\cache"
 			"$testPath\cache\none\manifest.json" | Should -Exist
-			"$testPath\cache\none\manifest.json" | Should -FileContentMatchExactly 'none manifest'
+			"$testPath\cache\none\manifest.json" | Should -FileContentMatchExactly ([regex]::Escape($script:saveManifestText))
 			"$testPath\cache\none\file.txt" | Should -Exist
 			"$testPath\cache\none\file.txt" | Should -FileContentMatchExactly 'abc123'
 		}
@@ -723,7 +746,7 @@ Describe 'SavePackage' {
 			}
 			$pkg | PullPackage -Output "$testPath\cache"
 			"$testPath\cache\none\manifest.json" | Should -Exist
-			"$testPath\cache\none\manifest.json" | Should -FileContentMatchExactly 'none manifest'
+			"$testPath\cache\none\manifest.json" | Should -FileContentMatchExactly ([regex]::Escape($script:saveManifestText))
 			"$testPath\cache\none\file.txt" | Should -Exist
 			"$testPath\cache\none\file.txt" | Should -FileContentMatchExactly 'abc123'
 		}

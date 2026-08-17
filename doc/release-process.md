@@ -4,13 +4,15 @@ Toolchain releases are created only from an immutable `v<version>` tag whose val
 
 The protected `toolchain-release` environment performs these gates:
 
-1. run the complete Windows PowerShell 5.1 and PowerShell 7 suites plus the explicit Linux cross-platform suite;
-2. build and import the module artifact;
-3. create a SHA-256 checksum and SPDX SBOM;
-4. export the canonical versioned package-specification archive and checksum;
-5. create GitHub artifact-provenance and SBOM attestations for the module and provenance for the package specification;
-6. stage every asset on a draft, publish it, and delete only that new release before failing unless GitHub confirms it is immutable;
-7. request a Toolchains consumer promotion using the exact release tag, version, and commit.
+1. run the complete Windows PowerShell 5.1 and PowerShell 7 suites plus explicit Linux and macOS cross-platform suites;
+2. test and container-build the Toolchain admission/registry agent;
+3. refuse an existing agent version tag, publish its `linux/amd64` and `linux/arm64` image with provenance and an SBOM, then keylessly sign the immutable digest;
+4. build and import the module artifact;
+5. create a SHA-256 checksum and SPDX SBOM;
+6. export the canonical versioned package-specification archive and checksum;
+7. create GitHub artifact-provenance and SBOM attestations for the module and provenance for the package specification;
+8. stage every asset on a draft, publish it, and delete only that new release before failing unless GitHub confirms it is immutable;
+9. request a Toolchains consumer promotion using the exact release tag, version, and commit.
 
 Protect the environment with tag restrictions and required reviewers. Keep workflow actions pinned to reviewed commits. A release operator must verify the tag, module checksum, package-spec checksum, SBOM, and GitHub attestations before downstream repositories update their pinned Toolchain revision.
 

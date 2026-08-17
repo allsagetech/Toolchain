@@ -25,6 +25,9 @@ Describe 'Toolchain nested argument completion' {
 		@(Get-ToolchainNestedCompletionValues -Subcommand doctor -Elements @('tlc','doctor','-J') -WordToComplete '-J') | Should -Be @('-Json')
 		@(Get-ToolchainNestedCompletionValues -Subcommand lock -Elements @('tlc','lock','-U') -WordToComplete '-U') | Should -Be @('-Update')
 		@(Get-ToolchainNestedCompletionValues -Subcommand restore -Elements @('tlc','restore') -WordToComplete '') | Should -Contain '-Path'
+		@(Get-ToolchainNestedCompletionValues -Subcommand sync -Elements @('tlc','sync','-F') -WordToComplete '-F') | Should -Be @('-Frozen')
+		@(Get-ToolchainNestedCompletionValues -Subcommand activate -Elements @('tlc','activate') -WordToComplete '') | Should -Contain '-NoSync'
+		@(Get-ToolchainNestedCompletionValues -Subcommand deactivate -Elements @('tlc','deactivate') -WordToComplete '') | Should -Contain '-PassThru'
 		@(Get-ToolchainNestedCompletionValues -Subcommand verify -Elements @('tlc','verify') -WordToComplete '') | Should -Contain '-Json'
 		@(Get-ToolchainNestedCompletionValues -Subcommand audit -Elements @('tlc','audit','-V') -WordToComplete '-V') | Should -Be @('-VerifySignatures')
 		@(Get-ToolchainNestedCompletionValues -Subcommand unknown -Elements @('tlc','unknown') -WordToComplete '--') | Should -Be @('--help')
@@ -35,6 +38,12 @@ Describe 'Toolchain nested argument completion' {
 			Should -Be @('create')
 		@(Get-ToolchainNestedCompletionValues -Subcommand cluster -Elements @('toolchain','cluster','create') -WordToComplete '') |
 			Should -Contain '-Provider'
+		@(Get-ToolchainNestedCompletionValues -Subcommand cluster -Elements @('toolchain','cluster','init') -WordToComplete '') |
+			Should -Contain '-Confirm'
+		@(Get-ToolchainNestedCompletionValues -Subcommand cluster -Elements @('toolchain','cluster','init','-RegistryN') -WordToComplete '-RegistryN') |
+			Should -Be @('-RegistryNodePort')
+		@(Get-ToolchainNestedCompletionValues -Subcommand cluster -Elements @('toolchain','cluster','init','-Components','g') -WordToComplete 'g') |
+			Should -Be @('git-server')
 		@(Get-ToolchainNestedCompletionValues -Subcommand cluster -Elements @('toolchain','cluster','create') -WordToComplete '') |
 			Should -Contain 'help'
 	}

@@ -120,6 +120,7 @@ try {
 	FileList = @(
 		'Toolchain.psm1',
 		'Toolchain.Format.ps1xml',
+		'schema/toolchain-project.schema.json',
 		'README.md',
 		'CHANGELOG.md',
 		'LICENSE.md',
@@ -130,7 +131,7 @@ try {
 	)
 	PrivateData = @{
 		PSData = @{
-			Tags = @('windows', 'docker', 'package-manager', 'package', 'development', 'powershell', 'container', 'configuration', 'toolchain', 'toolchains')
+			Tags = @('windows', 'linux', 'macos', 'docker', 'package-manager', 'package', 'development', 'powershell', 'container', 'configuration', 'toolchain', 'toolchains')
 			LicenseUri = 'https://github.com/allsagetech/toolchain/blob/main/LICENSE.md'
 			ProjectUri = 'https://github.com/allsagetech/toolchain'
 			ReleaseNotes = 'https://github.com/allsagetech/toolchain/blob/main/CHANGELOG.md'
@@ -177,6 +178,9 @@ try {
 	foreach ($fileName in @('README.md', 'CHANGELOG.md', 'LICENSE.md', 'ATTRIBUTION.md', 'COPYRIGHT.md', 'TRADEMARKS.md', 'SECURITY.md')) {
 		Copy-Item -LiteralPath (Join-Path $PSScriptRoot $fileName) -Destination (Join-Path $stageDir $fileName) -ErrorAction Stop
 	}
+	$schemaStage = Join-Path $stageDir 'schema'
+	New-Item -Path $schemaStage -ItemType Directory -ErrorAction Stop | Out-Null
+	Copy-Item -LiteralPath (Join-Path (Join-Path $PSScriptRoot 'schema') 'toolchain-project.schema.json') -Destination $schemaStage -ErrorAction Stop
 
 	Test-ToolchainBuiltModule -ManifestPath (Join-Path $stageDir 'Toolchain.psd1')
 

@@ -15,14 +15,17 @@ $ErrorActionPreference = 'Stop'
 
 $version = (Get-Content "$PSScriptRoot\VERSION" -Raw).Trim()
 
-# Install for both PowerShell 7+ and Windows PowerShell 5.1 (CurrentUser scope)
-$pwshModuleRoot  = Join-Path $HOME 'Documents\PowerShell\Modules'
-$winpsModuleRoot = Join-Path $HOME 'Documents\WindowsPowerShell\Modules'
-
-$installPaths = @(
-	(Join-Path $pwshModuleRoot  "Toolchain\$version"),
-	(Join-Path $winpsModuleRoot "Toolchain\$version")
-)
+# Install into the CurrentUser module roots used by the active platforms.
+$isWindowsHost = [Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)
+if ($isWindowsHost) {
+	$moduleRoots = @(
+		(Join-Path (Join-Path $HOME 'Documents') (Join-Path 'PowerShell' 'Modules')),
+		(Join-Path (Join-Path $HOME 'Documents') (Join-Path 'WindowsPowerShell' 'Modules'))
+	)
+} else {
+	$moduleRoots = @((Join-Path (Join-Path (Join-Path $HOME '.local') 'share') (Join-Path 'powershell' 'Modules')))
+}
+$installPaths = @($moduleRoots | ForEach-Object { Join-Path (Join-Path $_ 'Toolchain') $version } | Select-Object -Unique)
 
 Remove-Module Toolchain -ErrorAction SilentlyContinue
 
@@ -32,9 +35,9 @@ foreach ($installPath in $installPaths) {
 	}
 
 	New-Item -ItemType Directory -Path $installPath -Force | Out-Null
-	Copy-Item "$PSScriptRoot\build\Toolchain\*" $installPath -Recurse -Force
+	Copy-Item (Join-Path (Join-Path (Join-Path $PSScriptRoot 'build') 'Toolchain') '*') $installPath -Recurse -Force
 }
 
-Import-Module Toolchain -Force
+Import-Module (Join-Path $installPaths[0] 'Toolchain.psd1') -Force
 
 Write-Host "Toolchain $version installed successfully"

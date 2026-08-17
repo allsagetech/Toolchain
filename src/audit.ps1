@@ -211,7 +211,7 @@ function Invoke-ToolchainAudit {
 	foreach ($reference in $projectReferences) {
 		$name = Get-ToolchainAuditReferenceName -Reference ([string]$reference)
 		if ($projectByName.ContainsKey($name)) {
-			$globalFindings.Add((New-ToolchainAuditFinding -Severity Error -Category Project -Message "Duplicate Toolchain.ps1 package reference: $name"))
+			$globalFindings.Add((New-ToolchainAuditFinding -Severity Error -Category Project -Message "Duplicate Toolchain project package reference: $name"))
 			continue
 		}
 		$projectByName[$name] = [string]$reference
@@ -280,7 +280,7 @@ function Invoke-ToolchainAudit {
 
 		$blockingFindings = @($allFindings | Where-Object { $_.Category -notin @('Lock','Install','Update') })
 		if ($projectReferences.Count -eq 0) {
-			$blockingFindings += New-ToolchainAuditFinding -Severity Error -Category Project -Message 'Toolchain.ps1 has no package references to lock and restore.'
+			$blockingFindings += New-ToolchainAuditFinding -Severity Error -Category Project -Message 'Toolchain project has no package references to lock and restore.'
 		}
 		if ($blockingFindings.Count -gt 0) {
 			$output = if ($Json) { $report | ConvertTo-Json -Depth 20 } else { $report }

@@ -3,7 +3,7 @@
 
 `tlc audit` combines the project reproducibility and supply-chain checks that
 would otherwise require separate lock, health, verification, and policy
-commands. It compares the nearest `Toolchain.ps1` with `Toolchain.lock.json`,
+commands. It compares the nearest Toolchain YAML or legacy PowerShell project with `Toolchain.lock.json`,
 the local package database, the currently resolved registry digests, and the
 signed package-health catalog.
 

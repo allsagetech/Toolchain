@@ -168,16 +168,15 @@ function MakeDirIfNotExist {
 }
 
 function FindConfig {
+	if (Get-Command Find-ToolchainScriptConfig -ErrorAction SilentlyContinue) {
+		return Find-ToolchainScriptConfig
+	}
 	$path = (Get-Location).Path
 	while ($true) {
 		$cfg = Join-Path $path 'Toolchain.ps1'
-		if (Test-Path -LiteralPath $cfg -PathType Leaf) {
-			return $cfg
-		}
+		if (Test-Path -LiteralPath $cfg -PathType Leaf) { return $cfg }
 		$parent = Split-Path $path -Parent
-		if (-not $parent -or $parent -eq $path) {
-			return $null
-		}
+		if (-not $parent -or $parent -eq $path) { return $null }
 		$path = $parent
 	}
 }

@@ -6,11 +6,17 @@
 
 - Add safe `tlc audit -Fix` remediation with preview, policy/health/signature refusal gates, atomic lock refresh, package restore, and post-fix verification.
 - Expose package-health state-transition and last-clean-scan timestamps for remediation SLO monitoring.
+- Add strict `toolchain.yaml` projects with editor schema, version constraints, merged dependency requirements, dependency-first ordering, and cycle detection while retaining legacy `Toolchain.ps1` compatibility.
+- Add `tlc sync`, `tlc activate`, and `tlc deactivate` for one-command lock/restore convergence and reversible current-session environments.
+- Add native Windows, Linux, and macOS platform detection, portable installation/profile behavior, and macOS client CI coverage.
+- Add Docker and Podman auth-file discovery plus Docker credential-helper support for private registries.
+- Add Toolchain-native Kubernetes initialization with persistent cluster state, a write-protected node-local OCI registry, exact-match admission mutation, and optional non-interactive Git service setup.
 
 ### Changed
 
 - Stage all release assets on a draft before publication and fail the release workflow unless GitHub confirms immutable-release enforcement.
 - Retain CI logs for an explicit 14-day period and document permanent release-evidence retention.
+- Verify official `allsagetech/toolchains` package digests with the protected GitHub Actions Cosign identity by default, while preserving explicit policy and diagnostic overrides.
 
 ## 2.4.0 - 2026-08-15
 

@@ -5,6 +5,10 @@ SPDX-License-Identifier: MPL-2.0
 #>
 
 BeforeAll {
+	$script:testRegistryUrl = 'https://registry.example.test'
+	$script:testRegistryRepo = 'owner/toolchains'
+	function GetRegistryBaseUrl { $script:testRegistryUrl }
+	function GetRegistryRepoName { $script:testRegistryRepo }
 	. $PSCommandPath.Replace('.Tests.ps1', '.ps1')
 }
 
@@ -29,6 +33,9 @@ Describe 'Invoke-ToolchainCommand' {
 
 Describe 'Cosign settings' {
 	BeforeEach {
+		$script:testRegistryUrl = 'https://registry.example.test'
+		$script:testRegistryRepo = 'owner/toolchains'
+		Mock GetToolchainRepo { return $null }
 		Remove-Item Env:TOOLCHAIN_COSIGN_VERIFY -ErrorAction Ignore
 		Remove-Item Env:TOOLCHAIN_COSIGN_KEY -ErrorAction Ignore
 		Remove-Item Env:TOOLCHAIN_COSIGN_CERT_IDENTITY -ErrorAction Ignore
@@ -49,6 +56,15 @@ Describe 'Cosign settings' {
 	It 'Get-ToolchainCosignVerifyEnabled defaults to false' {
 		Mock Get-ToolchainPolicyRequireCosign { return $false }
 		(Get-ToolchainCosignVerifyEnabled) | Should -Be $false
+	}
+
+	It 'requires official package verification by default with an explicit opt-out' {
+		Mock Get-ToolchainPolicyRequireCosign { return $false }
+		$script:testRegistryUrl = 'https://registry-1.docker.io'
+		$script:testRegistryRepo = 'allsagetech/toolchains'
+		Get-ToolchainCosignVerifyEnabled | Should -BeTrue
+		$env:TOOLCHAIN_COSIGN_VERIFY = '0'
+		Get-ToolchainCosignVerifyEnabled | Should -BeFalse
 	}
 
 	It 'Get-ToolchainCosignKey prefers policy over env' {
@@ -91,6 +107,21 @@ Describe 'Cosign settings' {
 			($ArgumentList -contains '--certificate-oidc-issuer') -and
 			($ArgumentList -contains 'https://issuer.example') -and
 			($ArgumentList -contains 'repo@sha256:abc')
+		}
+	}
+
+	It 'pins the official keyless workflow identity when no custom trust root is configured' {
+		$script:testRegistryUrl = 'https://registry-1.docker.io'
+		$script:testRegistryRepo = 'allsagetech/toolchains'
+		Mock Get-ToolchainPolicyRequireCosign { return $false }
+		Mock Get-ToolchainCosignKey { return $null }
+		Mock Get-Command { [pscustomobject]@{ Source='cosign' } }
+		Mock Invoke-ToolchainCommand { }
+
+		Invoke-ToolchainCosignVerify -RepoDigestRef ('registry-1.docker.io/allsagetech/toolchains@sha256:' + ('a' * 64))
+		Should -Invoke Invoke-ToolchainCommand -Times 1 -Exactly -ParameterFilter {
+			$ArgumentList -contains 'https://github.com/allsagetech/Toolchains/.github/workflows/build-push.yml@refs/heads/main' -and
+			$ArgumentList -contains 'https://token.actions.githubusercontent.com'
 		}
 	}
 }

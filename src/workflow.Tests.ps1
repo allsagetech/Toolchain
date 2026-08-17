@@ -37,10 +37,26 @@ Describe 'GitHub Actions test workflow' {
 		$testWorkflow | Should -Match '(?ms)uses:\s*actions/upload-artifact@.*?retention-days:\s*14'
 	}
 
+	It 'gates the cross-platform client on Linux and macOS' {
+		$testWorkflow | Should -Match 'os:\s*macos-15'
+		$testWorkflow | Should -Match "runner\.os == 'Linux' \|\| runner\.os == 'macOS'"
+		$testWorkflow | Should -Match 'project\.Tests\.ps1'
+		$releaseWorkflow | Should -Match 'os:\s*macos-15'
+	}
+
 	It 'publishes complete drafts and fails unless GitHub locks the release' {
 		$releaseWorkflow | Should -Match '(?ms)gh release create.*?--draft.*?gh release edit.*?--draft=false'
 		$releaseWorkflow | Should -Match 'gh release view .*--json isImmutable'
 		$releaseWorkflow | Should -Match 'gh release delete .*--yes'
 		$releaseWorkflow | Should -Match 'Release immutability is not enforced'
+	}
+
+	It 'tests and publishes a signed multi-architecture Toolchain agent' {
+		$testWorkflow | Should -Match '(?ms)^\s{2}agent:.*?go test \./\.\.\..*?docker build --tag toolchain-agent:test'
+		$releaseWorkflow | Should -Match 'platforms:\s*linux/amd64,linux/arm64'
+		$releaseWorkflow | Should -Match 'ghcr\.io/allsagetech/toolchain-agent:\$tagVersion'
+		$releaseWorkflow | Should -Match 'cosign sign --yes'
+		$releaseWorkflow | Should -Match 'packages:\s*write'
+		$releaseWorkflow | Should -Match 'Immutable agent tag already exists'
 	}
 }

@@ -46,6 +46,11 @@ jobs:
             shell: pwsh
             coverage: 0
             log: linux-pwsh-test.log
+          - name: macOS PowerShell 7
+            os: macos-15
+            shell: pwsh
+            coverage: 0
+            log: macos-pwsh-test.log
     env:
       TOOLCHAIN_COVERAGE_TARGET: ${{ matrix.coverage }}
     steps:
@@ -90,20 +95,24 @@ jobs:
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
           .\test.ps1 *>&1 | Tee-Object -FilePath (Join-Path artifacts '${{ matrix.log }}')
 
-      - name: Run cross-platform registry and archive suite (PowerShell 7 on Linux)
-        if: runner.os == 'Linux'
+      - name: Run cross-platform client suite (PowerShell 7 on Linux and macOS)
+        if: runner.os == 'Linux' || runner.os == 'macOS'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
-          # Toolchain's supported client is Windows. Keep Linux coverage focused
-          # on the portable OCI transport, definition, and extraction boundary.
           $paths = @(
             '.\src\definition.Tests.ps1'
             '.\src\http.Tests.ps1'
             '.\src\tar.Tests.ps1'
             '.\src\registry.Tests.ps1'
+            '.\src\registry-transport.Tests.ps1'
+            '.\src\registry-credentials.Tests.ps1'
+            '.\src\project.Tests.ps1'
+            '.\src\environment.Tests.ps1'
+            '.\src\shell.Tests.ps1'
+            '.\build.Tests.ps1'
           )
           .\test.ps1 -Paths $paths *>&1 | Tee-Object -FilePath (Join-Path artifacts '${{ matrix.log }}')
 
@@ -212,3 +221,26 @@ jobs:
           if ('demo-1.0.0' -notin @($catalog.Tags)) { throw 'Local registry tag discovery failed.' }
           $manifest = GetManifestJson -Ref 'demo-1.0.0'
           if ([int]$manifest.schemaVersion -ne 2) { throw 'Local registry manifest retrieval failed.' }
+
+  agent:
+    name: Toolchain agent
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: agent/go.mod
+          cache: false
+
+      - name: Test admission and registry gateway
+        working-directory: agent
+        run: go test ./...
+
+      - name: Build minimal agent image
+        run: docker build --tag toolchain-agent:test ./agent

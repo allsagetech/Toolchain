@@ -24,7 +24,7 @@ Toolchain loads the first policy it finds:
 1. `$ToolchainPolicyPath`
 2. `$env:ToolchainPolicyPath`
 3. `$env:TOOLCHAIN_POLICY_PATH`
-4. `Toolchain.policy.json` next to the nearest `Toolchain.ps1` project config (or current directory)
+4. `Toolchain.policy.json` next to the nearest YAML or legacy PowerShell project config (or current directory)
 
 ## Example policy
 

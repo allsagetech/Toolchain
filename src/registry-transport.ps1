@@ -5,6 +5,8 @@ Copyright (c) 2026 AllSageTech
 SPDX-License-Identifier: MPL-2.0
 #>
 
+. $PSScriptRoot\registry-credentials.ps1
+
 function GetRegistryBaseUrl {
 	if ($env:TOOLCHAIN_REGISTRY) { return $env:TOOLCHAIN_REGISTRY.Trim().TrimEnd('/') }
 	return 'https://registry-1.docker.io'
@@ -41,12 +43,21 @@ function Test-DockerHubRegistryUrl {
 
 function GetRegistryPlatformOs {
 	if ($env:TOOLCHAIN_OS) { return $env:TOOLCHAIN_OS }
-	return 'windows'
+	if ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)) { return 'windows' }
+	if ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Linux)) { return 'linux' }
+	if ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::OSX)) { return 'darwin' }
+	throw 'could not determine the current operating-system platform; set TOOLCHAIN_OS explicitly'
 }
 
 function GetRegistryPlatformArch {
 	if ($env:TOOLCHAIN_ARCH) { return $env:TOOLCHAIN_ARCH }
-	return 'amd64'
+	switch ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()) {
+		'X64' { return 'amd64' }
+		'X86' { return '386' }
+		'Arm64' { return 'arm64' }
+		'Arm' { return 'arm' }
+		default { throw 'could not determine the current processor architecture; set TOOLCHAIN_ARCH explicitly' }
+	}
 }
 
 function ConvertTo-CanonicalSha256Digest {
@@ -254,13 +265,19 @@ function GetDockerHubBearerAuthHeader {
 		$script:RegistryAuthHeaderCache[$cacheKey] = $hdr
 		return $hdr
 	}
+	$credential = Get-ToolchainRegistryCredential -RegistryUrl $RegistryUrl
+	if ($credential -and $credential.IdentityToken) {
+		$hdr = "Bearer $($credential.IdentityToken)"
+		$script:RegistryAuthHeaderCache[$cacheKey] = $hdr
+		return $hdr
+	}
 
 	$token = GetBearerTokenFromRealm `
 		-Realm 'https://auth.docker.io/token' `
 		-Service 'registry.docker.io' `
 		-Scope "repository:${Repo}:pull" `
-		-Username $env:TOOLCHAIN_USERNAME `
-		-Pass $env:TOOLCHAIN_PASSWORD
+		-Username $(if ($credential) { $credential.Username } else { $null }) `
+		-Pass $(if ($credential) { $credential.Secret } else { $null })
 	$hdr = "Bearer $token"
 	$script:RegistryAuthHeaderCache[$cacheKey] = $hdr
 	return $hdr
@@ -284,15 +301,21 @@ function GetRegistryBaseAuthHeader {
     return $hdr
   }
 
-  $user = $env:TOOLCHAIN_USERNAME
-  $pass = $env:TOOLCHAIN_PASSWORD
+	$credential = Get-ToolchainRegistryCredential -RegistryUrl $reg
+	$user = if ($credential) { [string]$credential.Username } else { $null }
+	$pass = if ($credential) { [string]$credential.Secret } else { $null }
+	if ($credential -and $credential.IdentityToken) {
+		$hdr = "Bearer $($credential.IdentityToken)"
+		$script:RegistryAuthHeaderCache[$cacheKey] = $hdr
+		return $hdr
+	}
 
   $raw = $WwwAuthenticate.ToString()
   $scheme = $WwwAuthenticate.Scheme
 
   if ($scheme -ieq 'Basic') {
     if (-not ($user -and $pass)) {
-      throw "Registry requires Basic auth. Set TOOLCHAIN_USERNAME and TOOLCHAIN_PASSWORD."
+		throw 'Registry requires Basic auth. Set Toolchain credentials or configure a Docker/Podman credential helper.'
     }
     $hdr = GetBasicAuthHeader -Username $user -Pass $pass
     $script:RegistryAuthHeaderCache[$cacheKey] = $hdr
@@ -335,15 +358,21 @@ function GetRegistryIndexAuthHeader {
     return $hdr
   }
 
-  $user = $env:TOOLCHAIN_USERNAME
-  $pass = $env:TOOLCHAIN_PASSWORD
+	$credential = Get-ToolchainRegistryCredential -RegistryUrl $reg
+	$user = if ($credential) { [string]$credential.Username } else { $null }
+	$pass = if ($credential) { [string]$credential.Secret } else { $null }
+	if ($credential -and $credential.IdentityToken) {
+		$hdr = "Bearer $($credential.IdentityToken)"
+		$script:RegistryAuthHeaderCache[$cacheKey] = $hdr
+		return $hdr
+	}
 
   $raw = $WwwAuthenticate.ToString()
   $scheme = $WwwAuthenticate.Scheme
 
   if ($scheme -ieq 'Basic') {
     if (-not ($user -and $pass)) {
-      throw "Registry requires Basic auth. Set TOOLCHAIN_USERNAME and TOOLCHAIN_PASSWORD."
+		throw 'Registry requires Basic auth. Set Toolchain credentials or configure a Docker/Podman credential helper.'
     }
     $hdr = GetBasicAuthHeader -Username $user -Pass $pass
     $script:RegistryAuthHeaderCache[$cacheKey] = $hdr

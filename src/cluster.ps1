@@ -523,7 +523,7 @@ function Invoke-ToolchainCluster {
 	[CmdletBinding()]
 	param(
 		[Parameter(Mandatory, Position = 0)]
-		[ValidateSet('create', 'list', 'status', 'kubeconfig', 'delete')]
+		[ValidateSet('create', 'init', 'list', 'status', 'kubeconfig', 'delete')]
 		[string]$Command,
 		[Parameter(Position = 1)]
 		[string]$Name,
@@ -541,10 +541,41 @@ function Invoke-ToolchainCluster {
 		[string]$Config,
 		[ValidateSet('auto', 'docker', 'podman', 'nerdctl')]
 		[string]$Engine = 'auto',
-		[switch]$Raw
+		[switch]$Raw,
+		[string]$Kubeconfig,
+		[switch]$Confirm,
+		[ValidateSet('git-server')][string[]]$Components,
+		[ValidateSet('all', 'labeled')][string]$AgentMutationPolicy = 'all',
+		[string]$AgentImage,
+		[string]$RegistryImage,
+		[string]$GitImage,
+		[string]$StorageClass,
+		[ValidatePattern('^[1-9][0-9]*(?:Mi|Gi|Ti)$')][string]$RegistryStorage = '20Gi',
+		[ValidatePattern('^[1-9][0-9]*(?:Mi|Gi|Ti)$')][string]$GitStorage = '10Gi',
+		[ValidateRange(30000, 32767)][int]$RegistryNodePort = 31999,
+		[switch]$PassThru
 	)
 
 	switch ($Command) {
+		'init' {
+			$params = @{
+				Name = $Name
+				Kubeconfig = $Kubeconfig
+				Confirm = $Confirm
+				Components = $Components
+				AgentMutationPolicy = $AgentMutationPolicy
+				StorageClass = $StorageClass
+				RegistryStorage = $RegistryStorage
+				GitStorage = $GitStorage
+				RegistryNodePort = $RegistryNodePort
+				WaitSeconds = $WaitSeconds
+				PassThru = $PassThru
+			}
+			if ($AgentImage) { $params.AgentImage = $AgentImage }
+			if ($RegistryImage) { $params.RegistryImage = $RegistryImage }
+			if ($GitImage) { $params.GitImage = $GitImage }
+			return (Invoke-ToolchainClusterInit @params)
+		}
 		'create' {
 			if (-not $Name) { throw 'cluster create requires a name' }
 			Assert-ToolchainClusterName -Name $Name

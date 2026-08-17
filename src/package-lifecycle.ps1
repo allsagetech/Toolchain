@@ -142,8 +142,17 @@ function PullPackage {
 			} catch {
 				$registryHost = $regBase
 			}
-			$repoDigestRef = "${registryHost}/${repoName}@${digest}"
-			Invoke-ToolchainCosignVerify -RepoDigestRef $repoDigestRef
+			$signatureDigests = @($digest)
+			$rootManifest = $manifest | GetJsonResponse
+			$platformChoice = ResolveManifestToSinglePlatform -Manifest $rootManifest
+			if ($platformChoice.digest) {
+				$platformDigest = [string]$platformChoice.digest | ConvertTo-CanonicalSha256Digest
+				if ($platformDigest -notin $signatureDigests) { $signatureDigests += $platformDigest }
+			}
+			foreach ($signatureDigest in $signatureDigests) {
+				$repoDigestRef = "${registryHost}/${repoName}@${signatureDigest}"
+				Invoke-ToolchainCosignVerify -RepoDigestRef $repoDigestRef
+			}
 		}
 		$k = 'metadatadb', $digest
 		if ([Db]::ContainsKey($k) -and ($m = [Db]::Get($k)) -and $m.Size -and -not $Output) {

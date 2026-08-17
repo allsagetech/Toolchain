@@ -93,6 +93,65 @@ Docker uses its local image cache and pulls missing images according to its own
 configuration. For repeatable or offline work, pin image versions and preload
 those images before creating the cluster.
 
+## Initialize deployment infrastructure
+
+Prepare the current Kubernetes context with Toolchain's native deployment
+foundation:
+
+```powershell
+tlc cluster init -Confirm
+tlc cluster init dev -Confirm
+tlc cluster init -Kubeconfig .\external-kubeconfig.yaml -Confirm
+```
+
+Initialization creates the `toolchain-system` namespace, persistent OCI
+registry, node-local registry gateway, cluster state, exact-match image-mapping
+configuration, and Toolchain admission agent. `-Confirm` is required so
+automation is explicit and non-interactive. A managed cluster name and an
+explicit `-Kubeconfig` are mutually exclusive; with neither, kubectl's current
+context is used.
+
+The registry gateway listens on node port `31999` by default and is recorded as
+`127.0.0.1:31999`. Pulls are anonymous so workloads in any namespace can use
+mirrored images without copying credentials. Pushes and destructive registry
+requests require the generated `toolchain-registry-credentials` Secret. Select
+a different free port with `-RegistryNodePort`.
+
+The admission agent rewrites only complete image references listed in the
+`toolchain-image-mappings` ConfigMap. It never performs prefix or heuristic
+rewrites. `-AgentMutationPolicy all` applies known mappings by default;
+`labeled` requires `toolchain.dev/agent: mutate` on a Pod. Label a namespace or
+Pod `toolchain.dev/agent: ignore` to exclude it. The webhook begins fail-open
+while establishing its generated TLS trust, then changes itself to fail-closed.
+
+Add the optional Git service without an installation wizard:
+
+```powershell
+tlc cluster init dev -Confirm -Components git-server
+```
+
+Its persistent SQLite data, configuration, and generated administrator
+credential survive repeat runs. The username is `toolchain-admin`; retrieve the
+password only when needed:
+
+```powershell
+$encoded = kubectl get secret toolchain-git-admin -n toolchain-system `
+  -o jsonpath='{.data.TOOLCHAIN_GIT_ADMIN_PASSWORD}'
+[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($encoded))
+```
+
+Repeat initialization to reconcile or upgrade the installation. Toolchain uses
+server-side apply and preserves registry credentials, Git credentials, and
+image mappings. Component images are digest-pinned by default; the Toolchain
+agent image matches the installed module version.
+
+Initialization does not invoke an external bootstrap product. On a connected
+cluster, Kubernetes pulls missing component images normally. On a disconnected
+cluster, preload the three digest-pinned component images on every schedulable
+node before running init, or override their references with `-AgentImage`,
+`-RegistryImage`, and `-GitImage`. The current command does not inject image
+archives into arbitrary cluster runtimes.
+
 ## Delete
 
 ```powershell

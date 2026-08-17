@@ -18,9 +18,12 @@ For reliability, pull operations include retries for common transient failures:
 Pulls are content-addressed. Toolchain hashes the manifest response it actually
 uses, fetches selected manifests, image configuration, and layers by canonical
 SHA-256 descriptor, and verifies every descriptor size and digest before use.
+Official packages are also Cosign-verified before any layer is downloaded.
 If a multi-platform index does not contain the requested `TOOLCHAIN_OS` and
 `TOOLCHAIN_ARCH`, the pull fails with the available platforms instead of using
-an arbitrary first manifest.
+an arbitrary first manifest. Without overrides, Toolchain detects native
+`windows`, `linux`, or `darwin` and maps the current processor architecture to
+its OCI name.
 Resumed layer responses must contain a matching byte range; a server that ignores
 the range causes a safe restart from byte zero. Completed temporary layer archives
 are removed after extraction.
@@ -50,7 +53,7 @@ An array of packages are accepted as input.
 
 ## Usage
 
-	toolchain pull <package>[:tag]...
+	toolchain pull <package>[:tag-or-constraint]...
 
 ## Example
 
@@ -61,3 +64,7 @@ Digest: sha256:db2a58b317e90e537aa1e9b9ab4f1875689bcd9d25a20abdfbf96d3cb0a5ec45
 d47df44424b8: Pull complete
 Status: Downloaded newer package for somepkg:latest
 ```
+
+Direct constraints such as `toolchain pull 'node:>=22 <25'` select the highest
+matching published version. Project-wide constraints and dependencies belong in
+`toolchain.yaml` and are normally installed with `tlc sync`.

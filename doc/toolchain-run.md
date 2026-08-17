@@ -8,6 +8,9 @@ SPDX-License-Identifier: MPL-2.0
 
 Runs a user-defined scriptblock provided in a project file.
 
+Functions remain in `Toolchain.ps1`; when `toolchain.yaml` exists beside it,
+Toolchain runs the function with the YAML manifest's resolved package graph.
+
 ## Usage
 
     toolchain run <script>

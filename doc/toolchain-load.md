@@ -17,6 +17,9 @@ Repeated `toolchain load` calls are safe:
 - Different `::config` selections for the same package/tag are tracked independently within the session.
 
 An array of packages are accepted as input.
+With no explicit package, Toolchain resolves the nearest project manifest,
+including its declared dependencies and constraints. Prefer `tlc activate` when
+the environment must later be restored exactly.
 
 ## Usage
 

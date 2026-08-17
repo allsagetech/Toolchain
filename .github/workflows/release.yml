@@ -38,6 +38,10 @@ jobs:
             os: ubuntu-22.04
             shell: pwsh
             coverage: 0
+          - name: macOS PowerShell 7
+            os: macos-15
+            shell: pwsh
+            coverage: 0
     env:
       TOOLCHAIN_COVERAGE_TARGET: ${{ matrix.coverage }}
     steps:
@@ -74,8 +78,8 @@ jobs:
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
           .\test.ps1
 
-      - name: Run cross-platform registry and archive suite (PowerShell 7 on Linux)
-        if: runner.os == 'Linux'
+      - name: Run cross-platform client suite (PowerShell 7 on Linux and macOS)
+        if: runner.os == 'Linux' || runner.os == 'macOS'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -85,6 +89,12 @@ jobs:
             '.\src\http.Tests.ps1'
             '.\src\tar.Tests.ps1'
             '.\src\registry.Tests.ps1'
+            '.\src\registry-transport.Tests.ps1'
+            '.\src\registry-credentials.Tests.ps1'
+            '.\src\project.Tests.ps1'
+            '.\src\environment.Tests.ps1'
+            '.\src\shell.Tests.ps1'
+            '.\build.Tests.ps1'
           )
           .\test.ps1 -Paths $paths
 
@@ -96,9 +106,32 @@ jobs:
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
           .\test.ps1
 
+  agent:
+    name: Validate Toolchain agent
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: agent/go.mod
+          cache: false
+
+      - name: Test admission and registry gateway
+        working-directory: agent
+        run: go test ./...
+
+      - name: Build minimal agent image
+        run: docker build --tag toolchain-agent:test ./agent
+
   release:
     name: Publish signed release
-    needs: validate
+    needs: [validate, agent]
     runs-on: ubuntu-22.04
     timeout-minutes: 20
     environment: toolchain-release
@@ -106,6 +139,7 @@ jobs:
       contents: write
       id-token: write
       attestations: write
+      packages: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -121,6 +155,46 @@ jobs:
           if ($tagVersion -ne $moduleVersion) {
             throw "Tag version '$tagVersion' does not match VERSION '$moduleVersion'."
           }
+          "AGENT_IMAGE=ghcr.io/allsagetech/toolchain-agent:$tagVersion" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+
+      - name: Authenticate to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Refuse to overwrite an existing agent release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if docker buildx imagetools inspect "$AGENT_IMAGE" >/dev/null 2>&1; then
+            echo "::error title=Immutable agent tag already exists::$AGENT_IMAGE cannot be overwritten."
+            exit 1
+          fi
+
+      - name: Build and publish multi-architecture Toolchain agent
+        id: agent-build
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        with:
+          context: ./agent
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ env.AGENT_IMAGE }}
+          provenance: mode=max
+          sbom: true
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Sign the immutable Toolchain agent digest
+        shell: bash
+        env:
+          AGENT_DIGEST: ${{ steps.agent-build.outputs.digest }}
+        run: cosign sign --yes "$AGENT_IMAGE@$AGENT_DIGEST"
 
       - name: Build release archive and checksums
         id: package

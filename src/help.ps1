@@ -80,17 +80,17 @@ function Get-ToolchainHelpTopics {
 		-Description 'Downloads package content into the local Toolchain store.' `
 		-Usage @('tlc pull [PACKAGE[:TAG] ...]') `
 		-Examples @('tlc pull node', 'tlc pull git:latest node:20') `
-		-Notes @('When no package is supplied, Toolchain uses $ToolchainPackages from the nearest Toolchain.ps1 file.')
+		-Notes @('When no package is supplied, Toolchain uses the nearest toolchain.yaml or legacy Toolchain.ps1 project.')
 	$topics.load = New-ToolchainHelpTopic `
 		-Description 'Loads packages into the current PowerShell session.' `
 		-Usage @('tlc load [PACKAGE[:TAG] ...]') `
 		-Examples @('tlc load node', 'tlc load git:latest go') `
-		-Notes @('When no package is supplied, Toolchain uses $ToolchainPackages from the nearest Toolchain.ps1 file.')
+		-Notes @('When no package is supplied, Toolchain uses the nearest toolchain.yaml or legacy Toolchain.ps1 project.')
 	$topics.exec = New-ToolchainHelpTopic `
 		-Description 'Runs a PowerShell script block with one or more Toolchain packages loaded.' `
 		-Usage @('tlc exec [PACKAGE[:TAG] ...] [SCRIPTBLOCK]') `
 		-Examples @("tlc exec go { go version }", "tlc exec node { node --version }") `
-		-Notes @('When no script block is supplied, Toolchain opens a nested PowerShell prompt.', 'When no package is supplied, Toolchain uses the nearest Toolchain.ps1 configuration.')
+		-Notes @('When no script block is supplied, Toolchain opens a nested PowerShell prompt.', 'When no package is supplied, Toolchain uses the nearest project configuration.')
 	$topics.run = New-ToolchainHelpTopic `
 		-Description 'Runs a Toolchain<Name> function defined in the nearest Toolchain.ps1 project file.' `
 		-Usage @('tlc run FUNCTION [ARGUMENT ...]') `
@@ -117,12 +117,12 @@ function Get-ToolchainHelpTopics {
 			'-Index          Write toolchain.index.json for the saved repository.'
 		) `
 		-Examples @('tlc save -Output .\toolchain-cache node git', 'tlc save -Output .\toolchain-cache -Sign -Index node') `
-		-Notes @('When no package is supplied, Toolchain uses $ToolchainPackages from the nearest Toolchain.ps1 file.')
+		-Notes @('When no package is supplied, Toolchain uses the nearest toolchain.yaml or legacy Toolchain.ps1 project.')
 	$topics.init = New-ToolchainHelpTopic `
-		-Description 'Writes a starter Toolchain.ps1 project file in the current directory.' `
-		-Usage @('tlc init [-Force]') `
-		-Options @('-Force    Replace an existing Toolchain.ps1 file.') `
-		-Examples @('tlc init', 'tlc init -Force')
+		-Description 'Writes a starter declarative toolchain.yaml project manifest.' `
+		-Usage @('tlc init [-Force] [-Legacy]') `
+		-Options @('-Force     Replace an existing destination file.', '-Legacy    Write the legacy executable Toolchain.ps1 format instead.') `
+		-Examples @('tlc init', 'tlc init -Force', 'tlc init -Legacy')
 	$topics.lock = New-ToolchainHelpTopic `
 		-Description 'Resolves project packages to exact platform manifest digests and writes Toolchain.lock.json.' `
 		-Usage @('tlc lock [PACKAGE...] [-Path PATH]', 'tlc lock -Update PACKAGE [PACKAGE...] [-Path PATH]') `
@@ -131,6 +131,21 @@ function Get-ToolchainHelpTopics {
 		-Description 'Restores every package from the exact digests in Toolchain.lock.json.' `
 		-Usage @('tlc restore [-Path PATH]') `
 		-Examples @('tlc restore', 'tlc restore -Path .\ci\Toolchain.lock.json')
+	$topics.sync = New-ToolchainHelpTopic `
+		-Description 'Converges the project manifest, lock file, and installed packages in one operation.' `
+		-Usage @('tlc sync [-Update] [-Frozen] [-NoRestore] [-Activate] [-Path PATH]') `
+		-Options @('-Update       Resolve the newest versions allowed by the manifest.', '-Frozen       Fail instead of creating or refreshing a stale lock.', '-NoRestore    Resolve and lock without pulling package content.', '-Activate     Activate the synchronized environment.', '-Path PATH    Select another lock-file path.', '-PassThru     Return a structured Toolchain.SyncResult.') `
+		-Examples @('tlc sync', 'tlc sync -Frozen', 'tlc sync -Update -Activate')
+	$topics.activate = New-ToolchainHelpTopic `
+		-Description 'Synchronizes and loads the project packages into the current PowerShell session.' `
+		-Usage @('tlc activate [-NoSync] [-Path PATH] [-PassThru]') `
+		-Options @('-NoSync      Load the resolved project without synchronizing first.', '-Path PATH    Select another lock-file path for synchronization.', '-PassThru     Return activation metadata.') `
+		-Examples @('tlc activate', 'tlc activate -NoSync') `
+		-Notes @('Only one project environment can be active in a session. Activation is idempotent for the same project.')
+	$topics.deactivate = New-ToolchainHelpTopic `
+		-Description 'Restores every environment value changed by the active Toolchain project.' `
+		-Usage @('tlc deactivate [-PassThru]') `
+		-Examples @('tlc deactivate')
 	$topics.verify = New-ToolchainHelpTopic `
 		-Description 'Verifies package index and platform-manifest signatures with Cosign.' `
 		-Usage @('tlc verify [PACKAGE[:TAG] ...] [-Json]') `
@@ -191,12 +206,13 @@ function Get-ToolchainHelpTopics {
 		-Usage @('tlc cluster COMMAND [ARGUMENTS] [OPTIONS]', 'tlc cluster COMMAND help') `
 		-Commands @(
 			'create        Create a kind, k0s, or K3s-on-k3d cluster.',
+			'init          Bootstrap Toolchain-owned registry and admission infrastructure.',
 			'list          List managed clusters.',
 			'status        Show one managed cluster and its runtime status.',
 			'kubeconfig    Return a managed kubeconfig path or contents.',
 			'delete        Delete a managed cluster and its local state.'
 		) `
-		-Examples @('tlc cluster create help', 'tlc cluster list') `
+		-Examples @('tlc cluster create help', 'tlc cluster init -Confirm', 'tlc cluster list') `
 		-Notes @('Kind supports Docker, Podman, and nerdctl. K3d supports Docker and experimental Podman operation.')
 	$topics.'cluster create' = New-ToolchainHelpTopic `
 		-Description 'Creates an isolated local Kubernetes development cluster.' `
@@ -213,6 +229,27 @@ function Get-ToolchainHelpTopics {
 		) `
 		-Examples @('tlc cluster create dev -Provider kind', 'tlc cluster create dev -Provider k3s -Workers 2', 'tlc cluster create dev -Provider k0s -Image docker.io/k0sproject/k0s:v1.32.4-k0s.0') `
 		-Notes @('k0s requires an explicitly versioned image and supports one combined controller/worker container.', '-Config cannot be combined with -Servers, -Workers, or -ApiPort.')
+	$topics.'cluster init' = New-ToolchainHelpTopic `
+		-Description 'Natively prepares a Kubernetes cluster with Toolchain registry, state, and image-mutation infrastructure.' `
+		-Usage @('tlc cluster init [NAME] -Confirm [-Kubeconfig PATH] [-Components git-server] [-AgentMutationPolicy all|labeled] [-StorageClass NAME] [-RegistryStorage SIZE] [-GitStorage SIZE] [-RegistryNodePort PORT] [-WaitSeconds SECONDS] [-PassThru]') `
+		-Options @(
+			'NAME                         Initialize a Toolchain-managed cluster.',
+			'-Kubeconfig PATH             Initialize an external cluster through an explicit kubeconfig.',
+			'-Confirm                     Required non-interactive acknowledgement of cluster changes.',
+			'-Components git-server      Also install the Toolchain Git service.',
+			'-AgentMutationPolicy VALUE  Mutate known images globally (all) or only labeled Pods (labeled).',
+			'-StorageClass NAME          Storage class for persistent registry and Git volumes.',
+			'-RegistryStorage SIZE       Registry PVC size. Default: 20Gi.',
+			'-GitStorage SIZE            Git PVC size. Default: 10Gi.',
+			'-RegistryNodePort PORT      Node-local registry port from 30000 through 32767. Default: 31999.',
+			'-AgentImage REF             Override the Toolchain admission-agent image.',
+			'-RegistryImage REF          Override the digest-pinned registry image.',
+			'-GitImage REF               Override the digest-pinned Git image.',
+			'-WaitSeconds SECONDS        Rollout timeout from 30 through 1800. Default: 120.',
+			'-PassThru                   Return structured initialization details.'
+		) `
+		-Examples @('tlc cluster init -Confirm', 'tlc cluster init dev -Confirm', 'tlc cluster init -Kubeconfig .\kubeconfig.yaml -Confirm -Components git-server') `
+		-Notes @('This is a Toolchain-native implementation and does not install or invoke third-party bootstrap tooling.', 'Only exact image references present in the Toolchain mapping ConfigMap are mutated.', 'Registry pulls are anonymous through the node-local gateway; writes require the generated Kubernetes Secret.', 'Repeated runs preserve credentials and mappings, then use server-side apply as an upgrade.')
 	$topics.'cluster list' = New-ToolchainHelpTopic `
 		-Description 'Lists clusters managed by Toolchain.' `
 		-Usage @('tlc cluster list [-Provider kind|k0s|k3s]') `
@@ -346,9 +383,12 @@ function Invoke-ToolchainHelp {
 			'prune          Delete unreferenced package content.',
 			'remove         Remove local package tags and content.',
 			'save           Create an offline package repository.',
-			'init           Create a starter Toolchain.ps1 file.',
+			'init           Create a starter toolchain.yaml file.',
 			'lock           Pin project packages to immutable platform digests.',
 			'restore        Restore packages from Toolchain.lock.json.',
+			'sync           Converge the project, lock, and installed packages.',
+			'activate       Activate the project environment in this session.',
+			'deactivate     Restore the pre-activation environment.',
 			'verify         Verify package signatures.',
 			'audit          Audit project reproducibility and supply-chain status.',
 			'profile        Manage PowerShell profile package loads.',

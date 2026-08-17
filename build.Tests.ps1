@@ -23,7 +23,7 @@ Describe 'Toolchain release build' {
 			Pop-Location
 		}
 
-		$manifestPath = Join-Path $repoRoot 'build\Toolchain\Toolchain.psd1'
+		$manifestPath = Join-Path (Join-Path (Join-Path $repoRoot 'build') 'Toolchain') 'Toolchain.psd1'
 		$manifest = Test-ModuleManifest -Path $manifestPath -ErrorAction Stop
 		$manifest.Version.ToString() | Should -Be ((Get-Content -LiteralPath (Join-Path $repoRoot 'VERSION') -Raw).Trim())
 		$manifest.ExportedFunctions.Keys | Should -Contain 'Invoke-Toolchain'
@@ -31,5 +31,6 @@ Describe 'Toolchain release build' {
 		foreach ($fileName in @('README.md', 'CHANGELOG.md', 'LICENSE.md', 'ATTRIBUTION.md', 'COPYRIGHT.md', 'TRADEMARKS.md', 'SECURITY.md')) {
 			Test-Path -LiteralPath (Join-Path (Split-Path -Parent $manifestPath) $fileName) | Should -BeTrue
 		}
+		Test-Path -LiteralPath (Join-Path (Join-Path (Split-Path -Parent $manifestPath) 'schema') 'toolchain-project.schema.json') | Should -BeTrue
 	}
 }
