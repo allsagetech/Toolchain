@@ -135,7 +135,16 @@ registry, node-local registry gateway, cluster state, exact-match image-mapping
 configuration, and Toolchain admission agent. `-Confirm` is required so
 cluster changes are explicitly acknowledged. A managed cluster name and an
 explicit `-Kubeconfig` are mutually exclusive; with neither, kubectl's current
-context is used.
+context is used. If `tlc cluster use` selected a managed cluster, `init` detects
+that selection and treats it as the managed cluster target.
+
+For a Toolchain-managed kind, K3s, or k0s cluster, initialization builds the
+admission agent from the source bundled with the installed module and imports
+the content-addressed local image into that cluster's node runtime. This avoids
+a dependency on a separately published admission-agent image. Supply
+`-AgentImage` to skip the local build and use an external or preloaded image
+instead. An explicit external kubeconfig continues to use the version-matched
+published image unless `-AgentImage` is provided.
 
 The registry gateway listens on node port `31999` by default and is recorded as
 `127.0.0.1:31999`. Pulls are anonymous so workloads in any namespace can use
@@ -168,15 +177,17 @@ $encoded = kubectl get secret toolchain-git-admin -n toolchain-system `
 
 Repeat initialization to reconcile or upgrade the installation. Toolchain uses
 server-side apply and preserves registry credentials, Git credentials, and
-image mappings. Component images are digest-pinned by default; the Toolchain
-agent image matches the installed module version.
+image mappings. Registry and Git images are digest-pinned by default; the local
+Toolchain agent tag includes the installed module version and a build-context
+digest.
 
 Initialization does not invoke an external bootstrap product. On a connected
-cluster, Kubernetes pulls missing component images normally. On a disconnected
-cluster, preload the three digest-pinned component images on every schedulable
-node before running init, or override their references with `-AgentImage`,
-`-RegistryImage`, and `-GitImage`. The current command does not inject image
-archives into arbitrary cluster runtimes.
+cluster, Kubernetes pulls missing registry and optional Git images normally.
+For disconnected managed clusters, preload those images on every schedulable
+node before running init or override their references with `-RegistryImage` and
+`-GitImage`; Toolchain imports its locally built agent automatically. For an
+arbitrary external cluster runtime, preload all required images or override
+their references with `-AgentImage`, `-RegistryImage`, and `-GitImage`.
 
 ## Delete
 

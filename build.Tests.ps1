@@ -32,5 +32,10 @@ Describe 'Toolchain release build' {
 			Test-Path -LiteralPath (Join-Path (Split-Path -Parent $manifestPath) $fileName) | Should -BeTrue
 		}
 		Test-Path -LiteralPath (Join-Path (Join-Path (Split-Path -Parent $manifestPath) 'schema') 'toolchain-project.schema.json') | Should -BeTrue
+		foreach ($fileName in @('Dockerfile', 'go.mod', 'main.go')) {
+			$agentFile = Join-Path (Join-Path (Split-Path -Parent $manifestPath) 'agent') $fileName
+			Test-Path -LiteralPath $agentFile -PathType Leaf | Should -BeTrue
+			$manifest.FileList | Should -Contain $agentFile
+		}
 	}
 }

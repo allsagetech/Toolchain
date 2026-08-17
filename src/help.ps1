@@ -244,14 +244,14 @@ function Get-ToolchainHelpTopics {
 			'-RegistryStorage SIZE       Registry PVC size. Default: 20Gi.',
 			'-GitStorage SIZE            Git PVC size. Default: 10Gi.',
 			'-RegistryNodePort PORT      Node-local registry port from 30000 through 32767. Default: 31999.',
-			'-AgentImage REF             Override the Toolchain admission-agent image.',
+			'-AgentImage REF             Skip the managed-cluster local build and use this admission-agent image.',
 			'-RegistryImage REF          Override the digest-pinned registry image.',
 			'-GitImage REF               Override the digest-pinned Git image.',
 			'-WaitSeconds SECONDS        Rollout timeout from 30 through 1800. Default: 120.',
 			'-PassThru                   Return structured initialization details.'
 		) `
 		-Examples @('tlc cluster init -Confirm', 'tlc cluster init dev -Confirm', 'tlc cluster init dev -Confirm -Components none', 'tlc cluster init -Kubeconfig .\kubeconfig.yaml -Confirm -Components git-server') `
-		-Notes @("When -Components is omitted, Toolchain asks whether to install the optional Git server; the default answer is no.", 'This is a Toolchain-native implementation and does not install or invoke third-party bootstrap tooling.', 'Only exact image references present in the Toolchain mapping ConfigMap are mutated.', 'Registry pulls are anonymous through the node-local gateway; writes require the generated Kubernetes Secret.', 'Repeated runs preserve credentials and mappings, then use server-side apply as an upgrade.')
+		-Notes @("When -Components is omitted, Toolchain asks whether to install the optional Git server; the default answer is no.", 'Managed clusters build the admission agent locally and import it into their node runtime; -AgentImage overrides that behavior.', 'This is a Toolchain-native implementation and does not install or invoke third-party bootstrap tooling.', 'Only exact image references present in the Toolchain mapping ConfigMap are mutated.', 'Registry pulls are anonymous through the node-local gateway; writes require the generated Kubernetes Secret.', 'Repeated runs preserve credentials and mappings, then use server-side apply as an upgrade.')
 	$topics.'cluster list' = New-ToolchainHelpTopic `
 		-Description 'Lists clusters managed by Toolchain.' `
 		-Usage @('tlc cluster list [-Provider kind|k0s|k3s]') `

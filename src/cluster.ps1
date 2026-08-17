@@ -152,6 +152,95 @@ function Resolve-ToolchainContainerEngine {
 	throw "no ready Linux container engine was found for $Provider; install and start $requested"
 }
 
+function Resolve-ToolchainAgentBuildContext {
+	$candidates = @(
+		(Join-Path $PSScriptRoot 'agent'),
+		(Join-Path (Split-Path -Parent $PSScriptRoot) 'agent')
+	)
+	$requiredFiles = @('Dockerfile', 'go.mod', 'main.go')
+	foreach ($candidate in $candidates) {
+		if (-not (Test-Path -LiteralPath $candidate -PathType Container)) { continue }
+		$root = (Resolve-Path -LiteralPath $candidate -ErrorAction Stop).Path
+		$rootItem = Get-Item -LiteralPath $root -Force
+		if ($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+			throw "refusing to build the Toolchain agent through a link or reparse point: $root"
+		}
+		foreach ($fileName in $requiredFiles) {
+			$path = Join-Path $root $fileName
+			if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+				throw "Toolchain agent build context is incomplete; missing: $path"
+			}
+			$item = Get-Item -LiteralPath $path -Force
+			if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+				throw "refusing to build the Toolchain agent from a linked file: $path"
+			}
+		}
+		return $root
+	}
+	throw 'Toolchain agent build context was not found; reinstall Toolchain or provide -AgentImage explicitly'
+}
+
+function Get-ToolchainLocalAgentImage {
+	param([Parameter(Mandatory)][string]$BuildContext)
+
+	$module = Get-Module -Name Toolchain | Select-Object -First 1
+	$version = if ($module -and $module.Version) { [string]$module.Version } else {
+		$versionPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'VERSION'
+		if (Test-Path -LiteralPath $versionPath -PathType Leaf) { (Get-Content -LiteralPath $versionPath -Raw).Trim() } else { 'dev' }
+	}
+	$hashMaterial = New-Object Text.StringBuilder
+	foreach ($fileName in @('Dockerfile', 'go.mod', 'main.go')) {
+		$fileHash = (Get-FileHash -LiteralPath (Join-Path $BuildContext $fileName) -Algorithm SHA256).Hash.ToLowerInvariant()
+		[void]$hashMaterial.Append($fileName).Append(':').Append($fileHash).Append("`n")
+	}
+	$sha = [Security.Cryptography.SHA256]::Create()
+	try {
+		$bytes = [Text.Encoding]::UTF8.GetBytes($hashMaterial.ToString())
+		$digest = ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant().Substring(0, 12)
+	} finally { $sha.Dispose() }
+	return "toolchain-agent:$version-local-$digest"
+}
+
+function Publish-ToolchainLocalAgentImage {
+	param([Parameter(Mandatory)][string]$Name)
+
+	$state = Read-ToolchainClusterState -Name $Name
+	if (-not $state) { throw "Toolchain cluster not found: $Name" }
+	$provider = [string]$state.provider
+	$engineName = if ($state.engine) { [string]$state.engine } else { 'docker' }
+	$engine = Resolve-ToolchainContainerEngine -Engine $engineName -Provider $provider
+	$context = Resolve-ToolchainAgentBuildContext
+	$image = Get-ToolchainLocalAgentImage -BuildContext $context
+
+	Write-ToolchainInfo "Building local Toolchain admission-agent image '$image'."
+	$null = Invoke-ToolchainClusterProcess -FilePath $engine.Path -Arguments @('build', '--tag', $image, $context)
+	switch ($provider) {
+		'kind' {
+			$kind = Get-ToolchainClusterExecutable -Name 'kind' -Package 'kind' -InstallHint 'Install kind to import the Toolchain agent image.'
+			$null = Invoke-ToolchainKindProcess -FilePath $kind -Arguments @('load', 'docker-image', $image, '--name', $Name) -Engine $engineName
+		}
+		'k3s' {
+			$k3d = Get-ToolchainClusterExecutable -Name 'k3d' -Package 'k3d' -InstallHint 'Install k3d to import the Toolchain agent image.'
+			$null = Invoke-ToolchainClusterProcess -FilePath $k3d -Arguments @('image', 'import', $image, '--cluster', $Name)
+		}
+		'k0s' {
+			$archive = Join-Path ([IO.Path]::GetTempPath()) ("toolchain-agent-$([guid]::NewGuid().ToString('n')).tar")
+			$container = "toolchain-k0s-$Name"
+			$containerArchive = '/tmp/toolchain-agent.tar'
+			try {
+				$null = Invoke-ToolchainClusterProcess -FilePath $engine.Path -Arguments @('save', '--output', $archive, $image)
+				$null = Invoke-ToolchainClusterProcess -FilePath $engine.Path -Arguments @('cp', $archive, "${container}:${containerArchive}")
+				$null = Invoke-ToolchainClusterProcess -FilePath $engine.Path -Arguments @('exec', $container, 'k0s', 'ctr', 'images', 'import', $containerArchive)
+			} finally {
+				$null = Invoke-ToolchainClusterProcess -FilePath $engine.Path -Arguments @('exec', $container, 'rm', '-f', $containerArchive) -AllowFailure
+				if (Test-Path -LiteralPath $archive -PathType Leaf) { [IO.File]::Delete($archive) }
+			}
+		}
+	}
+	Write-ToolchainInfo "Imported local Toolchain admission-agent image into cluster '$Name'."
+	return $image
+}
+
 function Assert-ToolchainDockerReady {
 	# Retained as an internal compatibility shim for callers that explicitly require
 	# Docker. New cluster creation uses Resolve-ToolchainContainerEngine so that
@@ -605,6 +694,11 @@ function Invoke-ToolchainCluster {
 
 	switch ($Command) {
 		'init' {
+			if (-not $Confirm) { throw "cluster init changes Kubernetes cluster state; rerun with -Confirm after reviewing 'tlc cluster init help'" }
+			if (-not $Name -and -not $Kubeconfig) {
+				$currentContext = Get-ToolchainCurrentClusterContext
+				if ($currentContext) { $Name = $currentContext.Name }
+			}
 			$params = @{
 				Name = $Name
 				Kubeconfig = $Kubeconfig
@@ -619,7 +713,11 @@ function Invoke-ToolchainCluster {
 				PassThru = $PassThru
 			}
 			if ($PSBoundParameters.ContainsKey('Components')) { $params.Components = $Components }
-			if ($AgentImage) { $params.AgentImage = $AgentImage }
+			if ($PSBoundParameters.ContainsKey('AgentImage')) {
+				$params.AgentImage = $AgentImage
+			} elseif ($Name) {
+				$params.AgentImage = Publish-ToolchainLocalAgentImage -Name $Name
+			}
 			if ($RegistryImage) { $params.RegistryImage = $RegistryImage }
 			if ($GitImage) { $params.GitImage = $GitImage }
 			return (Invoke-ToolchainClusterInit @params)

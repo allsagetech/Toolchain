@@ -20,6 +20,10 @@
 - Retain CI logs for an explicit 14-day period and document permanent release-evidence retention.
 - Verify official `allsagetech/toolchains` package digests with the protected GitHub Actions Cosign identity by default, while preserving explicit policy and diagnostic overrides.
 
+### Fixed
+
+- Build and import the admission agent locally when initializing managed clusters, removing the dependency on an unpublished versioned agent image.
+
 ## 2.4.0 - 2026-08-15
 
 ### Added

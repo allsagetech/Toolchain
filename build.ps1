@@ -120,6 +120,9 @@ try {
 	FileList = @(
 		'Toolchain.psm1',
 		'Toolchain.Format.ps1xml',
+		'agent/Dockerfile',
+		'agent/go.mod',
+		'agent/main.go',
 		'schema/toolchain-project.schema.json',
 		'README.md',
 		'CHANGELOG.md',
@@ -181,6 +184,11 @@ try {
 	$schemaStage = Join-Path $stageDir 'schema'
 	New-Item -Path $schemaStage -ItemType Directory -ErrorAction Stop | Out-Null
 	Copy-Item -LiteralPath (Join-Path (Join-Path $PSScriptRoot 'schema') 'toolchain-project.schema.json') -Destination $schemaStage -ErrorAction Stop
+	$agentStage = Join-Path $stageDir 'agent'
+	New-Item -Path $agentStage -ItemType Directory -ErrorAction Stop | Out-Null
+	foreach ($fileName in @('Dockerfile', 'go.mod', 'main.go')) {
+		Copy-Item -LiteralPath (Join-Path (Join-Path $PSScriptRoot 'agent') $fileName) -Destination $agentStage -ErrorAction Stop
+	}
 
 	Test-ToolchainBuiltModule -ManifestPath (Join-Path $stageDir 'Toolchain.psd1')
 

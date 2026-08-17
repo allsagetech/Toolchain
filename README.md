@@ -92,7 +92,9 @@ kubectl get nodes
 ```
 
 Bootstrap Toolchain's registry, state, and exact-match admission agent into that
-cluster—or any explicit kubeconfig—without another bootstrap CLI:
+cluster—or any explicit kubeconfig—without another bootstrap CLI. For managed
+clusters, Toolchain builds the admission agent locally and imports it into the
+cluster runtime, so initialization does not depend on a published agent image:
 
 ```powershell
 tlc cluster init dev -Confirm

@@ -29,6 +29,10 @@ BeforeAll {
 }
 
 Describe 'Toolchain cluster validation' {
+	BeforeEach {
+		Mock Publish-ToolchainLocalAgentImage { 'toolchain-agent:2.4.0-local-test' }
+	}
+
 	It 'accepts portable DNS-label cluster names' {
 		{ Assert-ToolchainClusterName -Name 'dev-1' } | Should -Not -Throw
 	}
@@ -122,9 +126,32 @@ Describe 'Toolchain cluster validation' {
 	It 'routes native cluster initialization without invoking a provider' {
 		Mock Invoke-ToolchainClusterInit { 'initialized' }
 		Invoke-ToolchainCluster -Command init -Name dev -Confirm -Components git-server -AgentMutationPolicy labeled -PassThru | Should -Be 'initialized'
+		Should -Invoke Publish-ToolchainLocalAgentImage -Times 1 -Exactly -ParameterFilter { $Name -eq 'dev' }
 		Should -Invoke Invoke-ToolchainClusterInit -Times 1 -Exactly -ParameterFilter {
-			$Name -eq 'dev' -and $Confirm -and $Components -contains 'git-server' -and $AgentMutationPolicy -eq 'labeled' -and $PassThru
+			$Name -eq 'dev' -and $Confirm -and $Components -contains 'git-server' -and $AgentMutationPolicy -eq 'labeled' -and
+			$AgentImage -eq 'toolchain-agent:2.4.0-local-test' -and $PassThru
 		}
+	}
+
+	It 'uses the selected managed cluster for initialization and its local agent build' {
+		Mock Get-ToolchainCurrentClusterContext { [pscustomobject]@{ Name = 'dev'; Provider = 'k3s'; Kubeconfig = 'managed.yaml' } }
+		Mock Invoke-ToolchainClusterInit {}
+
+		Invoke-ToolchainCluster -Command init -Confirm -Components none
+
+		Should -Invoke Publish-ToolchainLocalAgentImage -Times 1 -Exactly -ParameterFilter { $Name -eq 'dev' }
+		Should -Invoke Invoke-ToolchainClusterInit -Times 1 -Exactly -ParameterFilter {
+			$Name -eq 'dev' -and $AgentImage -eq 'toolchain-agent:2.4.0-local-test'
+		}
+	}
+
+	It 'honors an explicit agent image without building locally' {
+		Mock Invoke-ToolchainClusterInit {}
+
+		Invoke-ToolchainCluster -Command init -Name dev -Confirm -Components none -AgentImage 'registry.example/agent:1'
+
+		Should -Invoke Publish-ToolchainLocalAgentImage -Times 0 -Exactly
+		Should -Invoke Invoke-ToolchainClusterInit -Times 1 -Exactly -ParameterFilter { $AgentImage -eq 'registry.example/agent:1' }
 	}
 
 	It 'preserves interactive component selection when Components is omitted' {
@@ -139,6 +166,42 @@ Describe 'Toolchain cluster validation' {
 
 		Invoke-ToolchainCluster -Command init -Name dev -Confirm -Components none
 		$script:clusterInitShouldPrompt | Should -BeFalse
+	}
+}
+
+Describe 'Toolchain local cluster agent image' {
+	It 'derives a repeatable content-addressed local image tag' {
+		$context = Join-Path $TestDrive 'agent'
+		New-Item -Path $context -ItemType Directory | Out-Null
+		foreach ($fileName in @('Dockerfile', 'go.mod', 'main.go')) {
+			[IO.File]::WriteAllText((Join-Path $context $fileName), $fileName, [Text.UTF8Encoding]::new($false))
+		}
+
+		$first = Get-ToolchainLocalAgentImage -BuildContext $context
+		$second = Get-ToolchainLocalAgentImage -BuildContext $context
+		$first | Should -BeExactly $second
+		$first | Should -Match '^toolchain-agent:[0-9.]+-local-[0-9a-f]{12}$'
+
+		[IO.File]::AppendAllText((Join-Path $context 'main.go'), 'changed')
+		(Get-ToolchainLocalAgentImage -BuildContext $context) | Should -Not -BeExactly $first
+	}
+
+	It 'builds and imports the local agent into a managed K3s cluster' {
+		Mock Read-ToolchainClusterState { [pscustomobject]@{ name = 'dev'; provider = 'k3s'; engine = 'docker' } }
+		Mock Resolve-ToolchainContainerEngine { [pscustomobject]@{ Name = 'docker'; Path = 'docker.exe' } }
+		Mock Resolve-ToolchainAgentBuildContext { 'C:\agent' }
+		Mock Get-ToolchainLocalAgentImage { 'toolchain-agent:2.4.0-local-test' }
+		Mock Get-ToolchainClusterExecutable { 'k3d.exe' }
+		Mock Invoke-ToolchainClusterProcess { New-TestClusterProcessResult }
+
+		Publish-ToolchainLocalAgentImage -Name dev | Should -BeExactly 'toolchain-agent:2.4.0-local-test'
+
+		Should -Invoke Invoke-ToolchainClusterProcess -Times 1 -Exactly -ParameterFilter {
+			$FilePath -eq 'docker.exe' -and ($Arguments -join ' ') -eq 'build --tag toolchain-agent:2.4.0-local-test C:\agent'
+		}
+		Should -Invoke Invoke-ToolchainClusterProcess -Times 1 -Exactly -ParameterFilter {
+			$FilePath -eq 'k3d.exe' -and ($Arguments -join ' ') -eq 'image import toolchain-agent:2.4.0-local-test --cluster dev'
+		}
 	}
 }
 
