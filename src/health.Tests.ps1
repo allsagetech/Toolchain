@@ -106,7 +106,7 @@ Describe 'Toolchain package health views' {
 	It 'filters, sorts, and normalizes signed health entries' {
 		Mock Get-ToolchainHealthCatalog {
 			[pscustomobject]@{ packages = @(
-				[pscustomobject]@{ name='zeta'; state='scan-blocked'; reason='CVE'; versions=@('1'); platforms=@('linux/amd64'); lastScannedAt='2026-08-15T00:00:00Z'; digest='sha256:z'; upstream='https://example.test/z' },
+				[pscustomobject]@{ name='zeta'; state='scan-blocked'; reason='CVE'; versions=@('1'); platforms=@('linux/amd64'); lastScannedAt='2026-08-15T00:00:00Z'; stateSince='2026-08-14T00:00:00Z'; lastCleanScannedAt='2026-08-07T00:00:00Z'; digest='sha256:z'; upstream='https://example.test/z' },
 				[pscustomobject]@{ name='alpha'; state='available'; reason=''; versions=@('2'); platforms=@('windows/amd64'); lastScannedAt=$null; digest='sha256:a'; upstream='https://example.test/a' }
 			) }
 		}
@@ -114,6 +114,9 @@ Describe 'Toolchain package health views' {
 		$all.Name | Should -Be @('alpha','zeta')
 		$all[0].PSTypeNames | Should -Contain 'Toolchain.PackageHealth'
 		$all[1].LastScannedAt | Should -BeOfType [datetime]
+		$all[1].StateSince | Should -BeOfType [datetime]
+		$all[1].LastCleanScannedAt | Should -BeOfType [datetime]
+		$all[0].StateSince | Should -BeNullOrEmpty
 		@(Get-ToolchainPackageHealth -OnlyProblems).Name | Should -Be @('zeta')
 		(Get-ToolchainPackageHealth -Package ALPHA).Name | Should -Be 'alpha'
 	}

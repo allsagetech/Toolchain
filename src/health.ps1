@@ -110,6 +110,8 @@ function Get-ToolchainPackageHealth {
 				versions = @($_.Value | ForEach-Object { $_.ToString() })
 				platforms = @()
 				lastScannedAt = $null
+				stateSince = $null
+				lastCleanScannedAt = $null
 				digest = $null
 				upstream = $null
 			}
@@ -128,6 +130,8 @@ function Get-ToolchainPackageHealth {
 			BlockedVersions = [string[]]@($_.blockedVersions | Where-Object { $null -ne $_ -and [string]$_ })
 			Platforms = @($_.platforms)
 			LastScannedAt = if ($_.lastScannedAt) { [datetime]::Parse([string]$_.lastScannedAt).ToLocalTime() } else { $null }
+			StateSince = if ($_.stateSince) { [datetime]::Parse([string]$_.stateSince).ToLocalTime() } else { $null }
+			LastCleanScannedAt = if ($_.lastCleanScannedAt) { [datetime]::Parse([string]$_.lastCleanScannedAt).ToLocalTime() } else { $null }
 			Digest = [string]$_.digest
 			Upstream = [string]$_.upstream
 		}

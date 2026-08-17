@@ -5,6 +5,7 @@
 ### Added
 
 - Add safe `tlc audit -Fix` remediation with preview, policy/health/signature refusal gates, atomic lock refresh, package restore, and post-fix verification.
+- Expose package-health state-transition and last-clean-scan timestamps for remediation SLO monitoring.
 
 ### Changed
 

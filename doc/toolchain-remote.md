@@ -33,8 +33,9 @@ packages and are excluded from package views.
   Cosign `sha256-<digest>.sig` tags, temporary `staging-*` tags, and Toolchain
   package-kind markers.
 - `health` reads the signed Toolchains health catalog and shows availability,
-  quarantine or scanner state, supported platforms, versions, and upstream
-  location. `-OnlyProblems` hides healthy entries.
+  quarantine or scanner state, supported platforms, versions, state-transition
+  time, latest scan, last clean scan, and upstream location. `-OnlyProblems`
+  hides healthy entries.
 - `info PACKAGE` returns the health record for exactly one logical package.
 - If the signed health catalog is temporarily unavailable, `health` falls back
   to a live registry view and labels the result as fallback metadata.
