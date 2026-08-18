@@ -4,6 +4,7 @@
 
 ### Added
 
+- Add native top-level package variables with validation, prompting, sensitive/file values, config/environment/CLI overrides, auto-indented templates, and Helm value mappings.
 - Add Toolchain-native package metadata, components, required/default/explicit selection, local Helm chart fields, and named manifest groups.
 - Add `tlc package create` and `tlc package deploy` for integrity-indexed Kubernetes bundles containing Helm charts, conventional values/configuration, and declared YAML manifests.
 - Add safe `tlc audit -Fix` remediation with preview, policy/health/signature refusal gates, atomic lock refresh, package restore, and post-fix verification.

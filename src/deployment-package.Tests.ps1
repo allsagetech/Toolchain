@@ -95,6 +95,53 @@ documentation:
 		[IO.File]::WriteAllText((Join-Path $Root 'chart/templates/configmap.yaml'), "apiVersion: v1`nkind: ConfigMap`nmetadata:`n  name: component-demo`n")
 		[IO.File]::WriteAllText((Join-Path $Root 'manifests/configmap.yaml'), "apiVersion: v1`nkind: ConfigMap`nmetadata:`n  name: prerequisite`n")
 	}
+
+	function New-TestVariableDeploymentSource {
+		param([Parameter(Mandatory)][string]$Root)
+		[void][IO.Directory]::CreateDirectory((Join-Path $Root 'chart/templates'))
+		[void][IO.Directory]::CreateDirectory((Join-Path $Root 'manifests'))
+		[IO.File]::WriteAllText((Join-Path $Root 'toolchain.yaml'), @'
+apiVersion: toolchain.allsagetech.com/v1alpha1
+kind: ToolchainPackageConfig
+metadata:
+  name: variable-demo
+  version: 1.0.0
+variables:
+  - name: APP_NAME
+    description: Application name
+    default: default-app
+    pattern: '^[a-z][a-z0-9-]+$'
+  - name: EXTRA_LABELS
+    default: tier-default
+    autoIndent: true
+  - name: FILE_CONTENT
+    default: variable.txt
+    type: file
+    sensitive: true
+components:
+  - name: application
+    required: true
+    manifests:
+      - name: application
+        files:
+          - manifests
+    charts:
+      - name: application
+        localPath: chart
+        releaseName: variable-demo
+        valuesFiles:
+          - chart-values.yaml
+        variables:
+          - name: APP_NAME
+            path: application.name
+'@)
+		[IO.File]::WriteAllText((Join-Path $Root 'toolchain-config.yaml'), "schemaVersion: 1`nvariables:`n  APP_NAME: configured-app`n")
+		[IO.File]::WriteAllText((Join-Path $Root 'variable.txt'), "secret-file-content`n")
+		[IO.File]::WriteAllText((Join-Path $Root 'chart-values.yaml'), "displayName: ###TOOLCHAIN_VAR_APP_NAME###`n")
+		[IO.File]::WriteAllText((Join-Path $Root 'chart/Chart.yaml'), "apiVersion: v2`nname: variable-demo`nversion: 1.0.0`n")
+		[IO.File]::WriteAllText((Join-Path $Root 'chart/templates/configmap.yaml'), "apiVersion: v1`nkind: ConfigMap`nmetadata:`n  name: ###TOOLCHAIN_VAR_APP_NAME###-chart`n")
+		[IO.File]::WriteAllText((Join-Path $Root 'manifests/configmap.yaml'), "apiVersion: v1`nkind: ConfigMap`nmetadata:`n  name: ###TOOLCHAIN_VAR_APP_NAME###`ndata:`n  labels: |`n    ###TOOLCHAIN_VAR_EXTRA_LABELS###`n  file: |`n    ###TOOLCHAIN_VAR_FILE_CONTENT###`n")
+	}
 }
 
 Describe 'Toolchain deployment package creation' {
@@ -175,6 +222,21 @@ Describe 'Toolchain deployment package creation' {
 		} finally { Remove-ToolchainDeploymentTemporaryRoot -Path $expanded.Root }
 	}
 
+	It 'creates an integrity-indexed package with native variable declarations and default files' {
+		$source = Join-Path $TestDrive 'variable-package'
+		New-TestVariableDeploymentSource -Root $source
+		$output = Join-Path $TestDrive 'variable-package.tlcpkg'
+
+		$result = New-ToolchainDeploymentPackage -Path $source -Output $output
+
+		$result.Variables | Should -Be @('APP_NAME', 'EXTRA_LABELS', 'FILE_CONTENT')
+		$expanded = Expand-ToolchainDeploymentPackage -Path $output
+		try {
+			$expanded.Index.variables | Should -Be @('APP_NAME', 'EXTRA_LABELS', 'FILE_CONTENT')
+			Test-Path -LiteralPath (Join-Path $expanded.Root 'variable.txt') -PathType Leaf | Should -BeTrue
+		} finally { Remove-ToolchainDeploymentTemporaryRoot -Path $expanded.Root }
+	}
+
 	It 'rejects unsupported Toolchain component assets explicitly' {
 		$source = Join-Path $TestDrive 'toolchain-images'
 		New-TestToolchainComponentSource -Root $source
@@ -218,14 +280,33 @@ Describe 'Toolchain deployment package deployment' {
 	BeforeEach {
 		$script:kubectlCalls = [Collections.Generic.List[object]]::new()
 		$script:helmCalls = [Collections.Generic.List[object]]::new()
+		$script:appliedManifestContents = [Collections.Generic.List[string]]::new()
+		$script:helmValueContents = [Collections.Generic.List[string]]::new()
+		$script:renderedChartContents = [Collections.Generic.List[string]]::new()
+		$script:renderedPaths = [Collections.Generic.List[string]]::new()
 		Mock Resolve-ToolchainDeploymentKubeconfig { 'managed-kubeconfig.yaml' }
 		Mock Get-ToolchainClusterExecutable { "$Name.exe" }
 		Mock Invoke-ToolchainBootstrapKubectl {
 			$script:kubectlCalls.Add([pscustomobject]@{ Kubectl = $Kubectl; Kubeconfig = $Kubeconfig; Arguments = [string[]]$Arguments })
+			if ($Arguments -contains '-f') {
+				$path = [string]$Arguments[[array]::IndexOf([object[]]$Arguments, '-f') + 1]
+				$script:appliedManifestContents.Add((Get-Content -LiteralPath $path -Raw))
+				$script:renderedPaths.Add($path)
+			}
 			[pscustomobject]@{ ExitCode = 0; Output = @('ok') }
 		}
 		Mock Invoke-ToolchainClusterProcess {
 			$script:helmCalls.Add([pscustomobject]@{ FilePath = $FilePath; Arguments = [string[]]$Arguments })
+			if ($Arguments.Count -gt 3 -and (Test-Path -LiteralPath $Arguments[3] -PathType Container)) {
+				$templatePath = Join-Path $Arguments[3] 'templates/configmap.yaml'
+				if (Test-Path -LiteralPath $templatePath -PathType Leaf) { $script:renderedChartContents.Add((Get-Content -LiteralPath $templatePath -Raw)); $script:renderedPaths.Add([string]$Arguments[3]) }
+			}
+			for ($argumentIndex = 0; $argumentIndex -lt ($Arguments.Count - 1); $argumentIndex++) {
+				if ($Arguments[$argumentIndex] -eq '--values' -and (Test-Path -LiteralPath $Arguments[$argumentIndex + 1] -PathType Leaf)) {
+					$script:helmValueContents.Add((Get-Content -LiteralPath $Arguments[$argumentIndex + 1] -Raw))
+					$script:renderedPaths.Add([string]$Arguments[$argumentIndex + 1])
+				}
+			}
 			[pscustomobject]@{ ExitCode = 0; Output = @() }
 		}
 	}
@@ -290,5 +371,35 @@ Describe 'Toolchain deployment package deployment' {
 		$result.Releases[0].Name | Should -BeExactly 'component-app'
 		$script:helmCalls[0].Arguments | Should -Not -Contain '--wait'
 		$script:helmCalls[0].Arguments | Should -Contain '--skip-schema-validation'
+	}
+
+	It 'resolves and safely templates package variables into manifests, charts, and Helm values' {
+		$source = Join-Path $TestDrive 'variable-deploy'
+		New-TestVariableDeploymentSource -Root $source
+		$labels = "team: platform`nowner: operations"
+
+		$result = Invoke-ToolchainDeploymentPackage -Command deploy -Path $source -Cluster dev -Set @('APP_NAME=command-app', "EXTRA_LABELS=$labels") -Confirm -PassThru
+
+		$result.Variables | Should -Be @('APP_NAME', 'EXTRA_LABELS', 'FILE_CONTENT')
+		$script:appliedManifestContents[0] | Should -Match 'name: command-app'
+		$script:appliedManifestContents[0] | Should -Match "(?m)^    team: platform$"
+		$script:appliedManifestContents[0] | Should -Match "(?m)^    owner: operations$"
+		$script:appliedManifestContents[0] | Should -Match 'secret-file-content'
+		$script:renderedChartContents[0] | Should -Match 'name: command-app-chart'
+		($script:helmValueContents -join "`n") | Should -Match 'displayName: command-app'
+		($script:helmValueContents -join "`n") | Should -Match '"application"'
+		($script:helmValueContents -join "`n") | Should -Match '"name"\s*:\s*"command-app"'
+		foreach ($renderedPath in $script:renderedPaths) {
+			if ($renderedPath -like (Join-Path ([IO.Path]::GetTempPath()) 'toolchain-render-*')) { Test-Path -LiteralPath $renderedPath | Should -BeFalse }
+		}
+	}
+
+	It 'rejects invalid and undeclared variable overrides before contacting Kubernetes' {
+		$source = Join-Path $TestDrive 'invalid-variable-deploy'
+		New-TestVariableDeploymentSource -Root $source
+
+		{ Invoke-ToolchainDeploymentPackage -Command deploy -Path $source -Set 'APP_NAME=INVALID!' -Confirm } | Should -Throw '*required pattern*'
+		{ Invoke-ToolchainDeploymentPackage -Command deploy -Path $source -Set 'MISSING=value' -Confirm } | Should -Throw '*not declared*'
+		$script:kubectlCalls.Count | Should -Be 0
 	}
 }

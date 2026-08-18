@@ -475,6 +475,7 @@ function Read-ToolchainProject {
 			Digest = Get-ToolchainProjectDigest -PackageSpecs $specs
 			Deployment = $manifest['deployment']
 			Components = @($manifest['components'])
+			Variables = @($manifest['variables'])
 		}
 	}
 

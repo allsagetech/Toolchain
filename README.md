@@ -218,7 +218,9 @@ repeatable releases. See [`package`](doc/toolchain-package.md).
 `components`. Toolchain supports required/default/explicit component
 selection plus local `charts[].localPath`, `valuesFiles`, and named manifest
 `files`; use `tlc package deploy ... -Components 'name,pattern*,-default-name'`
-to override the defaults.
+to override the defaults. Top-level `variables` use
+`###TOOLCHAIN_VAR_NAME###` templates and can be supplied with `-Set NAME=value`,
+`toolchain-config.yaml`, or `TOOLCHAIN_VAR_NAME` environment variables.
 
 ## Commands
 

@@ -27,7 +27,7 @@
     },
     "documentation": { "type": "object", "additionalProperties": { "type": "string", "minLength": 1 } },
     "constants": { "type": "array" },
-    "variables": { "type": "array" },
+    "variables": { "type": "array", "items": { "$ref": "#/$defs/variable" } },
     "build": { "type": "object" }
   },
   "$defs": {
@@ -90,12 +90,37 @@
             "releaseName": { "type": "string" },
             "noWait": { "type": "boolean" },
             "valuesFiles": { "type": "array", "items": { "type": "string", "minLength": 1 } },
-            "variables": { "type": "array" },
+            "variables": { "type": "array", "items": { "$ref": "#/$defs/chartVariable" } },
             "schemaValidation": { "type": "boolean" },
             "serverSideApply": { "enum": ["auto", "true", "false"] }
           }
         }
       ]
+    },
+    "variable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[A-Z0-9_]+$" },
+        "description": { "type": "string" },
+        "default": { "type": ["string", "number", "boolean", "null"] },
+        "prompt": { "type": "boolean" },
+        "sensitive": { "type": "boolean" },
+        "autoIndent": { "type": "boolean" },
+        "pattern": { "type": "string" },
+        "type": { "enum": ["raw", "file"] }
+      }
+    },
+    "chartVariable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "path"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[A-Z0-9_]+$" },
+        "path": { "type": "string", "pattern": "^[A-Za-z0-9_-]+(?:\\.[A-Za-z0-9_-]+)*$" },
+        "description": { "type": "string" }
+      }
     },
     "manifest": {
       "oneOf": [

@@ -43,6 +43,7 @@ Describe 'Toolchain command help catalog' {
 		$text | Should -Match 'sync'
 		$text | Should -Match 'activate'
 		(Invoke-ToolchainHelp -CommandPath @('package','deploy')) | Should -Match '-Components NAMES'
+		(Invoke-ToolchainHelp -CommandPath @('package','deploy')) | Should -Match '-Set NAME=value'
 	}
 
 	It 'normalizes command aliases in help paths' {

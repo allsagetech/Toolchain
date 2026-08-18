@@ -44,7 +44,7 @@ function Get-ToolchainNestedCompletionValues {
 			}
 			$options = switch ($Elements[2]) {
 				'create' { @('-Output','-Force') }
-				'deploy' { @('-Components','-Cluster','-Kubeconfig','-Values','-Config','-Namespace','-WaitSeconds','-Confirm','-DryRun','-PassThru') }
+				'deploy' { @('-Components','-Set','-Cluster','-Kubeconfig','-Values','-Config','-Namespace','-WaitSeconds','-Confirm','-DryRun','-PassThru') }
 				default { @() }
 			}
 			return @($options) + $helpValues | Where-Object { $_ -like "$WordToComplete*" }

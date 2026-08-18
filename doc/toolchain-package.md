@@ -75,12 +75,66 @@ tlc package deploy .\dist\toolchain-package-demo-1.0.0.tlcpkg `
   -Components 'application,observability*,-example-data' -Confirm
 ```
 
-Component packages currently support package metadata, component selection, local
-Helm charts, local manifest files/directories, chart value files, package value
-files, documentation files, namespaces, wait behavior, and schema-validation
-control. Toolchain rejects remote charts/manifests, image and repository
-bundling, file placement, actions, imports, kustomizations, templating, and
+Component packages currently support package metadata, component selection,
+local Helm charts, local manifest files/directories, chart value files, package
+value files, documentation files, variables, namespaces, wait behavior, and
+schema-validation control. Toolchain rejects remote charts/manifests, image and
+repository bundling, file placement, actions, imports, kustomizations, and
 health checks with an explicit error. These fields are never silently ignored.
+
+## Package variables
+
+Declare deployment-time values with top-level `variables`. Names use uppercase
+letters, digits, and underscores:
+
+```yaml
+variables:
+  - name: APP_NAME
+    description: Kubernetes application name
+    default: demo
+    pattern: '^[a-z][a-z0-9-]+$'
+  - name: EXTRA_LABELS
+    autoIndent: true
+  - name: TLS_CERTIFICATE
+    type: file
+    sensitive: true
+```
+
+Reference a variable in Kubernetes manifests, Helm chart text files, or Helm
+values files with a Toolchain template:
+
+```yaml
+metadata:
+  name: ###TOOLCHAIN_VAR_APP_NAME###
+```
+
+Provide values during deployment with `-Set`:
+
+```powershell
+tlc package deploy .\demo.tlcpkg `
+  -Set 'APP_NAME=production,EXTRA_LABELS=tier: frontend' -Confirm
+```
+
+Values resolve in this order: declared default, `TOOLCHAIN_VAR_NAME`
+environment variable, `toolchain-config.yaml`, then `-Set`. A variable with
+`prompt: true` prompts only when no environment, config, or command-line value
+was supplied. `sensitive: true` hides prompted input and variable values are
+never returned by `-PassThru`. `type: file` reads at most 1 MiB from the given
+path; a default file is integrity-indexed into the package.
+
+Map a variable directly to a dot-separated Helm values path:
+
+```yaml
+charts:
+  - name: demo
+    localPath: charts/demo
+    variables:
+      - name: APP_NAME
+        path: application.name
+```
+
+Toolchain renders into a restricted temporary directory and removes rendered
+manifests, charts, and values files after deployment, including on failure.
 
 ## Conventional files
 
@@ -96,10 +150,12 @@ namespace: demo-system
 wait: true
 waitSeconds: 300
 createNamespace: true
+variables:
+  APP_NAME: staging
 ```
 
 An external `-Config` file overlays the bundled configuration. Command-line
-`-Namespace` and `-WaitSeconds` values take final precedence.
+`-Namespace`, `-WaitSeconds`, and `-Set` values take final precedence.
 
 ## Create
 

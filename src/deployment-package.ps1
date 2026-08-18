@@ -26,6 +26,74 @@ function Assert-ToolchainDeploymentVersion {
 	}
 }
 
+function Assert-ToolchainDeploymentVariableName {
+	param([Parameter(Mandatory)][string]$Name, [string]$Context = 'variable')
+	if ($Name -cnotmatch '^[A-Z0-9_]+$') { throw "$Context name '$Name' must contain only uppercase letters, digits, and underscores" }
+}
+
+function ConvertTo-ToolchainDeploymentVariable {
+	param(
+		[Parameter(Mandatory)][Collections.IDictionary]$Value,
+		[Parameter(Mandatory)][int]$Index
+	)
+	foreach ($key in $Value.Keys) {
+		if ([string]$key -notin @('name', 'description', 'default', 'prompt', 'sensitive', 'autoIndent', 'pattern', 'type')) {
+			throw "deployment variable $Index contains unsupported key '$key'"
+		}
+	}
+	$name = [string]$Value['name']
+	if ([string]::IsNullOrWhiteSpace($name)) { throw "deployment variable $Index requires a name" }
+	Assert-ToolchainDeploymentVariableName -Name $name -Context "deployment variable $Index"
+	foreach ($booleanKey in @('prompt', 'sensitive', 'autoIndent')) {
+		if ($null -ne $Value[$booleanKey] -and $Value[$booleanKey] -isnot [bool]) {
+			throw "deployment variable '$name' requires $booleanKey to be true or false"
+		}
+	}
+	$type = if ($Value['type']) { [string]$Value['type'] } else { 'raw' }
+	if ($type -notin @('raw', 'file')) { throw "deployment variable '$name' type must be raw or file" }
+	$pattern = [string]$Value['pattern']
+	if ($pattern) {
+		try { $null = [Text.RegularExpressions.Regex]::new($pattern, [Text.RegularExpressions.RegexOptions]::None, [TimeSpan]::FromSeconds(1)) }
+		catch { throw "deployment variable '$name' has an invalid pattern: $($_.Exception.Message)" }
+	}
+	$hasDefault = $Value.Contains('default') -and $null -ne $Value['default']
+	$defaultValue = if ($hasDefault) {
+		if ($Value['default'] -is [Collections.IDictionary] -or ($Value['default'] -is [Collections.IEnumerable] -and $Value['default'] -isnot [string])) {
+			throw "deployment variable '$name' default must be a scalar value"
+		}
+		[Convert]::ToString($Value['default'], [Globalization.CultureInfo]::InvariantCulture)
+	} else { '' }
+	return [pscustomobject]@{
+		Name = $name
+		Description = [string]$Value['description']
+		Default = $defaultValue
+		HasDefault = $hasDefault
+		Prompt = [bool]$Value['prompt']
+		Sensitive = [bool]$Value['sensitive']
+		AutoIndent = [bool]$Value['autoIndent']
+		Pattern = $pattern
+		Type = $type
+	}
+}
+
+function ConvertTo-ToolchainDeploymentChartVariable {
+	param(
+		[Parameter(Mandatory)][Collections.IDictionary]$Value,
+		[Parameter(Mandatory)][int]$ChartIndex,
+		[Parameter(Mandatory)][int]$Index
+	)
+	foreach ($key in $Value.Keys) {
+		if ([string]$key -notin @('name', 'path', 'description')) { throw "deployment chart $ChartIndex variable $Index contains unsupported key '$key'" }
+	}
+	$name = [string]$Value['name']
+	$path = [string]$Value['path']
+	Assert-ToolchainDeploymentVariableName -Name $name -Context "deployment chart $ChartIndex variable $Index"
+	if ($path -cnotmatch '^[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*$') {
+		throw "deployment chart $ChartIndex variable '$name' requires a dot-separated Helm values path"
+	}
+	return [pscustomobject]@{ Name = $name; Path = $path; Description = [string]$Value['description'] }
+}
+
 function ConvertTo-ToolchainDeploymentChart {
 	param(
 		[Parameter(Mandatory)][object]$Value,
@@ -41,6 +109,7 @@ function ConvertTo-ToolchainDeploymentChart {
 	$wait = $true
 	$schemaValidation = $true
 	$chartName = $null
+	$variableMappings = @()
 	if ($Value -is [string]) {
 		$path = [string]$Value
 	} elseif ($Value -is [Collections.IDictionary]) {
@@ -58,8 +127,12 @@ function ConvertTo-ToolchainDeploymentChart {
 		if ($Value['url'] -or $Value['repoName'] -or $Value['gitPath']) {
 			throw "deployment chart $Index is remote; Toolchain packages currently require localPath so the chart can be integrity-indexed for offline deployment"
 		}
-		if ($null -ne $Value['variables'] -and @($Value['variables']).Count -gt 0) {
-			throw "deployment chart $Index uses chart variables that Toolchain does not support; use valuesFiles or toolchain-values.yaml"
+		if ($null -ne $Value['variables']) {
+			$mappingValues = @($Value['variables'])
+			for ($mappingIndex = 0; $mappingIndex -lt $mappingValues.Count; $mappingIndex++) {
+				if ($mappingValues[$mappingIndex] -isnot [Collections.IDictionary]) { throw "deployment chart $Index variable $($mappingIndex + 1) must be a mapping" }
+				$variableMappings += ConvertTo-ToolchainDeploymentChartVariable -Value $mappingValues[$mappingIndex] -ChartIndex $Index -Index ($mappingIndex + 1)
+			}
 		}
 		if ($null -ne $Value['serverSideApply'] -and [string]$Value['serverSideApply'] -notin @('', 'auto')) {
 			throw "deployment chart $Index requests serverSideApply behavior that is not supported by this Helm runtime"
@@ -96,6 +169,7 @@ function ConvertTo-ToolchainDeploymentChart {
 		Wait = $wait
 		SchemaValidation = $schemaValidation
 		Component = $ComponentName
+		VariableMappings = [object[]]$variableMappings
 	}
 }
 
@@ -209,7 +283,7 @@ function Read-ToolchainDeploymentDefinition {
 	if ($null -ne $manifest['schemaVersion'] -and [int]$manifest['schemaVersion'] -ne 1) { throw "$manifestPath requires schemaVersion: 1" }
 	if ($manifest['kind'] -and [string]$manifest['kind'] -ne 'ToolchainPackageConfig') { throw "$manifestPath supports only kind: ToolchainPackageConfig" }
 	if ($manifest['apiVersion'] -and [string]$manifest['apiVersion'] -ne 'toolchain.allsagetech.com/v1alpha1') { throw "$manifestPath supports only apiVersion: toolchain.allsagetech.com/v1alpha1" }
-	foreach ($unsupportedTopLevel in @('constants', 'variables', 'build')) {
+	foreach ($unsupportedTopLevel in @('constants', 'build')) {
 		if ($null -ne $manifest[$unsupportedTopLevel] -and @($manifest[$unsupportedTopLevel]).Count -gt 0) {
 			throw "Toolchain top-level field '$unsupportedTopLevel' is not yet supported by Toolchain packages"
 		}
@@ -241,6 +315,17 @@ function Read-ToolchainDeploymentDefinition {
 	Assert-ToolchainDeploymentIdentifier -Value $name -Kind 'name'
 	Assert-ToolchainDeploymentVersion -Version $version
 	if ($namespace) { Assert-ToolchainDeploymentIdentifier -Value $namespace -Kind 'namespace' }
+
+	$variables = @()
+	$variableNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+	$variableValues = @()
+	if ($null -ne $manifest['variables']) { $variableValues = @($manifest['variables']) }
+	for ($variableIndex = 0; $variableIndex -lt $variableValues.Count; $variableIndex++) {
+		if ($variableValues[$variableIndex] -isnot [Collections.IDictionary]) { throw "deployment variable $($variableIndex + 1) must be a mapping" }
+		$variable = ConvertTo-ToolchainDeploymentVariable -Value $variableValues[$variableIndex] -Index ($variableIndex + 1)
+		if (-not $variableNames.Add([string]$variable.Name)) { throw "$manifestPath contains duplicate deployment variable '$($variable.Name)'" }
+		$variables += $variable
+	}
 
 	$components = @()
 	if ($deployment -and ($null -ne $deployment['charts'] -or $null -ne $deployment['manifests'])) {
@@ -287,6 +372,18 @@ function Read-ToolchainDeploymentDefinition {
 		}
 	}
 	$allCharts = @($components | ForEach-Object { $_.Charts })
+	foreach ($chart in $allCharts) {
+		foreach ($mapping in $chart.VariableMappings) {
+			if (-not $variableNames.Contains([string]$mapping.Name)) {
+				throw "deployment chart '$($chart.Release)' maps undefined variable '$($mapping.Name)'"
+			}
+		}
+	}
+	foreach ($variable in $variables) {
+		if ($variable.Type -eq 'file' -and $variable.HasDefault -and -not [string]::IsNullOrWhiteSpace([string]$variable.Default)) {
+			$packageFiles += [string]$variable.Default
+		}
+	}
 	$allManifestSets = @($components | ForEach-Object { $_.ManifestSets })
 	$allManifests = @($allManifestSets | ForEach-Object { $_.Files })
 	return [pscustomobject]@{
@@ -300,6 +397,7 @@ function Read-ToolchainDeploymentDefinition {
 		Charts = [object[]]$allCharts
 		ManifestSets = [object[]]$allManifestSets
 		Manifests = [string[]]$allManifests
+		Variables = [object[]]$variables
 		GlobalValues = [string[]]$globalValues
 		Documentation = [string[]]$documentation
 		PackageFiles = [string[]]$packageFiles
@@ -313,7 +411,7 @@ function Read-ToolchainDeploymentConfig {
 	if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) { throw "Toolchain deployment config is not a file: $fullPath" }
 	$config = ConvertFrom-ToolchainYaml -Text (Get-Content -LiteralPath $fullPath -Raw) -Context $fullPath
 	foreach ($key in $config.Keys) {
-		if ([string]$key -notin @('schemaVersion', 'namespace', 'wait', 'waitSeconds', 'createNamespace')) {
+		if ([string]$key -notin @('schemaVersion', 'namespace', 'wait', 'waitSeconds', 'createNamespace', 'variables')) {
 			throw "$fullPath contains unsupported deployment config key '$key'"
 		}
 	}
@@ -328,7 +426,257 @@ function Read-ToolchainDeploymentConfig {
 			throw "$fullPath requires waitSeconds from 1 through 3600"
 		}
 	}
+	if ($null -ne $config.variables) {
+		if ($config.variables -isnot [Collections.IDictionary]) { throw "$fullPath variables must be a mapping" }
+		foreach ($variableName in $config.variables.Keys) {
+			Assert-ToolchainDeploymentVariableName -Name ([string]$variableName) -Context "$fullPath variable"
+			$variableValue = $config.variables[$variableName]
+			if ($variableValue -is [Collections.IDictionary] -or ($variableValue -is [Collections.IEnumerable] -and $variableValue -isnot [string])) {
+				throw "$fullPath variable '$variableName' must be a scalar value"
+			}
+		}
+	}
 	return $config
+}
+
+function ConvertFrom-ToolchainDeploymentSet {
+	param([string[]]$Set)
+	$values = @{}
+	foreach ($setValue in @($Set | Where-Object { $null -ne $_ })) {
+		foreach ($assignment in @([string]$setValue -split ',(?=[A-Z0-9_]+=)')) {
+			$match = [regex]::Match($assignment, '^([A-Z0-9_]+)=([\s\S]*)$')
+			if (-not $match.Success) { throw "invalid package variable assignment '$assignment'; expected NAME=value" }
+			$name = $match.Groups[1].Value
+			Assert-ToolchainDeploymentVariableName -Name $name -Context 'package variable assignment'
+			$values[$name] = $match.Groups[2].Value
+		}
+	}
+	return $values
+}
+
+function Read-ToolchainDeploymentSensitiveValue {
+	param([Parameter(Mandatory)][string]$Prompt)
+	$secureValue = Read-Host -Prompt $Prompt -AsSecureString
+	$pointer = [IntPtr]::Zero
+	try {
+		$pointer = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureValue)
+		return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($pointer)
+	} finally {
+		if ($pointer -ne [IntPtr]::Zero) { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($pointer) }
+	}
+}
+
+function Resolve-ToolchainDeploymentVariables {
+	param(
+		[Parameter(Mandatory)]$Definition,
+		[Parameter(Mandatory)][string]$Root,
+		[hashtable]$Configured = @{},
+		[hashtable]$Overrides = @{}
+	)
+	$declaredNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+	foreach ($variable in $Definition.Variables) { [void]$declaredNames.Add([string]$variable.Name) }
+	foreach ($name in @($Configured.Keys) + @($Overrides.Keys)) {
+		if (-not $declaredNames.Contains([string]$name)) { throw "package variable '$name' is not declared in toolchain.yaml" }
+	}
+
+	$resolved = @{}
+	foreach ($variable in $Definition.Variables) {
+		$name = [string]$variable.Name
+		$value = if ($variable.HasDefault) { [string]$variable.Default } else { '' }
+		$valueSource = if ($variable.HasDefault) { 'default' } else { 'empty' }
+		$environmentValue = [Environment]::GetEnvironmentVariable("TOOLCHAIN_VAR_$name")
+		if ($null -ne $environmentValue) { $value = $environmentValue; $valueSource = 'environment' }
+		if ($Configured.ContainsKey($name)) { $value = [Convert]::ToString($Configured[$name], [Globalization.CultureInfo]::InvariantCulture); $valueSource = 'config' }
+		if ($Overrides.ContainsKey($name)) { $value = [string]$Overrides[$name]; $valueSource = 'command' }
+
+		if ($variable.Prompt -and $valueSource -notin @('environment', 'config', 'command')) {
+			$prompt = if ($variable.Description) { [string]$variable.Description } else { "Enter a value for $name" }
+			if ($variable.HasDefault -and -not $variable.Sensitive) { $prompt += " [$($variable.Default)]" }
+			try {
+				$entered = if ($variable.Sensitive) { Read-ToolchainDeploymentSensitiveValue -Prompt $prompt } else { Read-Host -Prompt $prompt }
+			} catch {
+				throw "package variable '$name' requires input; provide -Set '$name=value' for non-interactive deployment"
+			}
+			if (-not [string]::IsNullOrEmpty([string]$entered)) { $value = [string]$entered; $valueSource = 'prompt' }
+		}
+
+		if ($variable.Type -eq 'file') {
+			if ([string]::IsNullOrWhiteSpace($value)) { throw "package variable '$name' requires a file path" }
+			$filePath = if ($valueSource -eq 'default') {
+				Resolve-ToolchainChildPath -Root $Root -RelativePath $value -RejectReparsePoints -RejectRootReparsePoint
+			} else {
+				$rootCandidate = if ([IO.Path]::IsPathRooted($value)) { $null } else { Join-Path $Root $value }
+				if ($rootCandidate -and (Test-Path -LiteralPath $rootCandidate -PathType Leaf)) {
+					Resolve-ToolchainChildPath -Root $Root -RelativePath $value -RejectReparsePoints -RejectRootReparsePoint
+				} else { Resolve-ToolchainFileSystemPath -Path $value }
+			}
+			if (-not (Test-Path -LiteralPath $filePath -PathType Leaf)) { throw "package variable '$name' file is not a file: $filePath" }
+			$fileItem = Get-Item -LiteralPath $filePath -Force
+			if ($fileItem.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "package variable '$name' file cannot be a link or reparse point: $filePath" }
+			if ($fileItem.Length -gt 1MB) { throw "package variable '$name' file exceeds the 1 MiB limit" }
+			$value = Get-Content -LiteralPath $filePath -Raw
+		}
+		if ($variable.Pattern) {
+			$matcher = [Text.RegularExpressions.Regex]::new([string]$variable.Pattern, [Text.RegularExpressions.RegexOptions]::None, [TimeSpan]::FromSeconds(1))
+			if (-not $matcher.IsMatch([string]$value)) { throw "package variable '$name' does not match its required pattern" }
+		}
+		$resolved[$name] = [pscustomobject]@{
+			Name = $name
+			Value = [string]$value
+			Sensitive = [bool]$variable.Sensitive
+			AutoIndent = [bool]$variable.AutoIndent
+			Source = $valueSource
+		}
+	}
+	return $resolved
+}
+
+function New-ToolchainDeploymentRenderRoot {
+	$path = Join-Path ([IO.Path]::GetTempPath()) "toolchain-render-$([guid]::NewGuid().ToString('n'))"
+	[void][IO.Directory]::CreateDirectory($path)
+	return $path
+}
+
+function Remove-ToolchainDeploymentRenderRoot {
+	param([Parameter(Mandatory)][string]$Path)
+	$fullPath = [IO.Path]::GetFullPath($Path).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+	$tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+	if ((Split-Path -Parent $fullPath) -ne $tempRoot -or [IO.Path]::GetFileName($fullPath) -notmatch '^toolchain-render-[0-9a-f]{32}$') {
+		throw "refusing to remove unexpected Toolchain render path: $fullPath"
+	}
+	if (Test-Path -LiteralPath $fullPath -PathType Container) { [IO.Directory]::Delete($fullPath, $true) }
+}
+
+function Expand-ToolchainDeploymentVariableText {
+	param(
+		[Parameter(Mandatory)][AllowEmptyString()][string]$Text,
+		[Parameter(Mandatory)][hashtable]$Variables,
+		[Parameter(Mandatory)][string]$Context
+	)
+	$expanded = $Text
+	foreach ($variable in @($Variables.Values | Sort-Object Name)) {
+		$token = "###TOOLCHAIN_VAR_$($variable.Name)###"
+		if (-not $expanded.Contains($token)) { continue }
+		if ($variable.AutoIndent -and $variable.Value -match "`r?`n") {
+			$pattern = [regex]::Escape($token)
+			$replacementValue = ([string]$variable.Value).Replace("`r`n", "`n")
+			$expanded = [regex]::Replace($expanded, $pattern, [Text.RegularExpressions.MatchEvaluator]{
+				param($match)
+				$lineStart = $expanded.LastIndexOf("`n", [Math]::Max(0, $match.Index - 1))
+				$column = if ($lineStart -lt 0) { $match.Index } else { $match.Index - $lineStart - 1 }
+				return $replacementValue.Replace("`n", "`n" + (' ' * $column))
+			})
+		} else {
+			$expanded = $expanded.Replace($token, [string]$variable.Value)
+		}
+	}
+	$unknown = [regex]::Match($expanded, '###TOOLCHAIN_VAR_([A-Z0-9_]+)###')
+	if ($unknown.Success) { throw "$Context references undeclared package variable '$($unknown.Groups[1].Value)'" }
+	return $expanded
+}
+
+function Get-ToolchainDeploymentRenderedFile {
+	param(
+		[Parameter(Mandatory)][string]$Path,
+		[Parameter(Mandatory)][hashtable]$Variables,
+		[Parameter(Mandatory)][string]$RenderRoot,
+		[Parameter(Mandatory)][string]$Context
+	)
+	$text = Get-Content -LiteralPath $Path -Raw
+	if ($text -notmatch '###TOOLCHAIN_VAR_[A-Z0-9_]+###') { return $Path }
+	$rendered = Expand-ToolchainDeploymentVariableText -Text $text -Variables $Variables -Context $Context
+	$destination = Join-Path $RenderRoot "$([guid]::NewGuid().ToString('n'))$([IO.Path]::GetExtension($Path))"
+	[IO.File]::WriteAllText($destination, $rendered, [Text.UTF8Encoding]::new($false))
+	return $destination
+}
+
+function Get-ToolchainDeploymentRenderedChart {
+	param(
+		[Parameter(Mandatory)][string]$Path,
+		[Parameter(Mandatory)][hashtable]$Variables,
+		[Parameter(Mandatory)][string]$RenderRoot,
+		[Parameter(Mandatory)][string]$Context
+	)
+	if (-not (Test-Path -LiteralPath $Path -PathType Container)) { return $Path }
+	$textExtensions = @('.yaml', '.yml', '.tpl', '.txt', '.json', '.toml', '.conf', '.ini', '.properties', '.env', '.lock')
+	$sourceFiles = @(Get-ChildItem -LiteralPath $Path -File -Recurse -Force | Sort-Object FullName)
+	$templated = @()
+	foreach ($file in $sourceFiles) {
+		$sourceRelative = Get-ToolchainDeploymentRelativePath -Root $Path -Path $file.FullName
+		$null = Resolve-ToolchainChildPath -Root $Path -RelativePath $sourceRelative -RejectReparsePoints -RejectRootReparsePoint
+		if ($file.Extension -notin $textExtensions) { continue }
+		$text = Get-Content -LiteralPath $file.FullName -Raw
+		if ($text -match '###TOOLCHAIN_VAR_[A-Z0-9_]+###') { $templated += [pscustomobject]@{ File = $file; Text = $text } }
+	}
+	if ($templated.Count -eq 0) { return $Path }
+	$destinationRoot = Join-Path $RenderRoot "chart-$([guid]::NewGuid().ToString('n'))"
+	[void][IO.Directory]::CreateDirectory($destinationRoot)
+	foreach ($file in $sourceFiles) {
+		$relative = Get-ToolchainDeploymentRelativePath -Root $Path -Path $file.FullName
+		$destination = Resolve-ToolchainChildPath -Root $destinationRoot -RelativePath $relative -RejectReparsePoints -RejectRootReparsePoint
+		[void][IO.Directory]::CreateDirectory((Split-Path -Parent $destination))
+		[IO.File]::Copy($file.FullName, $destination, $false)
+	}
+	foreach ($item in $templated) {
+		$relative = Get-ToolchainDeploymentRelativePath -Root $Path -Path $item.File.FullName
+		$destination = Resolve-ToolchainChildPath -Root $destinationRoot -RelativePath $relative -RejectReparsePoints -RejectRootReparsePoint
+		$rendered = Expand-ToolchainDeploymentVariableText -Text $item.Text -Variables $Variables -Context "$Context/$relative"
+		[IO.File]::WriteAllText($destination, $rendered, [Text.UTF8Encoding]::new($false))
+	}
+	return $destinationRoot
+}
+
+function New-ToolchainDeploymentChartVariableValues {
+	param(
+		[Parameter(Mandatory)]$Chart,
+		[Parameter(Mandatory)][hashtable]$Variables,
+		[Parameter(Mandatory)][string]$RenderRoot
+	)
+	if ($Chart.VariableMappings.Count -eq 0) { return $null }
+	$values = [ordered]@{}
+	foreach ($mapping in $Chart.VariableMappings) {
+		$current = $values
+		$segments = @([string]$mapping.Path -split '\.')
+		for ($index = 0; $index -lt $segments.Count; $index++) {
+			$segment = $segments[$index]
+			if ($index -eq ($segments.Count - 1)) {
+				if ($current.Contains($segment)) { throw "deployment chart '$($Chart.Release)' maps more than one variable to '$($mapping.Path)'" }
+				$current[$segment] = [string]$Variables[[string]$mapping.Name].Value
+			} else {
+				if (-not $current.Contains($segment)) { $current[$segment] = [ordered]@{} }
+				if ($current[$segment] -isnot [Collections.IDictionary]) { throw "deployment chart '$($Chart.Release)' has conflicting variable path '$($mapping.Path)'" }
+				$current = $current[$segment]
+			}
+		}
+	}
+	$path = Join-Path $RenderRoot "chart-variables-$([guid]::NewGuid().ToString('n')).json"
+	[IO.File]::WriteAllText($path, ($values | ConvertTo-Json -Depth 30), [Text.UTF8Encoding]::new($false))
+	return $path
+}
+
+function Get-ToolchainDeploymentBuildVariables {
+	param([Parameter(Mandatory)]$Definition)
+	$resolved = @{}
+	foreach ($variable in $Definition.Variables) {
+		$value = if ($variable.HasDefault) { [string]$variable.Default } else { 'toolchain-variable' }
+		if ($variable.Type -eq 'file') {
+			if ($variable.HasDefault -and -not [string]::IsNullOrWhiteSpace($value)) {
+				$filePath = Resolve-ToolchainChildPath -Root $Definition.Root -RelativePath $value -RejectReparsePoints -RejectRootReparsePoint
+				if (-not (Test-Path -LiteralPath $filePath -PathType Leaf)) { throw "package variable '$($variable.Name)' default file is not a file: $value" }
+				$fileItem = Get-Item -LiteralPath $filePath -Force
+				if ($fileItem.Length -gt 1MB) { throw "package variable '$($variable.Name)' default file exceeds the 1 MiB limit" }
+				$value = Get-Content -LiteralPath $filePath -Raw
+			} else { $value = 'toolchain-variable' }
+		}
+		$resolved[[string]$variable.Name] = [pscustomobject]@{
+			Name = [string]$variable.Name
+			Value = [string]$value
+			Sensitive = [bool]$variable.Sensitive
+			AutoIndent = [bool]$variable.AutoIndent
+			Source = 'build-validation'
+		}
+	}
+	return $resolved
 }
 
 function Get-ToolchainDeploymentRelativePath {
@@ -438,8 +786,12 @@ function Test-ToolchainDeploymentCharts {
 	if ($Definition.Charts.Count -eq 0) { return }
 	$helm = Get-ToolchainClusterExecutable -Name helm -Package helm -InstallHint 'Install Helm and ensure its executable is available on PATH.'
 	$conventionalValues = Join-Path $Definition.Root 'toolchain-values.yaml'
+	$variables = Get-ToolchainDeploymentBuildVariables -Definition $Definition
+	$renderRoot = New-ToolchainDeploymentRenderRoot
+	try {
 	foreach ($chart in $Definition.Charts) {
-		$chartPath = Resolve-ToolchainChildPath -Root $Definition.Root -RelativePath $chart.Path -RejectReparsePoints -RejectRootReparsePoint
+		$sourceChartPath = Resolve-ToolchainChildPath -Root $Definition.Root -RelativePath $chart.Path -RejectReparsePoints -RejectRootReparsePoint
+		$chartPath = Get-ToolchainDeploymentRenderedChart -Path $sourceChartPath -Variables $variables -RenderRoot $renderRoot -Context "chart $($chart.Release)"
 		if ((Test-Path -LiteralPath $chartPath -PathType Container) -and -not (Test-Path -LiteralPath (Join-Path $chartPath 'Chart.yaml') -PathType Leaf)) {
 			throw "Helm chart directory is missing Chart.yaml: $($chart.Path)"
 		}
@@ -448,14 +800,21 @@ function Test-ToolchainDeploymentCharts {
 		}
 		$arguments = @('lint', $chartPath)
 		foreach ($valuesPath in $chart.Values) {
-			$arguments += @('--values', (Resolve-ToolchainChildPath -Root $Definition.Root -RelativePath $valuesPath -RejectReparsePoints -RejectRootReparsePoint))
+			$sourceValuesPath = Resolve-ToolchainChildPath -Root $Definition.Root -RelativePath $valuesPath -RejectReparsePoints -RejectRootReparsePoint
+			$arguments += @('--values', (Get-ToolchainDeploymentRenderedFile -Path $sourceValuesPath -Variables $variables -RenderRoot $renderRoot -Context "chart values $valuesPath"))
 		}
 		foreach ($valuesPath in $Definition.GlobalValues) {
-			$arguments += @('--values', (Resolve-ToolchainChildPath -Root $Definition.Root -RelativePath $valuesPath -RejectReparsePoints -RejectRootReparsePoint))
+			$sourceValuesPath = Resolve-ToolchainChildPath -Root $Definition.Root -RelativePath $valuesPath -RejectReparsePoints -RejectRootReparsePoint
+			$arguments += @('--values', (Get-ToolchainDeploymentRenderedFile -Path $sourceValuesPath -Variables $variables -RenderRoot $renderRoot -Context "package values $valuesPath"))
 		}
-		if (Test-Path -LiteralPath $conventionalValues -PathType Leaf) { $arguments += @('--values', $conventionalValues) }
+		if (Test-Path -LiteralPath $conventionalValues -PathType Leaf) { $arguments += @('--values', (Get-ToolchainDeploymentRenderedFile -Path $conventionalValues -Variables $variables -RenderRoot $renderRoot -Context 'toolchain-values.yaml')) }
+		$chartVariableValues = New-ToolchainDeploymentChartVariableValues -Chart $chart -Variables $variables -RenderRoot $renderRoot
+		if ($chartVariableValues) { $arguments += @('--values', $chartVariableValues) }
 		if (-not $chart.SchemaValidation) { $arguments += '--skip-schema-validation' }
 		$null = Invoke-ToolchainClusterProcess -FilePath $helm -Arguments $arguments
+	}
+	} finally {
+		Remove-ToolchainDeploymentRenderRoot -Path $renderRoot
 	}
 }
 
@@ -500,6 +859,7 @@ function New-ToolchainDeploymentPackage {
 		version = $definition.Version
 		manifest = 'toolchain.yaml'
 		components = @($definition.Components | ForEach-Object { $_.Name })
+		variables = @($definition.Variables | ForEach-Object { $_.Name })
 		files = @($entries.ToArray())
 	}
 	Initialize-ToolchainCompression
@@ -527,6 +887,7 @@ function New-ToolchainDeploymentPackage {
 		Digest = 'sha256:' + (Get-FileHash -LiteralPath $outputPath -Algorithm SHA256).Hash.ToLowerInvariant()
 		Files = $entries.Count
 		Components = @($definition.Components | ForEach-Object { $_.Name })
+		Variables = @($definition.Variables | ForEach-Object { $_.Name })
 		Charts = $definition.Charts.Count
 		Manifests = $definition.Manifests.Count
 	}
@@ -629,10 +990,17 @@ function Resolve-ToolchainDeploymentKubeconfig {
 }
 
 function Merge-ToolchainDeploymentConfig {
-	param([Parameter(Mandatory)][hashtable]$Settings, [Parameter(Mandatory)][string]$Path)
+	param(
+		[Parameter(Mandatory)][hashtable]$Settings,
+		[Parameter(Mandatory)][hashtable]$Variables,
+		[Parameter(Mandatory)][string]$Path
+	)
 	$config = Read-ToolchainDeploymentConfig -Path $Path
 	foreach ($key in @('namespace', 'wait', 'waitSeconds', 'createNamespace')) {
 		if ($null -ne $config[$key]) { $Settings[$key] = $config[$key] }
+	}
+	if ($config.variables) {
+		foreach ($name in $config.variables.Keys) { $Variables[[string]$name] = $config.variables[$name] }
 	}
 }
 
@@ -672,6 +1040,7 @@ function Invoke-ToolchainDeploymentBundle {
 		[string]$Cluster,
 		[string]$Kubeconfig,
 		[string[]]$Components,
+		[string[]]$Set,
 		[string[]]$Values,
 		[string]$Config,
 		[string]$Namespace,
@@ -688,11 +1057,14 @@ function Invoke-ToolchainDeploymentBundle {
 		waitSeconds = 300
 		createNamespace = $true
 	}
+	$configuredVariables = @{}
 	$internalConfig = Join-Path $Root 'toolchain-config.yaml'
-	if (Test-Path -LiteralPath $internalConfig -PathType Leaf) { Merge-ToolchainDeploymentConfig -Settings $settings -Path $internalConfig }
-	if ($Config) { Merge-ToolchainDeploymentConfig -Settings $settings -Path (Resolve-ToolchainFileSystemPath -Path $Config) }
+	if (Test-Path -LiteralPath $internalConfig -PathType Leaf) { Merge-ToolchainDeploymentConfig -Settings $settings -Variables $configuredVariables -Path $internalConfig }
+	if ($Config) { Merge-ToolchainDeploymentConfig -Settings $settings -Variables $configuredVariables -Path (Resolve-ToolchainFileSystemPath -Path $Config) }
 	if ($Namespace) { Assert-ToolchainDeploymentIdentifier -Value $Namespace -Kind 'namespace'; $settings.namespace = $Namespace }
 	if ($OverrideWaitSeconds) { $settings.waitSeconds = $WaitSeconds }
+	$overrides = ConvertFrom-ToolchainDeploymentSet -Set $Set
+	$resolvedVariables = Resolve-ToolchainDeploymentVariables -Definition $definition -Root $Root -Configured $configuredVariables -Overrides $overrides
 	$externalValues = @()
 	foreach ($valuesPath in @($Values | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })) {
 		$fullValuesPath = Resolve-ToolchainFileSystemPath -Path ([string]$valuesPath)
@@ -704,6 +1076,8 @@ function Invoke-ToolchainDeploymentBundle {
 		$globalValues += Resolve-ToolchainChildPath -Root $Root -RelativePath $valuesPath -RejectReparsePoints -RejectRootReparsePoint
 	}
 
+	$renderRoot = New-ToolchainDeploymentRenderRoot
+	try {
 	$kubeconfigPath = Resolve-ToolchainDeploymentKubeconfig -Cluster $Cluster -Kubeconfig $Kubeconfig
 	$kubectl = Get-ToolchainClusterExecutable -Name kubectl -Package kubectl -InstallHint 'Install kubectl and ensure its executable is available on PATH.'
 	$apiServer = Get-ToolchainBootstrapApiServer -Kubeconfig $kubeconfigPath
@@ -718,11 +1092,12 @@ function Invoke-ToolchainDeploymentBundle {
 		foreach ($manifestSet in $component.ManifestSets) {
 			foreach ($manifestPath in $manifestSet.Files) {
 				foreach ($file in @(Get-ToolchainDeploymentSourceFiles -Root $Root -RelativePath $manifestPath -YamlOnly)) {
+					$renderedManifestPath = Get-ToolchainDeploymentRenderedFile -Path $file.FullName -Variables $resolvedVariables -RenderRoot $renderRoot -Context "manifest $($manifestSet.Name)"
 					$arguments = @('apply', '--server-side', '--field-manager=toolchain-package')
 					if ($DryRun) { $arguments += '--dry-run=server' }
 					$manifestNamespace = if ($Namespace) { [string]$settings.namespace } else { [string]$manifestSet.Namespace }
 					if ($manifestNamespace) { $arguments += @('--namespace', $manifestNamespace) }
-					$arguments += @('-f', $file.FullName)
+					$arguments += @('-f', $renderedManifestPath)
 					$null = Invoke-ToolchainBootstrapKubectl -Kubectl $kubectl -Kubeconfig $kubeconfigPath -Arguments $arguments
 					[void]$appliedManifests.Add([pscustomobject]@{
 						Component = $component.Name
@@ -737,16 +1112,20 @@ function Invoke-ToolchainDeploymentBundle {
 			$helm = Get-ToolchainClusterExecutable -Name helm -Package helm -InstallHint 'Install Helm and ensure its executable is available on PATH.'
 		}
 		foreach ($chart in $component.Charts) {
-			$chartPath = Resolve-ToolchainChildPath -Root $Root -RelativePath $chart.Path -RejectReparsePoints -RejectRootReparsePoint
+			$sourceChartPath = Resolve-ToolchainChildPath -Root $Root -RelativePath $chart.Path -RejectReparsePoints -RejectRootReparsePoint
+			$chartPath = Get-ToolchainDeploymentRenderedChart -Path $sourceChartPath -Variables $resolvedVariables -RenderRoot $renderRoot -Context "chart $($chart.Release)"
 			$releaseNamespace = if ($Namespace) { [string]$settings.namespace } elseif ($chart.Namespace) { $chart.Namespace } else { [string]$settings.namespace }
 			$arguments = @('upgrade', '--install', $chart.Release, $chartPath, '--namespace', $releaseNamespace)
 			if ([bool]$settings.createNamespace) { $arguments += '--create-namespace' }
 			foreach ($valuesPath in $chart.Values) {
-				$arguments += @('--values', (Resolve-ToolchainChildPath -Root $Root -RelativePath $valuesPath -RejectReparsePoints -RejectRootReparsePoint))
+				$sourceValuesPath = Resolve-ToolchainChildPath -Root $Root -RelativePath $valuesPath -RejectReparsePoints -RejectRootReparsePoint
+				$arguments += @('--values', (Get-ToolchainDeploymentRenderedFile -Path $sourceValuesPath -Variables $resolvedVariables -RenderRoot $renderRoot -Context "chart values $valuesPath"))
 			}
-			foreach ($valuesPath in $globalValues) { $arguments += @('--values', $valuesPath) }
-			if (Test-Path -LiteralPath $conventionalValues -PathType Leaf) { $arguments += @('--values', $conventionalValues) }
-			foreach ($valuesPath in $externalValues) { $arguments += @('--values', $valuesPath) }
+			foreach ($valuesPath in $globalValues) { $arguments += @('--values', (Get-ToolchainDeploymentRenderedFile -Path $valuesPath -Variables $resolvedVariables -RenderRoot $renderRoot -Context "package values $valuesPath")) }
+			if (Test-Path -LiteralPath $conventionalValues -PathType Leaf) { $arguments += @('--values', (Get-ToolchainDeploymentRenderedFile -Path $conventionalValues -Variables $resolvedVariables -RenderRoot $renderRoot -Context 'toolchain-values.yaml')) }
+			$chartVariableValues = New-ToolchainDeploymentChartVariableValues -Chart $chart -Variables $resolvedVariables -RenderRoot $renderRoot
+			if ($chartVariableValues) { $arguments += @('--values', $chartVariableValues) }
+			foreach ($valuesPath in $externalValues) { $arguments += @('--values', (Get-ToolchainDeploymentRenderedFile -Path $valuesPath -Variables $resolvedVariables -RenderRoot $renderRoot -Context "external values $valuesPath")) }
 			if (-not $chart.SchemaValidation) { $arguments += '--skip-schema-validation' }
 			if ($DryRun) { $arguments += '--dry-run' }
 			elseif ([bool]$settings.wait -and $chart.Wait) { $arguments += @('--wait', '--timeout', "$($settings.waitSeconds)s") }
@@ -764,6 +1143,7 @@ function Invoke-ToolchainDeploymentBundle {
 		Namespace = [string]$settings.namespace
 		DryRun = [bool]$DryRun
 		Components = @($selectedComponents | ForEach-Object { $_.Name })
+		Variables = @($definition.Variables | ForEach-Object { $_.Name })
 		Releases = @($releases.ToArray())
 		Manifests = @($appliedManifests.ToArray() | ForEach-Object { $_.Path })
 		ManifestDetails = @($appliedManifests.ToArray())
@@ -771,6 +1151,9 @@ function Invoke-ToolchainDeploymentBundle {
 	$suffix = if ($DryRun) { ' (dry run)' } else { '' }
 	Write-ToolchainInfo "Deployed Toolchain package '$($result.Name):$($result.Version)' to $($result.Cluster)$suffix."
 	if ($PassThru) { return $result }
+	} finally {
+		Remove-ToolchainDeploymentRenderRoot -Path $renderRoot
+	}
 }
 
 function Invoke-ToolchainDeploymentPackage {
@@ -782,6 +1165,7 @@ function Invoke-ToolchainDeploymentPackage {
 		[string]$Cluster,
 		[string]$Kubeconfig,
 		[string[]]$Components,
+		[string[]]$Set,
 		[string[]]$Values,
 		[string]$Config,
 		[string]$Namespace,
@@ -792,7 +1176,7 @@ function Invoke-ToolchainDeploymentPackage {
 		[switch]$PassThru
 	)
 	if ($Command -eq 'create') {
-		if ($Cluster -or $Kubeconfig -or $Components -or $Values -or $Config -or $Namespace -or $DryRun) { throw 'package create does not accept deployment target options' }
+		if ($Cluster -or $Kubeconfig -or $Components -or $Set -or $Values -or $Config -or $Namespace -or $DryRun) { throw 'package create does not accept deployment target options' }
 		$source = if ($Path) { $Path } else { (Get-Location).Path }
 		return (New-ToolchainDeploymentPackage -Path $source -Output $Output -Force:$Force)
 	}
@@ -815,6 +1199,7 @@ function Invoke-ToolchainDeploymentPackage {
 			Cluster = $Cluster
 			Kubeconfig = $Kubeconfig
 			Components = $Components
+			Set = $Set
 			Values = $Values
 			Config = $Config
 			DryRun = $DryRun

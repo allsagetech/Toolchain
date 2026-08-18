@@ -55,7 +55,8 @@ deployment:
 `packages`, `deployment`, and Toolchain-native `metadata`/`components` are
 independently optional, but at least one package or deployment form must be
 present. Deployment content is consumed by `tlc package create` and
-`tlc package deploy`; see `doc/toolchain-package.md` for component compatibility,
+`tlc package deploy`; top-level `variables` configure Toolchain templates for
+that deployment. See `doc/toolchain-package.md` for components, variables,
 conventional values, configuration, archive integrity, and deployment behavior.
 
 The runtime parser intentionally implements this strict schema without a YAML

@@ -220,13 +220,14 @@ function Get-ToolchainHelpTopics {
 		-Notes @('toolchain-values.yaml and toolchain-config.yaml are included automatically when present.', 'Toolchain-native metadata/components, localPath charts, valuesFiles, and named manifest files are supported.', 'Additional Kubernetes YAML must be declared under deployment.manifests or components[].manifests.', 'Charts may be local Chart.yaml directories or packaged .tgz files and are linted with Helm before packaging.')
 	$topics.'package deploy' = New-ToolchainHelpTopic `
 		-Description 'Verifies a Toolchain deployment package, applies declared YAML, and upgrades or installs its Helm releases.' `
-		-Usage @('tlc package deploy PACKAGE -Confirm [-Components NAMES] [-Cluster NAME | -Kubeconfig PATH] [-Values PATH] [-Config PATH] [-Namespace NAME] [-WaitSeconds SECONDS] [-PassThru]', 'tlc package deploy DIRECTORY -DryRun [OPTIONS]') `
+		-Usage @('tlc package deploy PACKAGE -Confirm [-Components NAMES] [-Set NAME=value] [-Cluster NAME | -Kubeconfig PATH] [-Values PATH] [-Config PATH] [-Namespace NAME] [-WaitSeconds SECONDS] [-PassThru]', 'tlc package deploy DIRECTORY -DryRun [OPTIONS]') `
 		-Options @(
 			'PACKAGE             A .tlcpkg file or unpackaged source directory.',
 			'-Confirm             Required acknowledgement before changing a cluster.',
 			'-Cluster NAME        Deploy to a Toolchain-managed cluster.',
 			'-Kubeconfig PATH     Deploy through an explicit kubeconfig.',
 			'-Components NAMES    Comma-separated optional component names or wildcards; prefix with - to deselect defaults.',
+			'-Set NAME=value       Set declared package variables; separate multiple assignments with commas.',
 			'-Values PATH         Apply an additional Helm values file after bundled values.',
 			'-Config PATH         Overlay an external toolchain-config.yaml.',
 			'-Namespace NAME      Override the package default namespace.',
@@ -234,8 +235,8 @@ function Get-ToolchainHelpTopics {
 			'-DryRun              Validate against Kubernetes and render Helm without persisting resources.',
 			'-PassThru            Return structured deployment details.'
 		) `
-		-Examples @('tlc package deploy .\dist\toolchain-package-demo-1.0.0.tlcpkg -Cluster dev -Confirm', 'tlc package deploy . -DryRun', 'tlc package deploy app.tlcpkg -Kubeconfig .\kubeconfig.yaml -Values .\production.yaml -Confirm') `
-		-Notes @('Required and default components deploy automatically; -Components accepts includes, wildcards, and -exclude selection.', 'Each selected component applies its manifests before its charts, preserving component declaration order.', 'Helm uses upgrade --install so repeated deployments are upgrades.', 'Archive contents are size-bounded and SHA-256 verified before any cluster operation.')
+		-Examples @('tlc package deploy .\dist\toolchain-package-demo-1.0.0.tlcpkg -Cluster dev -Set APP_NAME=demo -Confirm', 'tlc package deploy . -DryRun', 'tlc package deploy app.tlcpkg -Kubeconfig .\kubeconfig.yaml -Values .\production.yaml -Confirm') `
+		-Notes @('Required and default components deploy automatically; -Components accepts includes, wildcards, and -exclude selection.', 'Top-level variables use ###TOOLCHAIN_VAR_NAME### templates and can be supplied by -Set, toolchain-config.yaml, or TOOLCHAIN_VAR_NAME environment variables.', 'Each selected component applies its manifests before its charts, preserving component declaration order.', 'Helm uses upgrade --install so repeated deployments are upgrades.', 'Archive contents are size-bounded and SHA-256 verified before any cluster operation.')
 
 	$topics.cluster = New-ToolchainHelpTopic `
 		-Description 'Creates and manages local container-engine-backed Kubernetes development clusters.' `
