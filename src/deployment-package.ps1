@@ -6,7 +6,8 @@ SPDX-License-Identifier: MPL-2.0
 
 $script:ToolchainDeploymentPackageIndex = 'toolchain.package.json'
 $script:ToolchainDeploymentPackageMaximumFiles = 10000
-$script:ToolchainDeploymentPackageMaximumBytes = 2GB
+$script:ToolchainDeploymentPackageMaximumBytes = 20GB
+$script:ToolchainDeploymentImageRoot = '.toolchain/images'
 
 function Assert-ToolchainDeploymentIdentifier {
 	param(
@@ -29,6 +30,29 @@ function Assert-ToolchainDeploymentVersion {
 function Assert-ToolchainDeploymentVariableName {
 	param([Parameter(Mandatory)][string]$Name, [string]$Context = 'variable')
 	if ($Name -cnotmatch '^[A-Z0-9_]+$') { throw "$Context name '$Name' must contain only uppercase letters, digits, and underscores" }
+}
+
+function ConvertTo-ToolchainDeploymentImage {
+	param(
+		[Parameter(Mandatory)][object]$Value,
+		[Parameter(Mandatory)][string]$ComponentName,
+		[Parameter(Mandatory)][int]$Index
+	)
+	if ($Value -isnot [string] -or [string]::IsNullOrWhiteSpace([string]$Value)) {
+		throw "deployment component '$ComponentName' image $Index must be a non-empty string"
+	}
+	$reference = [string]$Value
+	if ($reference -ne $reference.Trim() -or $reference.Length -gt 1024 -or $reference -match '[\s\x00-\x1f]' -or
+		$reference -match '://' -or $reference -match '\\' -or $reference -cnotmatch '^[A-Za-z0-9][A-Za-z0-9._:/@-]*$') {
+		throw "deployment component '$ComponentName' contains invalid image reference '$reference'"
+	}
+	if ($reference.Contains('@') -and $reference -cnotmatch '@sha256:[0-9a-f]{64}$') {
+		throw "deployment component '$ComponentName' image '$reference' must use a sha256 digest"
+	}
+	return [pscustomobject]@{
+		Source = $reference
+		Component = $ComponentName
+	}
 }
 
 function ConvertTo-ToolchainDeploymentVariable {
@@ -238,7 +262,7 @@ function ConvertTo-ToolchainDeploymentComponent {
 	foreach ($booleanKey in @('default', 'required')) {
 		if ($null -ne $Value[$booleanKey] -and $Value[$booleanKey] -isnot [bool]) { throw "deployment component '$name' requires $booleanKey to be true or false" }
 	}
-	foreach ($unsupported in @('only', 'group', 'import', 'images', 'imageArchives', 'repos', 'files', 'dataInjections', 'actions', 'scripts', 'healthChecks')) {
+	foreach ($unsupported in @('only', 'group', 'import', 'imageArchives', 'repos', 'files', 'dataInjections', 'actions', 'scripts', 'healthChecks')) {
 		$valueForKey = $Value[$unsupported]
 		$hasValue = if ($valueForKey -is [Collections.IDictionary]) { $valueForKey.Count -gt 0 } else { @($valueForKey).Count -gt 0 -and $null -ne $valueForKey }
 		if ($hasValue) { throw "Toolchain component '$name' uses '$unsupported', which Toolchain packages do not yet support" }
@@ -256,7 +280,16 @@ function ConvertTo-ToolchainDeploymentComponent {
 	for ($manifestIndex = 0; $manifestIndex -lt $manifestValues.Count; $manifestIndex++) {
 		$manifestSets += ConvertTo-ToolchainDeploymentManifestSet -Value $manifestValues[$manifestIndex] -Index ($manifestIndex + 1) -ComponentName $name -DefaultNamespace $DefaultNamespace
 	}
-	if ($charts.Count -eq 0 -and $manifestSets.Count -eq 0) { throw "deployment component '$name' must declare at least one chart or manifest" }
+	$imageValues = @()
+	if ($null -ne $Value['images']) { $imageValues = @($Value['images']) }
+	$images = @()
+	$imageSources = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+	for ($imageIndex = 0; $imageIndex -lt $imageValues.Count; $imageIndex++) {
+		$image = ConvertTo-ToolchainDeploymentImage -Value $imageValues[$imageIndex] -ComponentName $name -Index ($imageIndex + 1)
+		if (-not $imageSources.Add([string]$image.Source)) { throw "deployment component '$name' contains duplicate image '$($image.Source)'" }
+		$images += $image
+	}
+	if ($charts.Count -eq 0 -and $manifestSets.Count -eq 0 -and $images.Count -eq 0) { throw "deployment component '$name' must declare at least one chart, manifest, or image" }
 	return [pscustomobject]@{
 		Name = $name
 		Description = [string]$Value['description']
@@ -264,6 +297,7 @@ function ConvertTo-ToolchainDeploymentComponent {
 		Default = [bool]$Value['default']
 		Charts = [object[]]$charts
 		ManifestSets = [object[]]$manifestSets
+		Images = [object[]]$images
 	}
 }
 
@@ -312,9 +346,11 @@ function Read-ToolchainDeploymentDefinition {
 	$version = if ($deployment -and $deployment['version']) { [string]$deployment['version'] } else { [string]$metadata['version'] }
 	$description = if ($deployment -and $deployment['description']) { [string]$deployment['description'] } else { [string]$metadata['description'] }
 	$namespace = if ($deployment) { [string]$deployment['namespace'] } else { $null }
+	$architecture = if ($metadata) { [string]$metadata['architecture'] } else { $null }
 	Assert-ToolchainDeploymentIdentifier -Value $name -Kind 'name'
 	Assert-ToolchainDeploymentVersion -Version $version
 	if ($namespace) { Assert-ToolchainDeploymentIdentifier -Value $namespace -Kind 'namespace' }
+	if ($architecture -and $architecture -notin @('amd64', 'arm64')) { throw "$manifestPath metadata.architecture must be amd64 or arm64" }
 
 	$variables = @()
 	$variableNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
@@ -386,6 +422,7 @@ function Read-ToolchainDeploymentDefinition {
 	}
 	$allManifestSets = @($components | ForEach-Object { $_.ManifestSets })
 	$allManifests = @($allManifestSets | ForEach-Object { $_.Files })
+	$allImages = @($components | ForEach-Object { $_.Images })
 	return [pscustomobject]@{
 		Root = $rootPath
 		ManifestPath = $manifestPath
@@ -393,10 +430,12 @@ function Read-ToolchainDeploymentDefinition {
 		Version = $version
 		Description = $description
 		Namespace = $namespace
+		Architecture = $architecture
 		Components = [object[]]$components
 		Charts = [object[]]$allCharts
 		ManifestSets = [object[]]$allManifestSets
 		Manifests = [string[]]$allManifests
+		Images = [object[]]$allImages
 		Variables = [object[]]$variables
 		GlobalValues = [string[]]$globalValues
 		Documentation = [string[]]$documentation
@@ -750,6 +789,193 @@ function Get-ToolchainDeploymentBundleFiles {
 	return $files
 }
 
+function Get-ToolchainDeploymentStringSha256 {
+	param([Parameter(Mandatory)][string]$Value)
+	$algorithm = [Security.Cryptography.SHA256]::Create()
+	try {
+		$bytes = [Text.Encoding]::UTF8.GetBytes($Value)
+		return ([BitConverter]::ToString($algorithm.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant()
+	} finally { $algorithm.Dispose() }
+}
+
+function New-ToolchainDeploymentImageTemporaryRoot {
+	$path = Join-Path ([IO.Path]::GetTempPath()) "toolchain-images-$([guid]::NewGuid().ToString('n'))"
+	[void][IO.Directory]::CreateDirectory($path)
+	return $path
+}
+
+function Remove-ToolchainDeploymentImageTemporaryRoot {
+	param([Parameter(Mandatory)][string]$Path)
+	$fullPath = [IO.Path]::GetFullPath($Path).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+	$tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+	if ((Split-Path -Parent $fullPath) -ne $tempRoot -or [IO.Path]::GetFileName($fullPath) -notmatch '^toolchain-images-[0-9a-f]{32}$') {
+		throw "refusing to remove unexpected Toolchain image temporary path: $fullPath"
+	}
+	if (Test-Path -LiteralPath $fullPath -PathType Container) { [IO.Directory]::Delete($fullPath, $true) }
+}
+
+function Resolve-ToolchainDeploymentImageEngine {
+	if (-not (Get-Command Resolve-ToolchainContainerEngine -CommandType Function -ErrorAction SilentlyContinue)) {
+		throw 'container image packaging requires Toolchain cluster engine support'
+	}
+	try { return (Resolve-ToolchainContainerEngine -Provider kind) }
+	catch { throw "container image packaging requires a ready Linux Docker, Podman, or nerdctl engine: $($_.Exception.Message)" }
+}
+
+function Add-ToolchainDeploymentImageBlob {
+	param(
+		[Parameter(Mandatory)][string]$SourcePath,
+		[Parameter(Mandatory)][string]$LayoutRoot,
+		[Parameter(Mandatory)][Collections.Generic.Dictionary[string,string]]$Files,
+		[Parameter(Mandatory)][string]$MediaType
+	)
+	$item = Get-Item -LiteralPath $SourcePath -Force
+	if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { throw "container image archive contains an invalid blob: $SourcePath" }
+	$digestHex = (Get-FileHash -LiteralPath $item.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+	$relative = "$script:ToolchainDeploymentImageRoot/blobs/sha256/$digestHex"
+	if (-not $Files.ContainsKey($relative)) {
+		$destination = Resolve-ToolchainChildPath -Root $LayoutRoot -RelativePath $relative -RejectReparsePoints -RejectRootReparsePoint
+		[void][IO.Directory]::CreateDirectory((Split-Path -Parent $destination))
+		[IO.File]::Copy($item.FullName, $destination, $false)
+		$Files.Add($relative, $destination)
+	}
+	return [ordered]@{
+		mediaType = $MediaType
+		size = [int64]$item.Length
+		digest = "sha256:$digestHex"
+	}
+}
+
+function New-ToolchainDeploymentImageLayout {
+	param(
+		[Parameter(Mandatory)][object[]]$Images,
+		[Parameter(Mandatory)][string]$LayoutRoot,
+		[ValidateSet('amd64', 'arm64')][string]$Architecture
+	)
+	$files = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
+	$artifacts = [Collections.ArrayList]::new()
+	$unique = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+	foreach ($image in $Images) {
+		$source = [string]$image.Source
+		if (-not $unique.ContainsKey($source)) { $unique.Add($source, [Collections.ArrayList]::new()) }
+		if (-not $unique[$source].Contains([string]$image.Component)) { [void]$unique[$source].Add([string]$image.Component) }
+	}
+	if ($unique.Count -eq 0) { return [pscustomobject]@{ Files = $files; Images = @() } }
+	[void][IO.Directory]::CreateDirectory($LayoutRoot)
+	$engine = Resolve-ToolchainDeploymentImageEngine
+	$tar = Get-ToolchainClusterExecutable -Name tar -InstallHint 'Install tar and ensure its executable is available on PATH.'
+	$workRoot = Join-Path $LayoutRoot 'work'
+	[void][IO.Directory]::CreateDirectory($workRoot)
+	try {
+		foreach ($source in @($unique.Keys | Sort-Object)) {
+			$key = Get-ToolchainDeploymentStringSha256 -Value $source
+			$archivePath = Join-Path $workRoot "$key.tar"
+			$extractRoot = Join-Path $workRoot $key
+			[void][IO.Directory]::CreateDirectory($extractRoot)
+			Write-ToolchainInfo "Bundling container image '$source'."
+			$pullArguments = @('pull')
+			if ($Architecture) { $pullArguments += @('--platform', "linux/$Architecture") }
+			$pullArguments += $source
+			$null = Invoke-ToolchainClusterProcess -FilePath $engine.Path -Arguments $pullArguments
+			$saveArguments = @('save')
+			if ([string]$engine.Name -eq 'podman') { $saveArguments += @('--format', 'docker-archive') }
+			$saveArguments += @('--output', $archivePath, $source)
+			$null = Invoke-ToolchainClusterProcess -FilePath $engine.Path -Arguments $saveArguments
+			$null = Invoke-ToolchainClusterProcess -FilePath $tar -Arguments @('-xf', $archivePath, '-C', $extractRoot)
+
+			$archiveManifestPath = Join-Path $extractRoot 'manifest.json'
+			if (-not (Test-Path -LiteralPath $archiveManifestPath -PathType Leaf)) { throw "container engine archive for '$source' is missing manifest.json" }
+			try { $archiveManifest = @(Get-Content -LiteralPath $archiveManifestPath -Raw | ConvertFrom-Json) }
+			catch { throw "container engine archive for '$source' has invalid manifest.json: $($_.Exception.Message)" }
+			if ($archiveManifest.Count -ne 1) { throw "container engine archive for '$source' must contain exactly one image manifest" }
+			$entry = $archiveManifest[0]
+			$configRelative = [string]$entry.Config
+			$configPath = Resolve-ToolchainChildPath -Root $extractRoot -RelativePath $configRelative -RejectReparsePoints -RejectRootReparsePoint
+			if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) { throw "container engine archive for '$source' is missing its image config" }
+			$config = Add-ToolchainDeploymentImageBlob -SourcePath $configPath -LayoutRoot $LayoutRoot -Files $files -MediaType 'application/vnd.docker.container.image.v1+json'
+			$layers = [Collections.ArrayList]::new()
+			foreach ($layerRelativeValue in @($entry.Layers)) {
+				$layerRelative = [string]$layerRelativeValue
+				$layerPath = Resolve-ToolchainChildPath -Root $extractRoot -RelativePath $layerRelative -RejectReparsePoints -RejectRootReparsePoint
+				if (-not (Test-Path -LiteralPath $layerPath -PathType Leaf)) { throw "container engine archive for '$source' is missing layer '$layerRelative'" }
+				[void]$layers.Add((Add-ToolchainDeploymentImageBlob -SourcePath $layerPath -LayoutRoot $LayoutRoot -Files $files -MediaType 'application/vnd.docker.image.rootfs.diff.tar'))
+			}
+			$registryManifest = [ordered]@{
+				schemaVersion = 2
+				mediaType = 'application/vnd.docker.distribution.manifest.v2+json'
+				config = $config
+				layers = @($layers.ToArray())
+			}
+			$manifestRelative = "$script:ToolchainDeploymentImageRoot/manifests/$key.json"
+			$manifestPath = Resolve-ToolchainChildPath -Root $LayoutRoot -RelativePath $manifestRelative -RejectReparsePoints -RejectRootReparsePoint
+			[void][IO.Directory]::CreateDirectory((Split-Path -Parent $manifestPath))
+			[IO.File]::WriteAllText($manifestPath, ($registryManifest | ConvertTo-Json -Depth 20 -Compress), [Text.UTF8Encoding]::new($false))
+			$files.Add($manifestRelative, $manifestPath)
+			$manifestDigest = 'sha256:' + (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+			[void]$artifacts.Add([ordered]@{
+				source = $source
+				components = @($unique[$source])
+				manifest = $manifestRelative
+				manifestDigest = $manifestDigest
+			})
+		}
+	} finally {
+		if (Test-Path -LiteralPath $workRoot -PathType Container) { [IO.Directory]::Delete($workRoot, $true) }
+	}
+	return [pscustomobject]@{ Files = $files; Images = @($artifacts.ToArray()) }
+}
+
+function Resolve-ToolchainDeploymentImageArtifact {
+	param(
+		[Parameter(Mandatory)][string]$Root,
+		[Parameter(Mandatory)]$Artifact
+	)
+	$source = [string]$Artifact.source
+	if ([string]::IsNullOrWhiteSpace($source)) { throw 'deployment package image artifact has no source reference' }
+	$key = Get-ToolchainDeploymentStringSha256 -Value $source
+	$expectedManifest = "$script:ToolchainDeploymentImageRoot/manifests/$key.json"
+	if (-not [string]::Equals([string]$Artifact.manifest, $expectedManifest, [StringComparison]::Ordinal)) {
+		throw "deployment package image artifact has an invalid manifest path for '$source'"
+	}
+	$manifestPath = Resolve-ToolchainChildPath -Root $Root -RelativePath $expectedManifest -RejectReparsePoints -RejectRootReparsePoint
+	if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw "deployment package image manifest is missing for '$source'" }
+	$manifestItem = Get-Item -LiteralPath $manifestPath -Force
+	if ($manifestItem.Length -gt 1MB) { throw "deployment package image manifest is too large for '$source'" }
+	$manifestDigest = 'sha256:' + (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
+	if ([string]$Artifact.manifestDigest -notmatch '^sha256:[0-9a-f]{64}$' -or
+		-not [string]::Equals([string]$Artifact.manifestDigest, $manifestDigest, [StringComparison]::Ordinal)) {
+		throw "deployment package image manifest digest verification failed for '$source'"
+	}
+	try { $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json }
+	catch { throw "deployment package image manifest is invalid for '$source': $($_.Exception.Message)" }
+	if ([int]$manifest.schemaVersion -ne 2 -or [string]$manifest.mediaType -ne 'application/vnd.docker.distribution.manifest.v2+json') {
+		throw "deployment package image manifest has an unsupported schema for '$source'"
+	}
+	$descriptors = @($manifest.config) + @($manifest.layers)
+	if ($null -eq $manifest.config -or $null -eq $manifest.layers) { throw "deployment package image manifest is incomplete for '$source'" }
+	$blobs = [Collections.ArrayList]::new()
+	foreach ($descriptor in $descriptors) {
+		$digest = [string]$descriptor.digest
+		if ($digest -cnotmatch '^sha256:[0-9a-f]{64}$' -or [int64]$descriptor.size -lt 0 -or [string]::IsNullOrWhiteSpace([string]$descriptor.mediaType)) {
+			throw "deployment package image manifest contains invalid blob metadata for '$source'"
+		}
+		$blobRelative = "$script:ToolchainDeploymentImageRoot/blobs/sha256/$($digest.Substring(7))"
+		$blobPath = Resolve-ToolchainChildPath -Root $Root -RelativePath $blobRelative -RejectReparsePoints -RejectRootReparsePoint
+		if (-not (Test-Path -LiteralPath $blobPath -PathType Leaf)) { throw "deployment package image blob is missing for '$source': $digest" }
+		$blobItem = Get-Item -LiteralPath $blobPath -Force
+		if ($blobItem.Length -ne [int64]$descriptor.size) { throw "deployment package image blob size verification failed for '$source': $digest" }
+		$actualDigest = 'sha256:' + (Get-FileHash -LiteralPath $blobPath -Algorithm SHA256).Hash.ToLowerInvariant()
+		if (-not [string]::Equals($digest, $actualDigest, [StringComparison]::Ordinal)) { throw "deployment package image blob digest verification failed for '$source': $digest" }
+		[void]$blobs.Add([pscustomobject]@{ Digest = $digest; Path = $blobPath; Size = [int64]$blobItem.Length })
+	}
+	return [pscustomobject]@{
+		Source = $source
+		ManifestPath = $manifestPath
+		ManifestDigest = $manifestDigest
+		Blobs = @($blobs.ToArray())
+	}
+}
+
 function Initialize-ToolchainCompression {
 	try { Add-Type -AssemblyName System.IO.Compression -ErrorAction Stop } catch { Write-Debug "System.IO.Compression was already loaded or unavailable: $_" }
 	try { Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction Stop } catch { Write-Debug "System.IO.Compression.FileSystem was already loaded or unavailable: $_" }
@@ -833,7 +1059,22 @@ function New-ToolchainDeploymentPackage {
 	$configPath = Join-Path $root 'toolchain-config.yaml'
 	if (Test-Path -LiteralPath $configPath -PathType Leaf) { $null = Read-ToolchainDeploymentConfig -Path $configPath }
 	Test-ToolchainDeploymentCharts -Definition $definition
+	$imageTemporaryRoot = $null
+	try {
 	$files = Get-ToolchainDeploymentBundleFiles -Definition $definition
+	$imageArtifacts = @()
+	if ($definition.Images.Count -gt 0) {
+		$imageTemporaryRoot = New-ToolchainDeploymentImageTemporaryRoot
+		$imageLayoutParameters = @{ Images = $definition.Images; LayoutRoot = $imageTemporaryRoot }
+		if ($definition.Architecture) { $imageLayoutParameters.Architecture = $definition.Architecture }
+		$imageLayout = New-ToolchainDeploymentImageLayout @imageLayoutParameters
+		foreach ($relative in $imageLayout.Files.Keys) {
+			if ($files.ContainsKey($relative)) { throw "deployment bundle image path conflicts with package content: $relative" }
+			$files.Add($relative, $imageLayout.Files[$relative])
+		}
+		$imageArtifacts = @($imageLayout.Images)
+	}
+	if ($files.Count -gt $script:ToolchainDeploymentPackageMaximumFiles) { throw "deployment bundle exceeds the limit of $script:ToolchainDeploymentPackageMaximumFiles files" }
 	if (-not $Output) { $Output = Join-Path (Join-Path $root 'dist') "toolchain-package-$($definition.Name)-$($definition.Version).tlcpkg" }
 	$outputPath = Resolve-ToolchainFileSystemPath -Path $Output
 	if ([IO.Path]::GetExtension($outputPath) -ine '.tlcpkg') { throw "deployment package output must use the .tlcpkg extension: $outputPath" }
@@ -846,7 +1087,7 @@ function New-ToolchainDeploymentPackage {
 	foreach ($relative in @($files.Keys | Sort-Object)) {
 		$file = Get-Item -LiteralPath $files[$relative] -Force
 		$totalBytes += [int64]$file.Length
-		if ($totalBytes -gt $script:ToolchainDeploymentPackageMaximumBytes) { throw 'deployment bundle exceeds the 2 GiB uncompressed size limit' }
+		if ($totalBytes -gt $script:ToolchainDeploymentPackageMaximumBytes) { throw 'deployment bundle exceeds the 20 GiB uncompressed size limit' }
 		[void]$entries.Add([ordered]@{
 			path = $relative.Replace('\', '/')
 			digest = 'sha256:' + (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -857,9 +1098,11 @@ function New-ToolchainDeploymentPackage {
 		schemaVersion = 1
 		name = $definition.Name
 		version = $definition.Version
+		architecture = $definition.Architecture
 		manifest = 'toolchain.yaml'
 		components = @($definition.Components | ForEach-Object { $_.Name })
 		variables = @($definition.Variables | ForEach-Object { $_.Name })
+		images = @($imageArtifacts)
 		files = @($entries.ToArray())
 	}
 	Initialize-ToolchainCompression
@@ -883,6 +1126,7 @@ function New-ToolchainDeploymentPackage {
 		PSTypeName = 'Toolchain.DeploymentPackage'
 		Name = $definition.Name
 		Version = $definition.Version
+		Architecture = $definition.Architecture
 		Path = $outputPath
 		Digest = 'sha256:' + (Get-FileHash -LiteralPath $outputPath -Algorithm SHA256).Hash.ToLowerInvariant()
 		Files = $entries.Count
@@ -890,9 +1134,13 @@ function New-ToolchainDeploymentPackage {
 		Variables = @($definition.Variables | ForEach-Object { $_.Name })
 		Charts = $definition.Charts.Count
 		Manifests = $definition.Manifests.Count
+		Images = $definition.Images.Count
 	}
 	Write-ToolchainInfo "Created Toolchain deployment package '$($result.Name):$($result.Version)' at $outputPath."
 	return $result
+	} finally {
+		if ($imageTemporaryRoot) { Remove-ToolchainDeploymentImageTemporaryRoot -Path $imageTemporaryRoot }
+	}
 }
 
 function Read-ToolchainZipEntryText {
@@ -947,7 +1195,7 @@ function Expand-ToolchainDeploymentPackage {
 			if ([string]$file.digest -notmatch '^sha256:[0-9a-f]{64}$' -or [int64]$file.size -lt 0) { throw "deployment package index contains invalid metadata for: $relative" }
 			$destination = Resolve-ToolchainChildPath -Root $tempRoot -RelativePath $relative -RejectReparsePoints -RejectRootReparsePoint
 			$totalBytes += [int64]$file.size
-			if ($totalBytes -gt $script:ToolchainDeploymentPackageMaximumBytes) { throw 'deployment package exceeds the 2 GiB uncompressed size limit' }
+			if ($totalBytes -gt $script:ToolchainDeploymentPackageMaximumBytes) { throw 'deployment package exceeds the 20 GiB uncompressed size limit' }
 			if ($entryMap[$relative].Length -ne [int64]$file.size) { throw "deployment package size verification failed for: $relative" }
 			$expected.Add($relative, $file)
 			$parent = Split-Path -Parent $destination
@@ -963,9 +1211,19 @@ function Expand-ToolchainDeploymentPackage {
 		if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw 'deployment package manifest is missing' }
 		$definition = Read-ToolchainDeploymentDefinition -Root $tempRoot
 		if (-not [string]::Equals($definition.Name, [string]$index.name, [StringComparison]::Ordinal) -or
-			-not [string]::Equals($definition.Version, [string]$index.version, [StringComparison]::Ordinal)) {
+			-not [string]::Equals($definition.Version, [string]$index.version, [StringComparison]::Ordinal) -or
+			-not [string]::Equals([string]$definition.Architecture, [string]$index.architecture, [StringComparison]::Ordinal)) {
 			throw 'deployment package index identity does not match toolchain.yaml'
 		}
+		$declaredImages = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+		foreach ($image in $definition.Images) { [void]$declaredImages.Add([string]$image.Source) }
+		$indexedImages = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+		foreach ($artifact in @($index.images)) {
+			$source = [string]$artifact.source
+			if (-not $declaredImages.Contains($source) -or -not $indexedImages.Add($source)) { throw "deployment package index contains an undeclared or duplicate image: $source" }
+			$null = Resolve-ToolchainDeploymentImageArtifact -Root $tempRoot -Artifact $artifact
+		}
+		if ($indexedImages.Count -ne $declaredImages.Count) { throw 'deployment package index does not contain every declared image' }
 		$archive.Dispose(); $archive = $null
 		$fileStream.Dispose(); $fileStream = $null
 		return [pscustomobject]@{ Root = $tempRoot; Index = $index; PackagePath = $packagePath }
@@ -1033,10 +1291,278 @@ function Resolve-ToolchainDeploymentComponentSelection {
 	return $resolved
 }
 
+function ConvertTo-ToolchainDeploymentNativeArgument {
+	param([Parameter(Mandatory)][AllowEmptyString()][string]$Value)
+	if ($Value.Length -gt 0 -and $Value -notmatch '[\s"]') { return $Value }
+	$builder = New-Object Text.StringBuilder
+	[void]$builder.Append('"')
+	$slashes = 0
+	foreach ($character in $Value.ToCharArray()) {
+		if ($character -eq '\') { $slashes++; continue }
+		if ($character -eq '"') {
+			[void]$builder.Append(('\' * (($slashes * 2) + 1))).Append('"')
+			$slashes = 0
+			continue
+		}
+		if ($slashes -gt 0) { [void]$builder.Append(('\' * $slashes)); $slashes = 0 }
+		[void]$builder.Append($character)
+	}
+	if ($slashes -gt 0) { [void]$builder.Append(('\' * ($slashes * 2))) }
+	[void]$builder.Append('"')
+	return $builder.ToString()
+}
+
+function Get-ToolchainDeploymentAvailableTcpPort {
+	$listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+	try {
+		$listener.Start()
+		return ([Net.IPEndPoint]$listener.LocalEndpoint).Port
+	} finally { $listener.Stop() }
+}
+
+function New-ToolchainDeploymentRegistryTunnel {
+	param(
+		[Parameter(Mandatory)][string]$Kubectl,
+		[string]$Kubeconfig
+	)
+	Add-Type -AssemblyName System.Net.Http
+	$localPort = Get-ToolchainDeploymentAvailableTcpPort
+	$arguments = @()
+	if ($Kubeconfig) { $arguments += @('--kubeconfig', $Kubeconfig) }
+	$arguments += @('port-forward', '-n', 'toolchain-system', 'service/toolchain-registry-gateway', "${localPort}:5000", '--address', '127.0.0.1')
+	$startInfo = [Diagnostics.ProcessStartInfo]::new()
+	$startInfo.FileName = $Kubectl
+	$startInfo.Arguments = (@($arguments | ForEach-Object { ConvertTo-ToolchainDeploymentNativeArgument -Value ([string]$_) }) -join ' ')
+	$startInfo.UseShellExecute = $false
+	$startInfo.CreateNoWindow = $true
+	$startInfo.RedirectStandardOutput = $true
+	$startInfo.RedirectStandardError = $true
+	$process = [Diagnostics.Process]::new()
+	$process.StartInfo = $startInfo
+	$baseUri = "http://127.0.0.1:$localPort"
+	$handler = $null
+	$client = $null
+	try {
+		if (-not $process.Start()) { throw 'kubectl port-forward did not start' }
+		$handler = [Net.Http.HttpClientHandler]::new()
+		$handler.UseProxy = $false
+		$client = [Net.Http.HttpClient]::new($handler)
+		$client.Timeout = [TimeSpan]::FromSeconds(1)
+		$deadline = [DateTime]::UtcNow.AddSeconds(15)
+		while ([DateTime]::UtcNow -lt $deadline) {
+			if ($process.HasExited) { break }
+			$request = [Net.Http.HttpRequestMessage]::new([Net.Http.HttpMethod]::Get, "$baseUri/v2/")
+			$response = $null
+			try {
+				$response = $client.SendAsync($request).GetAwaiter().GetResult()
+				if ($response.IsSuccessStatusCode) {
+					return [pscustomobject]@{ Process = $process; BaseUri = $baseUri; LocalPort = $localPort }
+				}
+			} catch { Write-Debug "Waiting for Toolchain registry tunnel: $($_.Exception.Message)" }
+			finally { if ($response) { $response.Dispose() }; $request.Dispose() }
+			Start-Sleep -Milliseconds 100
+		}
+		$errorText = ''
+		if ($process.HasExited) { $errorText = $process.StandardError.ReadToEnd().Trim() }
+		if (-not $errorText) { $errorText = 'the registry endpoint did not become ready within 15 seconds' }
+		throw "could not connect to the Toolchain registry through Kubernetes: $errorText"
+	} catch {
+		if (-not $process.HasExited) { try { $process.Kill() } catch { Write-Debug "Failed to stop registry tunnel: $($_.Exception.Message)" } }
+		$process.Dispose()
+		throw
+	} finally {
+		if ($client) { $client.Dispose() }
+		if ($handler) { $handler.Dispose() }
+	}
+}
+
+function Remove-ToolchainDeploymentRegistryTunnel {
+	param([Parameter(Mandatory)]$Tunnel)
+	$process = $Tunnel.Process
+	if (-not $process) { return }
+	try {
+		if (-not $process.HasExited) {
+			$process.Kill()
+			$null = $process.WaitForExit(5000)
+		}
+	} catch { Write-Debug "Failed to stop Toolchain registry tunnel: $($_.Exception.Message)" }
+	finally { $process.Dispose() }
+}
+
+function Invoke-ToolchainDeploymentRegistryRequest {
+	param(
+		[Parameter(Mandatory)][ValidateSet('HEAD', 'POST', 'PUT')][string]$Method,
+		[Parameter(Mandatory)][string]$Uri,
+		[Parameter(Mandatory)][string]$AuthHeader,
+		[string]$FilePath,
+		[byte[]]$Body,
+		[string]$ContentType = 'application/octet-stream',
+		[switch]$AllowNotFound
+	)
+	Add-Type -AssemblyName System.Net.Http
+	$handler = [Net.Http.HttpClientHandler]::new()
+	$handler.UseProxy = $false
+	$client = [Net.Http.HttpClient]::new($handler)
+	$client.Timeout = [Threading.Timeout]::InfiniteTimeSpan
+	$request = [Net.Http.HttpRequestMessage]::new([Net.Http.HttpMethod]::new($Method), [Uri]::new($Uri))
+	$stream = $null
+	$response = $null
+	try {
+		$request.Headers.TryAddWithoutValidation('Authorization', $AuthHeader) | Out-Null
+		if ($FilePath) {
+			$stream = [IO.File]::Open($FilePath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+			$request.Content = [Net.Http.StreamContent]::new($stream)
+		} elseif ($null -ne $Body) {
+			$request.Content = [Net.Http.ByteArrayContent]::new($Body)
+		} elseif ($Method -in @('POST', 'PUT')) {
+			$request.Content = [Net.Http.ByteArrayContent]::new([byte[]]@())
+		}
+		if ($request.Content) { $request.Content.Headers.ContentType = [Net.Http.Headers.MediaTypeHeaderValue]::new($ContentType) }
+		$response = $client.SendAsync($request, [Net.Http.HttpCompletionOption]::ResponseHeadersRead).GetAwaiter().GetResult()
+		$statusCode = [int]$response.StatusCode
+		if (-not $response.IsSuccessStatusCode -and -not ($AllowNotFound -and $statusCode -eq 404)) {
+			$detail = if ($response.Content) { $response.Content.ReadAsStringAsync().GetAwaiter().GetResult() } else { '' }
+			if ($detail.Length -gt 500) { $detail = $detail.Substring(0, 500) }
+			throw "registry request $Method $Uri failed with HTTP $statusCode$(if ($detail) { ": $detail" })"
+		}
+		$location = if ($response.Headers.Location) { [string]$response.Headers.Location } else { $null }
+		$digest = if ($response.Headers.Contains('Docker-Content-Digest')) { [string](@($response.Headers.GetValues('Docker-Content-Digest'))[0]) } else { $null }
+		return [pscustomobject]@{ StatusCode = $statusCode; Location = $location; Digest = $digest }
+	} finally {
+		if ($response) { $response.Dispose() }
+		$request.Dispose()
+		if ($stream) { $stream.Dispose() }
+		$client.Dispose()
+		$handler.Dispose()
+	}
+}
+
+function Send-ToolchainDeploymentRegistryBlob {
+	param(
+		[Parameter(Mandatory)][string]$BaseUri,
+		[Parameter(Mandatory)][string]$Repository,
+		[Parameter(Mandatory)][string]$Digest,
+		[Parameter(Mandatory)][string]$Path,
+		[Parameter(Mandatory)][string]$AuthHeader
+	)
+	$head = Invoke-ToolchainDeploymentRegistryRequest -Method HEAD -Uri "$BaseUri/v2/$Repository/blobs/$Digest" -AuthHeader $AuthHeader -AllowNotFound
+	if ($head.StatusCode -eq 200) { return }
+	$started = Invoke-ToolchainDeploymentRegistryRequest -Method POST -Uri "$BaseUri/v2/$Repository/blobs/uploads/" -AuthHeader $AuthHeader
+	if (-not $started.Location) { throw "Toolchain registry did not return an upload location for $Digest" }
+	$location = [Uri]::new([Uri]::new("$BaseUri/"), $started.Location)
+	$base = [Uri]::new($BaseUri)
+	if ($location.Host -ne $base.Host -or $location.Port -ne $base.Port) { throw 'Toolchain registry returned an unsafe cross-host upload location' }
+	$builder = [UriBuilder]::new($location)
+	$digestQuery = 'digest=' + [Uri]::EscapeDataString($Digest)
+	$builder.Query = if ($builder.Query.TrimStart('?')) { $builder.Query.TrimStart('?') + '&' + $digestQuery } else { $digestQuery }
+	$null = Invoke-ToolchainDeploymentRegistryRequest -Method PUT -Uri $builder.Uri.AbsoluteUri -AuthHeader $AuthHeader -FilePath $Path
+}
+
+function Publish-ToolchainDeploymentImages {
+	param(
+		[Parameter(Mandatory)]$Definition,
+		[Parameter(Mandatory)][object[]]$Components,
+		[Parameter(Mandatory)][string]$Root,
+		[AllowNull()]$PackageIndex,
+		[Parameter(Mandatory)][string]$Kubectl,
+		[string]$Kubeconfig,
+		[switch]$DryRun
+	)
+	$selectedImages = @($Components | ForEach-Object { $_.Images })
+	if ($selectedImages.Count -eq 0) { return @() }
+	if ($DryRun) {
+		return @($selectedImages | ForEach-Object { [pscustomobject]@{ Component = $_.Component; Source = $_.Source; Target = $null; State = 'planned' } })
+	}
+
+	$imageTemporaryRoot = $null
+	$tunnel = $null
+	try {
+		$artifacts = @()
+		$artifactRoot = $Root
+		if ($null -ne $PackageIndex) {
+			$artifacts = @($PackageIndex.images)
+		} else {
+			$imageTemporaryRoot = New-ToolchainDeploymentImageTemporaryRoot
+			$imageLayoutParameters = @{ Images = $selectedImages; LayoutRoot = $imageTemporaryRoot }
+			if ($Definition.Architecture) { $imageLayoutParameters.Architecture = $Definition.Architecture }
+			$layout = New-ToolchainDeploymentImageLayout @imageLayoutParameters
+			$artifacts = @($layout.Images)
+			$artifactRoot = $imageTemporaryRoot
+		}
+		$artifactsBySource = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::Ordinal)
+		foreach ($artifact in $artifacts) { $artifactsBySource.Add([string]$artifact.source, $artifact) }
+
+		$stateJson = Get-ToolchainBootstrapSecretValue -Kubectl $Kubectl -Kubeconfig $Kubeconfig -Secret 'toolchain-state' -Key 'state.json'
+		if (-not $stateJson) { throw "Toolchain cluster services are not initialized; run 'tlc cluster init -Confirm' before deploying package images" }
+		try { $state = $stateJson | ConvertFrom-Json }
+		catch { throw "Toolchain cluster state is invalid: $($_.Exception.Message)" }
+		$registryAddress = [string]$state.registryAddress
+		if ($registryAddress -cnotmatch '^127\.0\.0\.1:(?:3[01][0-9]{3}|32[0-6][0-9]{2}|327(?:[0-5][0-9]|6[0-7]))$') { throw "Toolchain cluster state contains an unsupported registry address: $registryAddress" }
+		$username = Get-ToolchainBootstrapSecretValue -Kubectl $Kubectl -Kubeconfig $Kubeconfig -Secret 'toolchain-registry-credentials' -Key 'username'
+		$password = Get-ToolchainBootstrapSecretValue -Kubectl $Kubectl -Kubeconfig $Kubeconfig -Secret 'toolchain-registry-credentials' -Key 'password'
+		if (-not $username -or -not $password) { throw 'Toolchain registry credentials are missing; rerun cluster init to repair cluster services' }
+		$authHeader = 'Basic ' + [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("${username}:${password}"))
+		$tunnel = New-ToolchainDeploymentRegistryTunnel -Kubectl $Kubectl -Kubeconfig $Kubeconfig
+
+		$published = [Collections.ArrayList]::new()
+		$targets = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::Ordinal)
+		foreach ($image in $selectedImages) {
+			$source = [string]$image.Source
+			if ($targets.ContainsKey($source)) {
+				[void]$published.Add([pscustomobject]@{ Component = $image.Component; Source = $source; Target = $targets[$source]; State = 'published' })
+				continue
+			}
+			if (-not $artifactsBySource.ContainsKey($source)) { throw "deployment package has no bundled content for image '$source'" }
+			$resolved = Resolve-ToolchainDeploymentImageArtifact -Root $artifactRoot -Artifact $artifactsBySource[$source]
+			$key = Get-ToolchainDeploymentStringSha256 -Value $source
+			$repository = "toolchain/packages/$($Definition.Name)/$key"
+			foreach ($blob in $resolved.Blobs) {
+				Send-ToolchainDeploymentRegistryBlob -BaseUri $tunnel.BaseUri -Repository $repository -Digest $blob.Digest -Path $blob.Path -AuthHeader $authHeader
+			}
+			$manifestBytes = [IO.File]::ReadAllBytes($resolved.ManifestPath)
+			$manifestResult = Invoke-ToolchainDeploymentRegistryRequest -Method PUT -Uri "$($tunnel.BaseUri)/v2/$repository/manifests/$key" -AuthHeader $authHeader -Body $manifestBytes -ContentType 'application/vnd.docker.distribution.manifest.v2+json'
+			if ($manifestResult.Digest -and -not [string]::Equals($manifestResult.Digest, $resolved.ManifestDigest, [StringComparison]::Ordinal)) {
+				throw "Toolchain registry returned an unexpected manifest digest for '$source'"
+			}
+			$target = "$registryAddress/$repository@$($resolved.ManifestDigest)"
+			$targets.Add($source, $target)
+			[void]$published.Add([pscustomobject]@{ Component = $image.Component; Source = $source; Target = $target; State = 'published' })
+			Write-ToolchainInfo "Published package image '$source' to the Toolchain cluster registry."
+		}
+
+		$mappingResult = Invoke-ToolchainBootstrapKubectl -Kubectl $Kubectl -Kubeconfig $Kubeconfig -Arguments @('get', 'configmap/toolchain-image-mappings', '-n', 'toolchain-system', '-o', 'jsonpath={.data.mappings\.json}')
+		$mappingJson = ($mappingResult.Output -join '').Trim()
+		try { $mappingObject = if ($mappingJson) { $mappingJson | ConvertFrom-Json } else { [pscustomobject]@{} } }
+		catch { throw "Toolchain image mappings are invalid: $($_.Exception.Message)" }
+		$mappings = [ordered]@{}
+		if ($null -eq $mappingObject -or $mappingObject -is [array] -or $mappingObject -is [string] -or $mappingObject -is [ValueType]) { throw 'Toolchain image mappings must be a JSON object' }
+		foreach ($property in $mappingObject.PSObject.Properties) {
+			$existingSource = [string]$property.Name
+			$existingTarget = [string]$property.Value
+			if ([string]::IsNullOrWhiteSpace($existingSource) -or [string]::IsNullOrWhiteSpace($existingTarget) -or ($existingSource + $existingTarget) -match '[\s\x00-\x1f]') {
+				throw 'Toolchain image mappings contain an invalid existing entry'
+			}
+			$mappings[$existingSource] = $existingTarget
+		}
+		foreach ($source in $targets.Keys) { $mappings[$source] = $targets[$source] }
+		$updatedMappings = $mappings | ConvertTo-Json -Compress
+		if ([Text.Encoding]::UTF8.GetByteCount($updatedMappings) -gt 900KB) { throw 'Toolchain image mappings exceed the safe ConfigMap size limit' }
+		$patch = [ordered]@{ data = [ordered]@{ 'mappings.json' = $updatedMappings } } | ConvertTo-Json -Depth 5 -Compress
+		$null = Invoke-ToolchainBootstrapKubectl -Kubectl $Kubectl -Kubeconfig $Kubeconfig -Arguments @('patch', 'configmap/toolchain-image-mappings', '-n', 'toolchain-system', '--type', 'merge', '--patch', $patch)
+		$null = Invoke-ToolchainBootstrapKubectl -Kubectl $Kubectl -Kubeconfig $Kubeconfig -Arguments @('rollout', 'restart', 'deployment/toolchain-agent', '-n', 'toolchain-system')
+		$null = Invoke-ToolchainBootstrapKubectl -Kubectl $Kubectl -Kubeconfig $Kubeconfig -Arguments @('rollout', 'status', 'deployment/toolchain-agent', '-n', 'toolchain-system', '--timeout=120s')
+		return @($published.ToArray())
+	} finally {
+		if ($tunnel) { Remove-ToolchainDeploymentRegistryTunnel -Tunnel $tunnel }
+		if ($imageTemporaryRoot) { Remove-ToolchainDeploymentImageTemporaryRoot -Path $imageTemporaryRoot }
+	}
+}
+
 function Invoke-ToolchainDeploymentBundle {
 	[CmdletBinding()]
 	param(
 		[Parameter(Mandatory)][string]$Root,
+		[AllowNull()]$PackageIndex,
 		[string]$Cluster,
 		[string]$Kubeconfig,
 		[string[]]$Components,
@@ -1086,6 +1612,7 @@ function Invoke-ToolchainDeploymentBundle {
 
 	$appliedManifests = [Collections.ArrayList]::new()
 	$releases = [Collections.ArrayList]::new()
+	$publishedImages = @(Publish-ToolchainDeploymentImages -Definition $definition -Components $selectedComponents -Root $Root -PackageIndex $PackageIndex -Kubectl $kubectl -Kubeconfig $kubeconfigPath -DryRun:$DryRun)
 	$helm = $null
 	$conventionalValues = Join-Path $Root 'toolchain-values.yaml'
 	foreach ($component in $selectedComponents) {
@@ -1138,12 +1665,14 @@ function Invoke-ToolchainDeploymentBundle {
 		PSTypeName = 'Toolchain.DeploymentResult'
 		Name = $definition.Name
 		Version = $definition.Version
+		Architecture = $definition.Architecture
 		Cluster = if ($Cluster) { $Cluster } else { 'current-context' }
 		Kubeconfig = $kubeconfigPath
 		Namespace = [string]$settings.namespace
 		DryRun = [bool]$DryRun
 		Components = @($selectedComponents | ForEach-Object { $_.Name })
 		Variables = @($definition.Variables | ForEach-Object { $_.Name })
+		Images = $publishedImages
 		Releases = @($releases.ToArray())
 		Manifests = @($appliedManifests.ToArray() | ForEach-Object { $_.Path })
 		ManifestDetails = @($appliedManifests.ToArray())
@@ -1185,6 +1714,7 @@ function Invoke-ToolchainDeploymentPackage {
 	if (-not $Confirm -and -not $DryRun) { throw "package deploy changes Kubernetes cluster state; rerun with -Confirm after reviewing 'tlc package deploy help'" }
 	$root = $null
 	$temporaryRoot = $null
+	$packageIndex = $null
 	try {
 		$fullPath = Resolve-ToolchainFileSystemPath -Path $Path
 		if (Test-Path -LiteralPath $fullPath -PathType Container) {
@@ -1193,9 +1723,11 @@ function Invoke-ToolchainDeploymentPackage {
 			$expanded = Expand-ToolchainDeploymentPackage -Path $fullPath
 			$root = $expanded.Root
 			$temporaryRoot = $expanded.Root
+			$packageIndex = $expanded.Index
 		}
 		$params = @{
 			Root = $root
+			PackageIndex = $packageIndex
 			Cluster = $Cluster
 			Kubeconfig = $Kubeconfig
 			Components = $Components

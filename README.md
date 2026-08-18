@@ -210,15 +210,17 @@ tlc package create .
 tlc package deploy .\dist\toolchain-package-demo-1.0.0.tlcpkg -Cluster dev -Confirm
 ```
 
-Toolchain lints charts, creates an integrity-indexed `.tlcpkg`, verifies every
-file before deployment, applies declared YAML, and uses Helm upgrade/install for
-repeatable releases. See [`package`](doc/toolchain-package.md).
+Toolchain lints charts, bundles declared container images, creates an
+integrity-indexed `.tlcpkg`, verifies every file before deployment, publishes
+images to the cluster registry, applies declared YAML, and uses Helm
+upgrade/install for repeatable releases. See [`package`](doc/toolchain-package.md).
 
 `toolchain.yaml` may alternatively use Toolchain-native `kind`, `metadata`, and
 `components`. Toolchain supports required/default/explicit component
-selection plus local `charts[].localPath`, `valuesFiles`, and named manifest
-`files`; use `tlc package deploy ... -Components 'name,pattern*,-default-name'`
-to override the defaults. Top-level `variables` use
+selection plus component `images`, local `charts[].localPath`, `valuesFiles`,
+and named manifest `files`; use
+`tlc package deploy ... -Components 'name,pattern*,-default-name'` to override
+the defaults. Top-level `variables` use
 `###TOOLCHAIN_VAR_NAME###` templates and can be supplied with `-Set NAME=value`,
 `toolchain-config.yaml`, or `TOOLCHAIN_VAR_NAME` environment variables.
 
@@ -244,7 +246,7 @@ to override the defaults. Top-level `variables` use
 | `verify` | Verify package and platform-index signatures | `doc/toolchain-verify.md` |
 | `audit` | Report project/lock drift, installed and remote digest state, updates, health, signatures, and policy findings; safely remediate lock/restore drift with `-Fix` | `doc/toolchain-audit.md` |
 | `profile init` / `add` / `remove` / `list` / `path` | Manage startup package loads in your PowerShell profile | `doc/toolchain-profile.md` |
-| `package create` / `deploy` | Create and deploy verified Kubernetes bundles with Helm charts and YAML manifests | `doc/toolchain-package.md` |
+| `package create` / `deploy` | Create and deploy verified Kubernetes bundles with images, Helm charts, and YAML manifests | `doc/toolchain-package.md` |
 | `cluster create` / `init` / `list` / `status` / `kubeconfig` / `use` / `current` / `delete` | Manage, select, and natively bootstrap local Toolchain clusters | `doc/toolchain-cluster.md` |
 | `k9s` | Launch K9s against the current context or a selected kubeconfig | `doc/toolchain-k9s.md` |
 | `doctor` | Print diagnostics for your Toolchain setup | `doc/toolchain-doctor.md` |

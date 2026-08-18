@@ -41,7 +41,7 @@
         "url": { "type": "string" },
         "image": { "type": "string" },
         "uncompressed": { "type": "boolean" },
-        "architecture": { "type": "string" },
+        "architecture": { "enum": ["amd64", "arm64"] },
         "yolo": { "type": "boolean" },
         "authors": { "type": "string" },
         "documentation": { "type": "string" },
@@ -157,7 +157,15 @@
         "only": { "type": "object" },
         "group": { "type": "string" },
         "import": { "type": "object" },
-        "images": { "type": "array" },
+        "images": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/@-]*$"
+          }
+        },
         "imageArchives": { "type": "array" },
         "repos": { "type": "array" },
         "files": { "type": "array" },

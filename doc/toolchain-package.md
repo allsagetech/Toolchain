@@ -2,8 +2,9 @@
 # package
 
 Creates and deploys portable Toolchain Kubernetes application bundles.
-Bundles can contain local Helm charts, packaged Helm `.tgz` charts, conventional
-values and deployment configuration, and additional Kubernetes YAML manifests.
+Bundles can contain container images, local Helm charts, packaged Helm `.tgz`
+charts, conventional values and deployment configuration, and additional
+Kubernetes YAML manifests.
 
 ## Package manifest
 
@@ -57,6 +58,8 @@ components:
   - name: application
     description: Install the application chart
     default: true
+    images:
+      - ghcr.io/example/demo:1.0.0
     charts:
       - name: demo
         localPath: charts/demo
@@ -76,11 +79,32 @@ tlc package deploy .\dist\toolchain-package-demo-1.0.0.tlcpkg `
 ```
 
 Component packages currently support package metadata, component selection,
-local Helm charts, local manifest files/directories, chart value files, package
-value files, documentation files, variables, namespaces, wait behavior, and
-schema-validation control. Toolchain rejects remote charts/manifests, image and
-repository bundling, file placement, actions, imports, kustomizations, and
-health checks with an explicit error. These fields are never silently ignored.
+container images, local Helm charts, local manifest files/directories, chart
+value files, package value files, documentation files, variables, namespaces,
+wait behavior, and schema-validation control. Toolchain rejects remote
+charts/manifests, image archives, repository bundling, file placement, actions,
+imports, kustomizations, and health checks with an explicit error. These fields
+are never silently ignored.
+
+## Container images
+
+Declare every workload image exactly as it appears in a Pod template under its
+component's `images` list. During `package create`, Toolchain uses a ready Linux
+Docker, Podman, or nerdctl engine to pull each unique image and converts it into
+integrity-indexed registry blobs inside the `.tlcpkg`. `tar` must also be on
+`PATH`. Package creation is the connected step; deployment of the resulting
+archive does not need the original image registry. Set `metadata.architecture`
+to `amd64` or `arm64` when the package must pull a specific Linux platform;
+otherwise the active engine's platform is used.
+
+Before applying package resources, `package deploy` publishes selected images
+through the registry installed by `tlc cluster init`. It stores digest-pinned
+targets in the cluster's exact-match image map, preserves mappings from earlier
+packages, and restarts the admission agent so new Pods use the bundled copies.
+The image spelling in `images` must therefore match the spelling used by the
+chart or manifest. A source-directory deployment performs the pull and
+conversion at deployment time. `-DryRun` reports planned images without pulling
+or publishing them.
 
 ## Package variables
 
@@ -163,9 +187,10 @@ An external `-Config` file overlays the bundled configuration. Command-line
 tlc package create .
 ```
 
-Toolchain validates every chart with `helm lint`, collects declared content,
-and writes `dist/toolchain-package-NAME-VERSION.tlcpkg`. Each archive contains
-an index covering every file with its path, size, and SHA-256 digest.
+Toolchain validates every chart with `helm lint`, pulls declared images,
+collects declared content, and writes
+`dist/toolchain-package-NAME-VERSION.tlcpkg`. Each archive contains an index
+covering every file and image blob with its path, size, and SHA-256 digest.
 
 Choose another output or replace a previous build explicitly:
 
@@ -192,11 +217,11 @@ tlc package deploy .\dist\toolchain-package-demo-1.0.0.tlcpkg `
 ```
 
 Toolchain verifies the archive before contacting Kubernetes, performs an API
-readiness check, and deploys selected components in declaration order. Within
-each component it server-side applies declared manifests and then runs
-`helm upgrade --install` for each chart. Repeated deployments therefore upgrade
-existing releases. Use `-DryRun` without `-Confirm` to validate and render
-without persisting resources.
+readiness check, publishes all selected component images, and deploys selected
+components in declaration order. Within each component it server-side applies
+declared manifests and then runs `helm upgrade --install` for each chart.
+Repeated deployments therefore upgrade existing releases. Use `-DryRun`
+without `-Confirm` to validate and render without persisting resources.
 
 Archive hashing detects accidental or malicious modification after creation;
 it does not establish publisher identity. Distribute packages through a trusted

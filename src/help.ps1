@@ -201,7 +201,7 @@ function Get-ToolchainHelpTopics {
 		-Usage @('tlc profile path') `
 		-Examples @('tlc profile path')
 	$topics.package = New-ToolchainHelpTopic `
-		-Description 'Creates and deploys integrity-checked Kubernetes application bundles with Helm charts and YAML manifests.' `
+		-Description 'Creates and deploys integrity-checked Kubernetes application bundles with images, Helm charts, and YAML manifests.' `
 		-Usage @('tlc package COMMAND [PATH] [OPTIONS]', 'tlc package COMMAND help') `
 		-Commands @(
 			'create    Build a .tlcpkg bundle from toolchain.yaml.',
@@ -209,7 +209,7 @@ function Get-ToolchainHelpTopics {
 		) `
 		-Examples @('tlc package create .', 'tlc package deploy .\dist\toolchain-package-demo-1.0.0.tlcpkg -Cluster dev -Confirm')
 	$topics.'package create' = New-ToolchainHelpTopic `
-		-Description 'Validates local Helm charts and creates a hash-indexed Toolchain deployment package.' `
+		-Description 'Bundles container images, validates local Helm charts, and creates a hash-indexed Toolchain deployment package.' `
 		-Usage @('tlc package create [DIRECTORY] [-Output PATH] [-Force]') `
 		-Options @(
 			'DIRECTORY       Source containing toolchain.yaml. Default: current directory.',
@@ -217,9 +217,9 @@ function Get-ToolchainHelpTopics {
 			'-Force          Replace an existing output package after the new package is complete.'
 		) `
 		-Examples @('tlc package create .', 'tlc package create . -Output .\release\app.tlcpkg', 'tlc package create . -Force') `
-		-Notes @('toolchain-values.yaml and toolchain-config.yaml are included automatically when present.', 'Toolchain-native metadata/components, localPath charts, valuesFiles, and named manifest files are supported.', 'Additional Kubernetes YAML must be declared under deployment.manifests or components[].manifests.', 'Charts may be local Chart.yaml directories or packaged .tgz files and are linted with Helm before packaging.')
+		-Notes @('toolchain-values.yaml and toolchain-config.yaml are included automatically when present.', 'Toolchain-native metadata/components, component images, localPath charts, valuesFiles, and named manifest files are supported.', 'Images require a ready Linux Docker, Podman, or nerdctl engine plus tar during package creation.', 'Additional Kubernetes YAML must be declared under deployment.manifests or components[].manifests.', 'Charts may be local Chart.yaml directories or packaged .tgz files and are linted with Helm before packaging.')
 	$topics.'package deploy' = New-ToolchainHelpTopic `
-		-Description 'Verifies a Toolchain deployment package, applies declared YAML, and upgrades or installs its Helm releases.' `
+		-Description 'Verifies a Toolchain deployment package, publishes bundled images, applies declared YAML, and upgrades or installs its Helm releases.' `
 		-Usage @('tlc package deploy PACKAGE -Confirm [-Components NAMES] [-Set NAME=value] [-Cluster NAME | -Kubeconfig PATH] [-Values PATH] [-Config PATH] [-Namespace NAME] [-WaitSeconds SECONDS] [-PassThru]', 'tlc package deploy DIRECTORY -DryRun [OPTIONS]') `
 		-Options @(
 			'PACKAGE             A .tlcpkg file or unpackaged source directory.',
@@ -236,7 +236,7 @@ function Get-ToolchainHelpTopics {
 			'-PassThru            Return structured deployment details.'
 		) `
 		-Examples @('tlc package deploy .\dist\toolchain-package-demo-1.0.0.tlcpkg -Cluster dev -Set APP_NAME=demo -Confirm', 'tlc package deploy . -DryRun', 'tlc package deploy app.tlcpkg -Kubeconfig .\kubeconfig.yaml -Values .\production.yaml -Confirm') `
-		-Notes @('Required and default components deploy automatically; -Components accepts includes, wildcards, and -exclude selection.', 'Top-level variables use ###TOOLCHAIN_VAR_NAME### templates and can be supplied by -Set, toolchain-config.yaml, or TOOLCHAIN_VAR_NAME environment variables.', 'Each selected component applies its manifests before its charts, preserving component declaration order.', 'Helm uses upgrade --install so repeated deployments are upgrades.', 'Archive contents are size-bounded and SHA-256 verified before any cluster operation.')
+		-Notes @('Required and default components deploy automatically; -Components accepts includes, wildcards, and -exclude selection.', 'Bundled images publish to the registry installed by cluster init and exact source references are mapped to digest-pinned targets before workloads are applied.', 'Top-level variables use ###TOOLCHAIN_VAR_NAME### templates and can be supplied by -Set, toolchain-config.yaml, or TOOLCHAIN_VAR_NAME environment variables.', 'Each selected component applies its manifests before its charts, preserving component declaration order.', 'Helm uses upgrade --install so repeated deployments are upgrades.', 'Archive contents are size-bounded and SHA-256 verified before any cluster operation.')
 
 	$topics.cluster = New-ToolchainHelpTopic `
 		-Description 'Creates and manages local container-engine-backed Kubernetes development clusters.' `
