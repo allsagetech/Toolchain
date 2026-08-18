@@ -29,7 +29,7 @@
 
 ### Fixed
 
-- Accept nested `package.create` and `package.deploy` settings in `toolchain-config.yaml`, including creation templates, deployment variables, component selection, and bundled deploy-time Helm values.
+- Accept `log_level`, `log_format`, and nested `package.create` and `package.deploy` settings in `toolchain-config.yaml`, including creation templates, deployment variables, component selection, and bundled deploy-time Helm values.
 - Resolve relative deployment-package paths from PowerShell's current filesystem location instead of the process launch directory.
 - Build and import the admission agent locally when initializing managed clusters, removing the dependency on an unpublished versioned agent image.
 - Automatically select a sole managed cluster, refresh K3s kubeconfigs before initialization, distinguish stopped K3s servers, and report actionable Kubernetes API preflight failures.

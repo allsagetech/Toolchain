@@ -294,6 +294,10 @@ package:
       - values/staging.yaml
 ```
 
+Top-level `log_level` accepts `warn`, `info`, `debug`, or `trace`.
+`log_format` accepts `console`, `json`, or `dev`. These settings apply for the
+duration of package creation or deployment and are restored afterward.
+
 `package.create.set` values replace native
 `###TOOLCHAIN_PKG_TMPL_NAME###` tokens in `toolchain.yaml` before package
 validation. `package.deploy.set` names are case-insensitive and resolve declared

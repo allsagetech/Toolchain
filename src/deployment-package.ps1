@@ -669,11 +669,19 @@ function Read-ToolchainDeploymentConfig {
 	if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) { throw "Toolchain deployment config is not a file: $fullPath" }
 	$config = ConvertFrom-ToolchainYaml -Text (Get-Content -LiteralPath $fullPath -Raw) -Context $fullPath
 	foreach ($key in $config.Keys) {
-		if ([string]$key -notin @('schemaVersion', 'namespace', 'wait', 'waitSeconds', 'createNamespace', 'variables', 'package')) {
+		if ([string]$key -notin @('schemaVersion', 'namespace', 'wait', 'waitSeconds', 'createNamespace', 'variables', 'package', 'log_level', 'log_format', 'logLevel', 'logFormat')) {
 			throw "$fullPath contains unsupported deployment config key '$key'"
 		}
 	}
 	if ($null -ne $config.schemaVersion -and [int]$config.schemaVersion -ne 1) { throw "$fullPath requires schemaVersion: 1 when schemaVersion is specified" }
+	$hasLogLevel = $config.Contains('logLevel') -or $config.Contains('log_level')
+	$hasLogFormat = $config.Contains('logFormat') -or $config.Contains('log_format')
+	$logLevel = if ($config.Contains('logLevel')) { [string]$config['logLevel'] } elseif ($config.Contains('log_level')) { [string]$config['log_level'] } else { 'info' }
+	$logFormat = if ($config.Contains('logFormat')) { [string]$config['logFormat'] } elseif ($config.Contains('log_format')) { [string]$config['log_format'] } else { 'console' }
+	$logLevel = $logLevel.ToLowerInvariant()
+	$logFormat = $logFormat.ToLowerInvariant()
+	if ($logLevel -notin @('warn', 'info', 'debug', 'trace')) { throw "$fullPath log_level must be warn, info, debug, or trace" }
+	if ($logFormat -notin @('console', 'json', 'dev')) { throw "$fullPath log_format must be console, json, or dev" }
 
 	$packageConfig = $config['package']
 	if ($null -ne $packageConfig -and $packageConfig -isnot [Collections.IDictionary]) { throw "$fullPath package must be a mapping" }
@@ -762,6 +770,10 @@ function Read-ToolchainDeploymentConfig {
 		values = ConvertConfigStringList -Value $(if ($hasValues) { $deployConfig['values'] } else { $null }) -Context "$fullPath package.deploy.values"
 		hasComponents = [bool]$hasComponents
 		hasValues = [bool]$hasValues
+		logLevel = $logLevel
+		logFormat = $logFormat
+		hasLogLevel = [bool]$hasLogLevel
+		hasLogFormat = [bool]$hasLogFormat
 	}
 }
 
@@ -1486,7 +1498,8 @@ function New-ToolchainDeploymentPackage {
 	if ($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "deployment package source cannot be a link or reparse point: $root" }
 	$definition = Read-ToolchainDeploymentDefinition -Root $root
 	$configPath = Join-Path $root 'toolchain-config.yaml'
-	if (Test-Path -LiteralPath $configPath -PathType Leaf) { $null = Read-ToolchainDeploymentConfig -Path $configPath }
+	$config = if (Test-Path -LiteralPath $configPath -PathType Leaf) { Read-ToolchainDeploymentConfig -Path $configPath } else { @{ logLevel = 'info'; logFormat = 'console' } }
+	$previousLogConfiguration = Set-ToolchainLogConfiguration -Level ([string]$config.logLevel) -Format ([string]$config.logFormat)
 	$chartTemporaryRoot = $null
 	$imageTemporaryRoot = $null
 	$createActionsStarted = $false
@@ -1587,6 +1600,7 @@ function New-ToolchainDeploymentPackage {
 	} finally {
 		if ($imageTemporaryRoot) { Remove-ToolchainDeploymentImageTemporaryRoot -Path $imageTemporaryRoot }
 		if ($chartTemporaryRoot) { Remove-ToolchainDeploymentChartTemporaryRoot -Path $chartTemporaryRoot }
+		Reset-ToolchainLogConfiguration -Configuration $previousLogConfiguration
 	}
 }
 
@@ -1708,6 +1722,8 @@ function Merge-ToolchainDeploymentConfig {
 	if ($config.variables) {
 		foreach ($name in $config.variables.Keys) { $Variables[[string]$name] = $config.variables[$name] }
 	}
+	if ($config.hasLogLevel) { $Settings.logLevel = [string]$config.logLevel }
+	if ($config.hasLogFormat) { $Settings.logFormat = [string]$config.logFormat }
 	if ($config.hasComponents) {
 		$PackageOptions.Components = [string[]]$config.components
 		$PackageOptions.HasComponents = $true
@@ -2262,6 +2278,8 @@ function Invoke-ToolchainDeploymentBundle {
 		wait = $true
 		waitSeconds = 300
 		createNamespace = $true
+		logLevel = 'info'
+		logFormat = 'console'
 	}
 	$configuredVariables = @{}
 	$packageOptions = @{ Components = [string[]]@(); Values = [string[]]@(); HasComponents = $false; HasValues = $false }
@@ -2289,6 +2307,7 @@ function Invoke-ToolchainDeploymentBundle {
 	$selectedCharts = @($selectedComponents | ForEach-Object { $_.Charts })
 	$chartTemporaryRoot = Initialize-ToolchainDeploymentRemoteCharts -Definition $definition -Charts $selectedCharts
 	$renderRoot = New-ToolchainDeploymentRenderRoot
+	$previousLogConfiguration = Set-ToolchainLogConfiguration -Level ([string]$settings.logLevel) -Format ([string]$settings.logFormat)
 	$deployActionsStarted = $false
 	$deployActionResults = [Collections.ArrayList]::new()
 	try {
@@ -2387,6 +2406,7 @@ function Invoke-ToolchainDeploymentBundle {
 	} finally {
 		Remove-ToolchainDeploymentRenderRoot -Path $renderRoot
 		if ($chartTemporaryRoot) { Remove-ToolchainDeploymentChartTemporaryRoot -Path $chartTemporaryRoot }
+		Reset-ToolchainLogConfiguration -Configuration $previousLogConfiguration
 	}
 }
 

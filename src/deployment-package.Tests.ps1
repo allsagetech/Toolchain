@@ -8,6 +8,8 @@ BeforeAll {
 	. (Join-Path $PSScriptRoot 'config.ps1')
 	. (Join-Path $PSScriptRoot 'project.ps1')
 	function Write-ToolchainInfo { param([string]$Message) }
+	function Set-ToolchainLogConfiguration { param($Level,$Format) [pscustomobject]@{ Level='info'; Format='console' } }
+	function Reset-ToolchainLogConfiguration { param($Configuration) }
 	function Get-ToolchainClusterExecutable { param($Name,$Package,$InstallHint) "$Name.exe" }
 	function Invoke-ToolchainClusterProcess { param($FilePath,$Arguments,[switch]$AllowFailure) [pscustomobject]@{ ExitCode = 0; Output = @() } }
 	function Resolve-ToolchainContainerEngine { param($Engine,$Provider) [pscustomobject]@{ Name = 'docker'; Path = 'docker.exe' } }
@@ -234,6 +236,8 @@ Describe 'Toolchain deployment package creation' {
 		[IO.File]::WriteAllText($manifestPath, $manifest)
 		[IO.File]::WriteAllText((Join-Path $source 'deploy-values.yaml'), "configured: true`n")
 		[IO.File]::WriteAllText((Join-Path $source 'toolchain-config.yaml'), @'
+log_level: debug
+log_format: json
 package:
   create:
     set:
@@ -244,9 +248,12 @@ package:
     values:
       - deploy-values.yaml
 '@)
+		$config = Read-ToolchainDeploymentConfig -Path (Join-Path $source 'toolchain-config.yaml')
 
 		$result = New-ToolchainDeploymentPackage -Path $source -Output (Join-Path $TestDrive 'nested-package-config.tlcpkg')
 
+		$config.logLevel | Should -BeExactly 'debug'
+		$config.logFormat | Should -BeExactly 'json'
 		$result.Name | Should -BeExactly 'nested-config-demo'
 		$expanded = Expand-ToolchainDeploymentPackage -Path $result.Path
 		try {
