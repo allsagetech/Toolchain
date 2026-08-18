@@ -284,6 +284,7 @@ Toolchain also accepts command-scoped package configuration without requiring a
 ```yaml
 package:
   create:
+    skip_sbom: true
     set:
       package_name: demo
   deploy:
@@ -300,7 +301,9 @@ duration of package creation or deployment and are restored afterward.
 
 `package.create.set` values replace native
 `###TOOLCHAIN_PKG_TMPL_NAME###` tokens in `toolchain.yaml` before package
-validation. `package.deploy.set` names are case-insensitive and resolve declared
+validation. `package.create.skip_sbom` accepts a Boolean for compatibility with
+v0.76-style package configuration; Toolchain package creation currently behaves
+as though this setting is `true`. `package.deploy.set` names are case-insensitive and resolve declared
 uppercase package variables. Configured components and values act as defaults;
 explicit `-Components`, `-Values`, and `-Set` options take precedence. Relative
 deploy values resolve beside the config file and values from the bundled config

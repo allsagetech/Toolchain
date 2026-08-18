@@ -694,7 +694,7 @@ function Read-ToolchainDeploymentConfig {
 	if ($null -ne $createConfig -and $createConfig -isnot [Collections.IDictionary]) { throw "$fullPath package.create must be a mapping" }
 	if ($createConfig) {
 		foreach ($key in $createConfig.Keys) {
-			if ([string]$key -notin @('set')) { throw "$fullPath package.create contains unsupported key '$key'" }
+			if ([string]$key -notin @('set', 'skip_sbom', 'skipSBOM')) { throw "$fullPath package.create contains unsupported key '$key'" }
 		}
 	}
 	$deployConfig = if ($packageConfig) { $packageConfig['deploy'] } else { $null }
@@ -756,6 +756,9 @@ function Read-ToolchainDeploymentConfig {
 	$deployVariables = ConvertConfigVariables -Value $(if ($deployConfig) { $deployConfig['set'] } else { $null }) -Context "$fullPath package.deploy.set"
 	foreach ($name in $deployVariables.Keys) { $variables[$name] = $deployVariables[$name] }
 	$createVariables = ConvertConfigVariables -Value $(if ($createConfig) { $createConfig['set'] } else { $null }) -Context "$fullPath package.create.set"
+	$hasSkipSbom = $createConfig -and ($createConfig.Contains('skipSBOM') -or $createConfig.Contains('skip_sbom'))
+	$skipSbom = if ($createConfig -and $createConfig.Contains('skipSBOM')) { $createConfig['skipSBOM'] } elseif ($createConfig -and $createConfig.Contains('skip_sbom')) { $createConfig['skip_sbom'] } else { $true }
+	if ($hasSkipSbom -and $skipSbom -isnot [bool]) { throw "$fullPath package.create.skip_sbom must be true or false" }
 	$hasComponents = $deployConfig -and $deployConfig.Contains('components')
 	$hasValues = $deployConfig -and $deployConfig.Contains('values')
 	return @{
@@ -766,6 +769,8 @@ function Read-ToolchainDeploymentConfig {
 		createNamespace = $createNamespace
 		variables = $variables
 		createVariables = $createVariables
+		skipSbom = [bool]$skipSbom
+		hasSkipSbom = [bool]$hasSkipSbom
 		components = ConvertConfigStringList -Value $(if ($hasComponents) { $deployConfig['components'] } else { $null }) -Context "$fullPath package.deploy.components"
 		values = ConvertConfigStringList -Value $(if ($hasValues) { $deployConfig['values'] } else { $null }) -Context "$fullPath package.deploy.values"
 		hasComponents = [bool]$hasComponents

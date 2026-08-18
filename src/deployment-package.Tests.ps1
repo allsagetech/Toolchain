@@ -240,6 +240,7 @@ log_level: debug
 log_format: json
 package:
   create:
+    skip_sbom: true
     set:
       package_name: nested-config-demo
   deploy:
@@ -254,6 +255,8 @@ package:
 
 		$config.logLevel | Should -BeExactly 'debug'
 		$config.logFormat | Should -BeExactly 'json'
+		$config.skipSbom | Should -BeTrue
+		$config.hasSkipSbom | Should -BeTrue
 		$result.Name | Should -BeExactly 'nested-config-demo'
 		$expanded = Expand-ToolchainDeploymentPackage -Path $result.Path
 		try {
