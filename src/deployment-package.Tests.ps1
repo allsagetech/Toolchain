@@ -226,6 +226,152 @@ Describe 'Toolchain deployment package creation' {
 		}
 	}
 
+	It 'downloads and integrity-indexes a remote Helm repository chart for offline deployment' {
+		$source = Join-Path $TestDrive 'remote-chart-source'
+		[void][IO.Directory]::CreateDirectory($source)
+		[IO.File]::WriteAllText((Join-Path $source 'toolchain.yaml'), @'
+apiVersion: toolchain.allsagetech.com/v1alpha1
+kind: ToolchainPackageConfig
+metadata:
+  name: remote-demo
+  version: 1.0.0
+components:
+  - name: application
+    required: true
+    charts:
+      - name: package-name
+        version: 6.4.0
+        url: https://charts.example.invalid
+        repoName: upstream-name
+        releaseName: remote-demo
+        namespace: remote-system
+'@)
+		Mock Invoke-ToolchainClusterProcess {
+			$script:packageProcessCalls.Add([pscustomobject]@{ FilePath = $FilePath; Arguments = [string[]]$Arguments })
+			if ($Arguments[0] -eq 'pull') {
+				$destinationIndex = [array]::IndexOf([object[]]$Arguments, '--destination')
+				[IO.File]::WriteAllText((Join-Path ([string]$Arguments[$destinationIndex + 1]) 'upstream-name-6.4.0.tgz'), 'remote-chart')
+			}
+			[pscustomobject]@{ ExitCode = 0; Output = @() }
+		}
+		$output = Join-Path $TestDrive 'remote-demo.tlcpkg'
+
+		$result = New-ToolchainDeploymentPackage -Path $source -Output $output
+
+		$result.Charts | Should -Be 1
+		$pullCalls = @($script:packageProcessCalls | Where-Object { $_.FilePath -eq 'helm.exe' -and $_.Arguments[0] -eq 'pull' })
+		$pullCalls.Count | Should -Be 1
+		$pullCalls[0].Arguments[1] | Should -BeExactly 'upstream-name'
+		$pullCalls[0].Arguments | Should -Contain '--repo'
+		$pullCalls[0].Arguments | Should -Contain 'https://charts.example.invalid'
+		$pullCalls[0].Arguments | Should -Contain '6.4.0'
+		$expanded = Expand-ToolchainDeploymentPackage -Path $output
+		try {
+			$definition = Read-ToolchainDeploymentDefinition -Root $expanded.Root
+			$definition.Charts[0].Remote | Should -BeTrue
+			$definition.Charts[0].Path | Should -Match '^\.toolchain/charts/[0-9a-f]{64}\.tgz$'
+			Test-Path -LiteralPath (Join-Path $expanded.Root $definition.Charts[0].Path) -PathType Leaf | Should -BeTrue
+			Initialize-ToolchainDeploymentRemoteCharts -Definition $definition | Should -BeNullOrEmpty
+			@($script:packageProcessCalls | Where-Object { $_.Arguments[0] -eq 'pull' }).Count | Should -Be 1
+		} finally { Remove-ToolchainDeploymentTemporaryRoot -Path $expanded.Root }
+	}
+
+	It 'downloads OCI charts through Helm without treating the URL as a chart repository' {
+		$source = Join-Path $TestDrive 'oci-chart-source'
+		[void][IO.Directory]::CreateDirectory($source)
+		[IO.File]::WriteAllText((Join-Path $source 'toolchain.yaml'), @'
+apiVersion: toolchain.allsagetech.com/v1alpha1
+kind: ToolchainPackageConfig
+metadata:
+  name: oci-demo
+  version: 1.0.0
+components:
+  - name: application
+    required: true
+    charts:
+      - name: podinfo
+        version: 6.4.0
+        url: oci://ghcr.io/example/charts/podinfo
+'@)
+		Mock Invoke-ToolchainClusterProcess {
+			$script:packageProcessCalls.Add([pscustomobject]@{ FilePath = $FilePath; Arguments = [string[]]$Arguments })
+			if ($Arguments[0] -eq 'pull') {
+				$destinationIndex = [array]::IndexOf([object[]]$Arguments, '--destination')
+				[IO.File]::WriteAllText((Join-Path ([string]$Arguments[$destinationIndex + 1]) 'podinfo-6.4.0.tgz'), 'oci-chart')
+			}
+			[pscustomobject]@{ ExitCode = 0; Output = @() }
+		}
+
+		$null = New-ToolchainDeploymentPackage -Path $source -Output (Join-Path $TestDrive 'oci-demo.tlcpkg')
+
+		$pull = @($script:packageProcessCalls | Where-Object { $_.Arguments[0] -eq 'pull' })[0]
+		$pull.Arguments[1] | Should -BeExactly 'oci://ghcr.io/example/charts/podinfo'
+		$pull.Arguments | Should -Not -Contain '--repo'
+		$pull.Arguments | Should -Contain '6.4.0'
+	}
+
+	It 'clones and packages Git-backed charts at the pinned version' {
+		$source = Join-Path $TestDrive 'git-chart-source'
+		[void][IO.Directory]::CreateDirectory($source)
+		[IO.File]::WriteAllText((Join-Path $source 'toolchain.yaml'), @'
+apiVersion: toolchain.allsagetech.com/v1alpha1
+kind: ToolchainPackageConfig
+metadata:
+  name: git-demo
+  version: 1.0.0
+components:
+  - name: application
+    required: true
+    charts:
+      - name: git-app
+        version: v1.2.3
+        url: https://git.example.invalid/app.git
+        gitPath: charts/app
+'@)
+		Mock Invoke-ToolchainClusterProcess {
+			$script:packageProcessCalls.Add([pscustomobject]@{ FilePath = $FilePath; Arguments = [string[]]$Arguments })
+			if ($FilePath -eq 'git.exe' -and $Arguments[0] -eq 'clone') {
+				$chartRoot = Join-Path ([string]$Arguments[-1]) 'charts/app'
+				[void][IO.Directory]::CreateDirectory($chartRoot)
+				[IO.File]::WriteAllText((Join-Path $chartRoot 'Chart.yaml'), "apiVersion: v2`nname: git-app`nversion: 1.2.3`n")
+			} elseif ($FilePath -eq 'helm.exe' -and $Arguments[0] -eq 'package') {
+				$destinationIndex = [array]::IndexOf([object[]]$Arguments, '--destination')
+				[IO.File]::WriteAllText((Join-Path ([string]$Arguments[$destinationIndex + 1]) 'git-app-1.2.3.tgz'), 'git-chart')
+			}
+			[pscustomobject]@{ ExitCode = 0; Output = @() }
+		}
+
+		$null = New-ToolchainDeploymentPackage -Path $source -Output (Join-Path $TestDrive 'git-demo.tlcpkg')
+
+		$clone = @($script:packageProcessCalls | Where-Object { $_.FilePath -eq 'git.exe' -and $_.Arguments[0] -eq 'clone' })[0]
+		$clone.Arguments | Should -Contain '--branch'
+		$clone.Arguments | Should -Contain 'v1.2.3'
+		$clone.Arguments | Should -Contain 'https://git.example.invalid/app.git'
+		@($script:packageProcessCalls | Where-Object { $_.FilePath -eq 'helm.exe' -and $_.Arguments[0] -eq 'dependency' }).Count | Should -Be 1
+		@($script:packageProcessCalls | Where-Object { $_.FilePath -eq 'helm.exe' -and $_.Arguments[0] -eq 'package' }).Count | Should -Be 1
+	}
+
+	It 'requires a pinned name and version for remote charts' {
+		$source = Join-Path $TestDrive 'invalid-remote-chart'
+		[void][IO.Directory]::CreateDirectory($source)
+		[IO.File]::WriteAllText((Join-Path $source 'toolchain.yaml'), @'
+apiVersion: toolchain.allsagetech.com/v1alpha1
+kind: ToolchainPackageConfig
+metadata:
+  name: invalid-remote
+  version: 1.0.0
+components:
+  - name: application
+    required: true
+    charts:
+      - name: remote
+        url: https://charts.example.invalid
+'@)
+
+		{ New-ToolchainDeploymentPackage -Path $source -Output (Join-Path $TestDrive 'invalid-remote.tlcpkg') } | Should -Throw '*requires version when url is used*'
+		Should -Invoke Invoke-ToolchainClusterProcess -Times 0
+	}
+
 	It 'resolves dot against the current PowerShell filesystem location' {
 		$source = Join-Path $TestDrive 'dot-source'
 		New-TestDeploymentSource -Root $source

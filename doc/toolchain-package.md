@@ -2,9 +2,9 @@
 # package
 
 Creates and deploys portable Toolchain Kubernetes application bundles.
-Bundles can contain container images, local Helm charts, packaged Helm `.tgz`
-charts, conventional values and deployment configuration, and additional
-Kubernetes YAML manifests.
+Bundles can contain container images, local or remote Helm charts, packaged
+Helm `.tgz` charts, conventional values and deployment configuration, and
+additional Kubernetes YAML manifests.
 
 ## Package manifest
 
@@ -31,10 +31,11 @@ deployment:
     - resources/extra-configmap.yaml
 ```
 
-Chart paths must refer to a local directory containing `Chart.yaml` or a
-packaged `.tgz` chart. Manifest entries may identify one YAML file or a
-directory; directories are included recursively. Paths must remain inside the
-package source and cannot traverse links or reparse points.
+Local chart paths must refer to a directory containing `Chart.yaml` or a
+packaged `.tgz` chart; remote chart entries may use `url` as described below.
+Manifest entries may identify one YAML file or a directory; directories are
+included recursively. Paths must remain inside the package source and cannot
+traverse links or reparse points.
 
 ## Toolchain component packages
 
@@ -79,12 +80,49 @@ tlc package deploy .\dist\toolchain-package-demo-1.0.0.tlcpkg `
 ```
 
 Component packages currently support package metadata, component selection,
-container images, local Helm charts, local manifest files/directories, chart
-value files, package value files, documentation files, variables, namespaces,
-wait behavior, and schema-validation control. Toolchain rejects remote
-charts/manifests, image archives, repository bundling, file placement, actions,
+container images, local and remote Helm charts, local manifest files/directories,
+chart value files, package value files, documentation files, variables,
+namespaces, wait behavior, and schema-validation control. Toolchain rejects
+remote manifests, image archives, repository bundling, file placement, actions,
 imports, kustomizations, and health checks with an explicit error. These fields
 are never silently ignored.
+
+## Remote Helm charts
+
+Remote charts are downloaded only during `package create`, converted to a
+packaged `.tgz`, and included in the package integrity index. Deploying the
+resulting `.tlcpkg` uses the bundled chart and does not contact its original
+source.
+
+Use `url` with an exact `version` and chart `name`. For an HTTP(S) Helm
+repository, `repoName` optionally identifies a chart whose repository name
+differs from its Toolchain name:
+
+```yaml
+charts:
+  - name: podinfo-release
+    version: 6.4.0
+    url: https://stefanprodan.github.io/podinfo
+    repoName: podinfo
+    releaseName: podinfo
+```
+
+OCI and Git sources are also supported:
+
+```yaml
+charts:
+  - name: podinfo-oci
+    version: 6.4.0
+    url: oci://ghcr.io/stefanprodan/charts/podinfo
+  - name: podinfo-git
+    version: 6.4.0
+    url: https://github.com/stefanprodan/podinfo.git
+    gitPath: charts/podinfo
+```
+
+For Git sources, `version` is the tag or branch unless the repository URL ends
+with an explicit `.git@REF`. Direct HTTP(S) `.tgz` URLs are accepted as well.
+Helm and Git use their normal configured credential stores for private sources.
 
 ## Container images
 

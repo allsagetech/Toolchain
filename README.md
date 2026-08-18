@@ -217,8 +217,8 @@ upgrade/install for repeatable releases. See [`package`](doc/toolchain-package.m
 
 `toolchain.yaml` may alternatively use Toolchain-native `kind`, `metadata`, and
 `components`. Toolchain supports required/default/explicit component
-selection plus component `images`, local `charts[].localPath`, `valuesFiles`,
-and named manifest `files`; use
+selection plus component `images`, local `charts[].localPath`, remote
+`charts[].url` sources, `valuesFiles`, and named manifest `files`; use
 `tlc package deploy ... -Components 'name,pattern*,-default-name'` to override
 the defaults. Top-level `variables` use
 `###TOOLCHAIN_VAR_NAME###` templates and can be supplied with `-Set NAME=value`,

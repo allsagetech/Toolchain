@@ -75,14 +75,14 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "anyOf": [{ "required": ["path"] }, { "required": ["localPath"] }],
+          "anyOf": [{ "required": ["path"] }, { "required": ["localPath"] }, { "required": ["url", "name", "version"] }],
           "properties": {
             "path": { "type": "string", "minLength": 1 },
             "release": { "type": "string" },
             "values": { "type": "array", "items": { "type": "string", "minLength": 1 } },
             "name": { "type": "string" },
             "version": { "type": ["string", "number"] },
-            "url": { "type": "string" },
+            "url": { "type": "string", "pattern": "^(https?|oci)://", "minLength": 1 },
             "repoName": { "type": "string" },
             "gitPath": { "type": "string" },
             "localPath": { "type": "string", "minLength": 1 },

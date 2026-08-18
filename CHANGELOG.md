@@ -4,6 +4,7 @@
 
 ### Added
 
+- Add remote Helm chart packaging from HTTP(S) repositories, OCI registries, direct `.tgz` URLs, and version-pinned Git sources while preserving integrity-indexed offline deployment.
 - Add native component image bundling, offline integrity verification, digest-pinned cluster-registry publication, and exact admission mappings for deployment packages.
 - Add native top-level package variables with validation, prompting, sensitive/file values, config/environment/CLI overrides, auto-indented templates, and Helm value mappings.
 - Add Toolchain-native package metadata, components, required/default/explicit selection, local Helm chart fields, and named manifest groups.

@@ -133,6 +133,11 @@ function ConvertTo-ToolchainDeploymentChart {
 	$wait = $true
 	$schemaValidation = $true
 	$chartName = $null
+	$chartVersion = $null
+	$url = $null
+	$repoName = $null
+	$gitPath = $null
+	$remote = $false
 	$variableMappings = @()
 	if ($Value -is [string]) {
 		$path = [string]$Value
@@ -142,14 +147,37 @@ function ConvertTo-ToolchainDeploymentChart {
 				throw "deployment chart $Index contains unsupported key '$key'"
 			}
 		}
-		$path = if ($Value['path']) { [string]$Value['path'] } else { [string]$Value['localPath'] }
+		$localPath = if ($Value['path']) { [string]$Value['path'] } else { [string]$Value['localPath'] }
 		$release = if ($Value['release']) { [string]$Value['release'] } else { [string]$Value['releaseName'] }
 		$namespace = [string]$Value['namespace']
 		$chartName = [string]$Value['name']
+		$chartVersion = [string]$Value['version']
+		$url = [string]$Value['url']
+		$repoName = [string]$Value['repoName']
+		$gitPath = [string]$Value['gitPath']
 		if ($null -ne $Value['values']) { $values += @($Value['values']) }
 		if ($null -ne $Value['valuesFiles']) { $values += @($Value['valuesFiles']) }
-		if ($Value['url'] -or $Value['repoName'] -or $Value['gitPath']) {
-			throw "deployment chart $Index is remote; Toolchain packages currently require localPath so the chart can be integrity-indexed for offline deployment"
+		if ($url) {
+			if ($localPath) { throw "deployment chart $Index cannot specify both localPath and url" }
+			if ([string]::IsNullOrWhiteSpace($chartName)) { throw "deployment chart $Index requires name when url is used" }
+			if ([string]::IsNullOrWhiteSpace($chartVersion)) { throw "deployment chart $Index requires version when url is used" }
+			if ($chartVersion.Length -gt 128 -or $chartVersion -cnotmatch '^[A-Za-z0-9](?:[-A-Za-z0-9._+]*[A-Za-z0-9])?$') {
+				throw "deployment chart $Index contains invalid remote version '$chartVersion'"
+			}
+			if ($url.Length -gt 2048 -or $url -match '[\s\x00-\x1f]' -or $url -cnotmatch '^(?i:https?|oci)://') {
+				throw "deployment chart $Index contains unsupported url '$url'; use an http, https, or oci URL"
+			}
+			foreach ($remoteValue in @($repoName, $gitPath)) {
+				if ($remoteValue -and ($remoteValue.Length -gt 1024 -or $remoteValue -match '[\x00-\x1f]' -or $remoteValue.StartsWith('-'))) {
+					throw "deployment chart $Index contains an invalid remote chart field"
+				}
+			}
+			$remoteKey = Get-ToolchainDeploymentStringSha256 -Value "$ComponentName|$Index|$chartName|$chartVersion|$url|$repoName|$gitPath"
+			$path = ".toolchain/charts/$remoteKey.tgz"
+			$remote = $true
+		} else {
+			if ($repoName -or $gitPath) { throw "deployment chart $Index requires url when repoName or gitPath is used" }
+			$path = $localPath
 		}
 		if ($null -ne $Value['variables']) {
 			$mappingValues = @($Value['variables'])
@@ -187,6 +215,13 @@ function ConvertTo-ToolchainDeploymentChart {
 	}
 	return [pscustomobject]@{
 		Path = $path
+		ResolvedPath = $null
+		Remote = $remote
+		Name = $chartName
+		Url = $url
+		RemoteName = $repoName
+		Version = $chartVersion
+		GitPath = $gitPath
 		Release = $release
 		Namespace = $namespace
 		Values = [string[]]$normalizedValues
@@ -756,8 +791,9 @@ function Get-ToolchainDeploymentBundleFiles {
 	param([Parameter(Mandatory)]$Definition)
 	$files = [Collections.Generic.Dictionary[string,string]]::new([StringComparer]::OrdinalIgnoreCase)
 	function AddBundleFile {
-		param([Parameter(Mandatory)][IO.FileInfo]$File)
-		$relative = Get-ToolchainDeploymentRelativePath -Root $Definition.Root -Path $File.FullName
+		param([Parameter(Mandatory)][IO.FileInfo]$File, [string]$RelativePath)
+		$relative = if ($RelativePath) { $RelativePath.Replace('\', '/') } else { Get-ToolchainDeploymentRelativePath -Root $Definition.Root -Path $File.FullName }
+		$null = Resolve-ToolchainChildPath -Root $Definition.Root -RelativePath $relative -RejectReparsePoints -RejectRootReparsePoint
 		if ($files.ContainsKey($relative)) {
 			if (-not [string]::Equals($files[$relative], $File.FullName, [StringComparison]::OrdinalIgnoreCase)) {
 				throw "deployment bundle contains case-conflicting paths: $relative"
@@ -772,7 +808,13 @@ function Get-ToolchainDeploymentBundleFiles {
 		if (Test-Path -LiteralPath $conventionalPath -PathType Leaf) { AddBundleFile -File (Get-Item -LiteralPath $conventionalPath -Force) }
 	}
 	foreach ($chart in $Definition.Charts) {
-		foreach ($file in @(Get-ToolchainDeploymentSourceFiles -Root $Definition.Root -RelativePath $chart.Path)) { AddBundleFile -File $file }
+		if ($chart.Remote) {
+			$chartPath = Get-ToolchainDeploymentChartSourcePath -Definition $Definition -Chart $chart
+			if (-not (Test-Path -LiteralPath $chartPath -PathType Leaf)) { throw "downloaded Helm chart is missing: $($chart.Release)" }
+			AddBundleFile -File (Get-Item -LiteralPath $chartPath -Force) -RelativePath $chart.Path
+		} else {
+			foreach ($file in @(Get-ToolchainDeploymentSourceFiles -Root $Definition.Root -RelativePath $chart.Path)) { AddBundleFile -File $file }
+		}
 		foreach ($valuesPath in $chart.Values) {
 			foreach ($file in @(Get-ToolchainDeploymentSourceFiles -Root $Definition.Root -RelativePath $valuesPath -YamlOnly)) { AddBundleFile -File $file }
 		}
@@ -796,6 +838,103 @@ function Get-ToolchainDeploymentStringSha256 {
 		$bytes = [Text.Encoding]::UTF8.GetBytes($Value)
 		return ([BitConverter]::ToString($algorithm.ComputeHash($bytes))).Replace('-', '').ToLowerInvariant()
 	} finally { $algorithm.Dispose() }
+}
+
+function New-ToolchainDeploymentChartTemporaryRoot {
+	$path = Join-Path ([IO.Path]::GetTempPath()) "toolchain-charts-$([guid]::NewGuid().ToString('n'))"
+	[void][IO.Directory]::CreateDirectory($path)
+	return $path
+}
+
+function Remove-ToolchainDeploymentChartTemporaryRoot {
+	param([Parameter(Mandatory)][string]$Path)
+	$fullPath = [IO.Path]::GetFullPath($Path).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+	$tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar)
+	if ((Split-Path -Parent $fullPath) -ne $tempRoot -or [IO.Path]::GetFileName($fullPath) -notmatch '^toolchain-charts-[0-9a-f]{32}$') {
+		throw "refusing to remove unexpected Toolchain chart temporary path: $fullPath"
+	}
+	if (Test-Path -LiteralPath $fullPath -PathType Container) { [IO.Directory]::Delete($fullPath, $true) }
+}
+
+function Get-ToolchainDeploymentChartSourcePath {
+	param([Parameter(Mandatory)]$Definition, [Parameter(Mandatory)]$Chart)
+	if ($Chart.ResolvedPath) { return [string]$Chart.ResolvedPath }
+	return (Resolve-ToolchainChildPath -Root $Definition.Root -RelativePath $Chart.Path -RejectReparsePoints -RejectRootReparsePoint)
+}
+
+function Get-ToolchainDeploymentDownloadedChart {
+	param(
+		[Parameter(Mandatory)]$Chart,
+		[Parameter(Mandatory)][string]$TemporaryRoot,
+		[Parameter(Mandatory)][string]$Helm
+	)
+	$destination = Resolve-ToolchainChildPath -Root $TemporaryRoot -RelativePath $Chart.Path -RejectReparsePoints -RejectRootReparsePoint
+	$workRoot = Join-Path $TemporaryRoot ("work-" + [IO.Path]::GetFileNameWithoutExtension([string]$Chart.Path))
+	[void][IO.Directory]::CreateDirectory($workRoot)
+	[void][IO.Directory]::CreateDirectory((Split-Path -Parent $destination))
+	$url = [string]$Chart.Url
+	$version = [string]$Chart.Version
+	$isGit = [bool]$Chart.GitPath -or $url -match '(?i)\.git(?:@[^/]+)?$'
+	if ($isGit) {
+		$git = Get-ToolchainClusterExecutable -Name git -Package git -InstallHint 'Install Git and ensure its executable is available on PATH.'
+		$repositoryUrl = $url
+		$gitReference = $version
+		if ($url -match '^(?<repository>.+\.git)@(?<reference>[^/]+)$') {
+			$repositoryUrl = [string]$Matches.repository
+			$gitReference = [string]$Matches.reference
+		}
+		$cloneRoot = Join-Path $workRoot 'repository'
+		$null = Invoke-ToolchainClusterProcess -FilePath $git -Arguments @('clone', '--depth', '1', '--branch', $gitReference, '--single-branch', '--', $repositoryUrl, $cloneRoot)
+		$chartSource = if ($Chart.GitPath) {
+			Resolve-ToolchainChildPath -Root $cloneRoot -RelativePath ([string]$Chart.GitPath) -RejectReparsePoints -RejectRootReparsePoint
+		} else { $cloneRoot }
+		if (-not (Test-Path -LiteralPath (Join-Path $chartSource 'Chart.yaml') -PathType Leaf)) {
+			throw "remote Git chart '$($Chart.Release)' is missing Chart.yaml at '$($Chart.GitPath)'"
+		}
+		$null = Invoke-ToolchainClusterProcess -FilePath $helm -Arguments @('dependency', 'build', $chartSource)
+		$null = Invoke-ToolchainClusterProcess -FilePath $helm -Arguments @('package', $chartSource, '--destination', $workRoot)
+	} else {
+		$arguments = @('pull')
+		if ($url -match '(?i)\.tgz(?:[?#].*)?$' -or $url.StartsWith('oci://', [StringComparison]::OrdinalIgnoreCase)) {
+			$arguments += $url
+		} else {
+			$remoteName = if ($Chart.RemoteName) { [string]$Chart.RemoteName } else { [string]$Chart.Name }
+			$arguments += @($remoteName, '--repo', $url)
+		}
+		$arguments += @('--version', $version, '--destination', $workRoot)
+		$null = Invoke-ToolchainClusterProcess -FilePath $Helm -Arguments $arguments
+	}
+	$archives = @(Get-ChildItem -LiteralPath $workRoot -File -Filter '*.tgz' -Force)
+	if ($archives.Count -ne 1) { throw "remote chart '$($Chart.Release)' did not produce exactly one packaged Helm chart" }
+	[IO.File]::Move($archives[0].FullName, $destination)
+	return $destination
+}
+
+function Initialize-ToolchainDeploymentRemoteCharts {
+	param([Parameter(Mandatory)]$Definition, [object[]]$Charts)
+	if ($null -eq $Charts) { $Charts = @($Definition.Charts) }
+	$remoteCharts = @($Charts | Where-Object { $_.Remote })
+	if ($remoteCharts.Count -eq 0) { return $null }
+	$temporaryRoot = $null
+	try {
+		$helm = $null
+		foreach ($chart in $remoteCharts) {
+			if ($chart.ResolvedPath -and (Test-Path -LiteralPath $chart.ResolvedPath -PathType Leaf)) { continue }
+			$bundledPath = Resolve-ToolchainChildPath -Root $Definition.Root -RelativePath $chart.Path -RejectReparsePoints -RejectRootReparsePoint
+			if (Test-Path -LiteralPath $bundledPath -PathType Leaf) {
+				$chart.ResolvedPath = $bundledPath
+				continue
+			}
+			if (-not $helm) { $helm = Get-ToolchainClusterExecutable -Name helm -Package helm -InstallHint 'Install Helm and ensure its executable is available on PATH.' }
+			if (-not $temporaryRoot) { $temporaryRoot = New-ToolchainDeploymentChartTemporaryRoot }
+			Write-ToolchainInfo "Downloading remote Helm chart '$($chart.Release):$($chart.Version)'."
+			$chart.ResolvedPath = Get-ToolchainDeploymentDownloadedChart -Chart $chart -TemporaryRoot $temporaryRoot -Helm $helm
+		}
+		return $temporaryRoot
+	} catch {
+		if ($temporaryRoot) { Remove-ToolchainDeploymentChartTemporaryRoot -Path $temporaryRoot }
+		throw
+	}
 }
 
 function New-ToolchainDeploymentImageTemporaryRoot {
@@ -1016,7 +1155,7 @@ function Test-ToolchainDeploymentCharts {
 	$renderRoot = New-ToolchainDeploymentRenderRoot
 	try {
 	foreach ($chart in $Definition.Charts) {
-		$sourceChartPath = Resolve-ToolchainChildPath -Root $Definition.Root -RelativePath $chart.Path -RejectReparsePoints -RejectRootReparsePoint
+		$sourceChartPath = Get-ToolchainDeploymentChartSourcePath -Definition $Definition -Chart $chart
 		$chartPath = Get-ToolchainDeploymentRenderedChart -Path $sourceChartPath -Variables $variables -RenderRoot $renderRoot -Context "chart $($chart.Release)"
 		if ((Test-Path -LiteralPath $chartPath -PathType Container) -and -not (Test-Path -LiteralPath (Join-Path $chartPath 'Chart.yaml') -PathType Leaf)) {
 			throw "Helm chart directory is missing Chart.yaml: $($chart.Path)"
@@ -1058,9 +1197,11 @@ function New-ToolchainDeploymentPackage {
 	$definition = Read-ToolchainDeploymentDefinition -Root $root
 	$configPath = Join-Path $root 'toolchain-config.yaml'
 	if (Test-Path -LiteralPath $configPath -PathType Leaf) { $null = Read-ToolchainDeploymentConfig -Path $configPath }
-	Test-ToolchainDeploymentCharts -Definition $definition
+	$chartTemporaryRoot = $null
 	$imageTemporaryRoot = $null
 	try {
+	$chartTemporaryRoot = Initialize-ToolchainDeploymentRemoteCharts -Definition $definition
+	Test-ToolchainDeploymentCharts -Definition $definition
 	$files = Get-ToolchainDeploymentBundleFiles -Definition $definition
 	$imageArtifacts = @()
 	if ($definition.Images.Count -gt 0) {
@@ -1140,6 +1281,7 @@ function New-ToolchainDeploymentPackage {
 	return $result
 	} finally {
 		if ($imageTemporaryRoot) { Remove-ToolchainDeploymentImageTemporaryRoot -Path $imageTemporaryRoot }
+		if ($chartTemporaryRoot) { Remove-ToolchainDeploymentChartTemporaryRoot -Path $chartTemporaryRoot }
 	}
 }
 
@@ -1602,6 +1744,8 @@ function Invoke-ToolchainDeploymentBundle {
 		$globalValues += Resolve-ToolchainChildPath -Root $Root -RelativePath $valuesPath -RejectReparsePoints -RejectRootReparsePoint
 	}
 
+	$selectedCharts = @($selectedComponents | ForEach-Object { $_.Charts })
+	$chartTemporaryRoot = Initialize-ToolchainDeploymentRemoteCharts -Definition $definition -Charts $selectedCharts
 	$renderRoot = New-ToolchainDeploymentRenderRoot
 	try {
 	$kubeconfigPath = Resolve-ToolchainDeploymentKubeconfig -Cluster $Cluster -Kubeconfig $Kubeconfig
@@ -1639,7 +1783,7 @@ function Invoke-ToolchainDeploymentBundle {
 			$helm = Get-ToolchainClusterExecutable -Name helm -Package helm -InstallHint 'Install Helm and ensure its executable is available on PATH.'
 		}
 		foreach ($chart in $component.Charts) {
-			$sourceChartPath = Resolve-ToolchainChildPath -Root $Root -RelativePath $chart.Path -RejectReparsePoints -RejectRootReparsePoint
+			$sourceChartPath = Get-ToolchainDeploymentChartSourcePath -Definition $definition -Chart $chart
 			$chartPath = Get-ToolchainDeploymentRenderedChart -Path $sourceChartPath -Variables $resolvedVariables -RenderRoot $renderRoot -Context "chart $($chart.Release)"
 			$releaseNamespace = if ($Namespace) { [string]$settings.namespace } elseif ($chart.Namespace) { $chart.Namespace } else { [string]$settings.namespace }
 			$arguments = @('upgrade', '--install', $chart.Release, $chartPath, '--namespace', $releaseNamespace)
@@ -1682,6 +1826,7 @@ function Invoke-ToolchainDeploymentBundle {
 	if ($PassThru) { return $result }
 	} finally {
 		Remove-ToolchainDeploymentRenderRoot -Path $renderRoot
+		if ($chartTemporaryRoot) { Remove-ToolchainDeploymentChartTemporaryRoot -Path $chartTemporaryRoot }
 	}
 }
 
