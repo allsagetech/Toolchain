@@ -226,6 +226,34 @@ Describe 'Toolchain deployment package creation' {
 		}
 	}
 
+	It 'supports nested package configuration and bundles its deploy values' {
+		$source = Join-Path $TestDrive 'nested-package-config'
+		New-TestVariableDeploymentSource -Root $source
+		$manifestPath = Join-Path $source 'toolchain.yaml'
+		$manifest = (Get-Content -LiteralPath $manifestPath -Raw).Replace('  name: variable-demo', '  name: "###TOOLCHAIN_PKG_TMPL_PACKAGE_NAME###"')
+		[IO.File]::WriteAllText($manifestPath, $manifest)
+		[IO.File]::WriteAllText((Join-Path $source 'deploy-values.yaml'), "configured: true`n")
+		[IO.File]::WriteAllText((Join-Path $source 'toolchain-config.yaml'), @'
+package:
+  create:
+    set:
+      package_name: nested-config-demo
+  deploy:
+    set:
+      app_name: nested-app
+    values:
+      - deploy-values.yaml
+'@)
+
+		$result = New-ToolchainDeploymentPackage -Path $source -Output (Join-Path $TestDrive 'nested-package-config.tlcpkg')
+
+		$result.Name | Should -BeExactly 'nested-config-demo'
+		$expanded = Expand-ToolchainDeploymentPackage -Path $result.Path
+		try {
+			Test-Path -LiteralPath (Join-Path $expanded.Root 'deploy-values.yaml') -PathType Leaf | Should -BeTrue
+		} finally { Remove-ToolchainDeploymentTemporaryRoot -Path $expanded.Root }
+	}
+
 	It 'downloads and integrity-indexes a remote Helm repository chart for offline deployment' {
 		$source = Join-Path $TestDrive 'remote-chart-source'
 		[void][IO.Directory]::CreateDirectory($source)
@@ -611,6 +639,32 @@ Describe 'Toolchain deployment package deployment' {
 		$helm.Arguments | Should -Contain $override
 		$helm.Arguments | Should -Contain '42s'
 		$helm.Arguments | Should -Contain 'managed-kubeconfig.yaml'
+	}
+
+	It 'applies nested package deploy variables, components, and values' {
+		$source = Join-Path $TestDrive 'nested-deploy-config'
+		New-TestToolchainComponentSource -Root $source
+		$manifestPath = Join-Path $source 'toolchain.yaml'
+		$manifest = Get-Content -LiteralPath $manifestPath -Raw
+		$manifest = $manifest.Replace("components:`n", "variables:`n  - name: APP_NAME`n    default: default-app`ncomponents:`n")
+		[IO.File]::WriteAllText($manifestPath, $manifest)
+		[IO.File]::WriteAllText((Join-Path $source 'manifests/configmap.yaml'), "apiVersion: v1`nkind: ConfigMap`nmetadata:`n  name: ###TOOLCHAIN_VAR_APP_NAME###`n")
+		[IO.File]::WriteAllText((Join-Path $source 'deploy-values.yaml'), "configured: true`n")
+		[IO.File]::WriteAllText((Join-Path $source 'toolchain-config.yaml'), @'
+package:
+  deploy:
+    components: 'optional-*,-application'
+    set:
+      app_name: nested-app
+    values:
+      - deploy-values.yaml
+'@)
+
+		$result = Invoke-ToolchainDeploymentPackage -Command deploy -Path $source -Confirm -PassThru
+
+		$result.Components | Should -Be @('prerequisites', 'optional-addon')
+		$script:appliedManifestContents[0] | Should -Match 'name: nested-app'
+		$script:helmCalls[0].Arguments | Should -Contain (Join-Path $source 'deploy-values.yaml')
 	}
 
 	It 'runs action-only deployment gates and templates their output variables into later resources' {

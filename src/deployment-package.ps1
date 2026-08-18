@@ -504,7 +504,13 @@ function Read-ToolchainDeploymentDefinition {
 	if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
 		throw "Toolchain deployment manifest not found: $manifestPath"
 	}
-	$manifest = ConvertFrom-ToolchainYaml -Text (Get-Content -LiteralPath $manifestPath -Raw) -Context $manifestPath
+	$manifestText = Get-Content -LiteralPath $manifestPath -Raw
+	$configPath = Join-Path $rootPath 'toolchain-config.yaml'
+	if (Test-Path -LiteralPath $configPath -PathType Leaf) {
+		$config = Read-ToolchainDeploymentConfig -Path $configPath
+		$manifestText = Expand-ToolchainDeploymentCreateTemplates -Text $manifestText -Variables $config.createVariables -Context $manifestPath
+	}
+	$manifest = ConvertFrom-ToolchainYaml -Text $manifestText -Context $manifestPath
 	foreach ($key in $manifest.Keys) {
 		if ([string]$key -notin @('schemaVersion', 'packages', 'deployment', 'apiVersion', 'kind', 'metadata', 'components', 'values', 'documentation', 'constants', 'variables', 'build')) {
 			throw "$manifestPath contains unsupported top-level key '$key'"
@@ -663,32 +669,117 @@ function Read-ToolchainDeploymentConfig {
 	if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) { throw "Toolchain deployment config is not a file: $fullPath" }
 	$config = ConvertFrom-ToolchainYaml -Text (Get-Content -LiteralPath $fullPath -Raw) -Context $fullPath
 	foreach ($key in $config.Keys) {
-		if ([string]$key -notin @('schemaVersion', 'namespace', 'wait', 'waitSeconds', 'createNamespace', 'variables')) {
+		if ([string]$key -notin @('schemaVersion', 'namespace', 'wait', 'waitSeconds', 'createNamespace', 'variables', 'package')) {
 			throw "$fullPath contains unsupported deployment config key '$key'"
 		}
 	}
-	if ([int]$config.schemaVersion -ne 1) { throw "$fullPath requires schemaVersion: 1" }
-	if ($config.namespace) { Assert-ToolchainDeploymentIdentifier -Value ([string]$config.namespace) -Kind 'namespace' }
-	foreach ($booleanKey in @('wait', 'createNamespace')) {
-		if ($null -ne $config[$booleanKey] -and $config[$booleanKey] -isnot [bool]) { throw "$fullPath requires $booleanKey to be true or false" }
-	}
-	if ($null -ne $config.waitSeconds) {
-		$seconds = 0
-		if (-not [int]::TryParse([string]$config.waitSeconds, [ref]$seconds) -or $seconds -lt 1 -or $seconds -gt 3600) {
-			throw "$fullPath requires waitSeconds from 1 through 3600"
+	if ($null -ne $config.schemaVersion -and [int]$config.schemaVersion -ne 1) { throw "$fullPath requires schemaVersion: 1 when schemaVersion is specified" }
+
+	$packageConfig = $config['package']
+	if ($null -ne $packageConfig -and $packageConfig -isnot [Collections.IDictionary]) { throw "$fullPath package must be a mapping" }
+	if ($packageConfig) {
+		foreach ($key in $packageConfig.Keys) {
+			if ([string]$key -notin @('create', 'deploy')) { throw "$fullPath package contains unsupported key '$key'" }
 		}
 	}
-	if ($null -ne $config.variables) {
-		if ($config.variables -isnot [Collections.IDictionary]) { throw "$fullPath variables must be a mapping" }
-		foreach ($variableName in $config.variables.Keys) {
-			Assert-ToolchainDeploymentVariableName -Name ([string]$variableName) -Context "$fullPath variable"
-			$variableValue = $config.variables[$variableName]
-			if ($variableValue -is [Collections.IDictionary] -or ($variableValue -is [Collections.IEnumerable] -and $variableValue -isnot [string])) {
-				throw "$fullPath variable '$variableName' must be a scalar value"
+	$createConfig = if ($packageConfig) { $packageConfig['create'] } else { $null }
+	if ($null -ne $createConfig -and $createConfig -isnot [Collections.IDictionary]) { throw "$fullPath package.create must be a mapping" }
+	if ($createConfig) {
+		foreach ($key in $createConfig.Keys) {
+			if ([string]$key -notin @('set')) { throw "$fullPath package.create contains unsupported key '$key'" }
+		}
+	}
+	$deployConfig = if ($packageConfig) { $packageConfig['deploy'] } else { $null }
+	if ($null -ne $deployConfig -and $deployConfig -isnot [Collections.IDictionary]) { throw "$fullPath package.deploy must be a mapping" }
+	if ($deployConfig) {
+		foreach ($key in $deployConfig.Keys) {
+			if ([string]$key -notin @('components', 'set', 'values', 'namespace', 'wait', 'waitSeconds', 'wait_seconds', 'createNamespace', 'create_namespace')) {
+				throw "$fullPath package.deploy contains unsupported key '$key'"
 			}
 		}
 	}
-	return $config
+
+	$namespace = if ($deployConfig -and $deployConfig.Contains('namespace')) { $deployConfig['namespace'] } else { $config['namespace'] }
+	$wait = if ($deployConfig -and $deployConfig.Contains('wait')) { $deployConfig['wait'] } else { $config['wait'] }
+	$waitSeconds = if ($deployConfig -and $deployConfig.Contains('waitSeconds')) { $deployConfig['waitSeconds'] } elseif ($deployConfig -and $deployConfig.Contains('wait_seconds')) { $deployConfig['wait_seconds'] } else { $config['waitSeconds'] }
+	$createNamespace = if ($deployConfig -and $deployConfig.Contains('createNamespace')) { $deployConfig['createNamespace'] } elseif ($deployConfig -and $deployConfig.Contains('create_namespace')) { $deployConfig['create_namespace'] } else { $config['createNamespace'] }
+	if ($namespace) { Assert-ToolchainDeploymentIdentifier -Value ([string]$namespace) -Kind 'namespace' }
+	foreach ($booleanKey in @('wait', 'createNamespace')) {
+		$booleanValue = if ($booleanKey -eq 'wait') { $wait } else { $createNamespace }
+		if ($null -ne $booleanValue -and $booleanValue -isnot [bool]) { throw "$fullPath requires $booleanKey to be true or false" }
+	}
+	if ($null -ne $waitSeconds) {
+		$seconds = 0
+		if (-not [int]::TryParse([string]$waitSeconds, [ref]$seconds) -or $seconds -lt 1 -or $seconds -gt 3600) {
+			throw "$fullPath requires waitSeconds from 1 through 3600"
+		}
+		$waitSeconds = $seconds
+	}
+
+	function ConvertConfigVariables {
+		param([object]$Value, [Parameter(Mandatory)][string]$Context)
+		$result = @{}
+		if ($null -eq $Value) { return $result }
+		if ($Value -isnot [Collections.IDictionary]) { throw "$Context must be a mapping" }
+		foreach ($variableName in $Value.Keys) {
+			$name = ([string]$variableName).ToUpperInvariant()
+			Assert-ToolchainDeploymentVariableName -Name $name -Context "$Context variable"
+			$variableValue = $Value[$variableName]
+			if ($variableValue -is [Collections.IDictionary] -or ($variableValue -is [Collections.IEnumerable] -and $variableValue -isnot [string])) {
+				throw "$Context variable '$variableName' must be a scalar value"
+			}
+			$result[$name] = $variableValue
+		}
+		return $result
+	}
+	function ConvertConfigStringList {
+		param([object]$Value, [Parameter(Mandatory)][string]$Context)
+		if ($null -eq $Value) { return [string[]]@() }
+		$items = if ($Value -is [string]) { @([string]$Value) } elseif ($Value -is [Collections.IEnumerable] -and $Value -isnot [Collections.IDictionary]) { @($Value) } else { throw "$Context must be a string or sequence" }
+		$result = @()
+		foreach ($item in $items) {
+			if ($item -isnot [string] -or [string]::IsNullOrWhiteSpace([string]$item)) { throw "$Context contains an invalid value" }
+			$result += [string]$item
+		}
+		return [string[]]$result
+	}
+
+	$variables = ConvertConfigVariables -Value $config['variables'] -Context "$fullPath variables"
+	$deployVariables = ConvertConfigVariables -Value $(if ($deployConfig) { $deployConfig['set'] } else { $null }) -Context "$fullPath package.deploy.set"
+	foreach ($name in $deployVariables.Keys) { $variables[$name] = $deployVariables[$name] }
+	$createVariables = ConvertConfigVariables -Value $(if ($createConfig) { $createConfig['set'] } else { $null }) -Context "$fullPath package.create.set"
+	$hasComponents = $deployConfig -and $deployConfig.Contains('components')
+	$hasValues = $deployConfig -and $deployConfig.Contains('values')
+	return @{
+		schemaVersion = $config['schemaVersion']
+		namespace = $namespace
+		wait = $wait
+		waitSeconds = $waitSeconds
+		createNamespace = $createNamespace
+		variables = $variables
+		createVariables = $createVariables
+		components = ConvertConfigStringList -Value $(if ($hasComponents) { $deployConfig['components'] } else { $null }) -Context "$fullPath package.deploy.components"
+		values = ConvertConfigStringList -Value $(if ($hasValues) { $deployConfig['values'] } else { $null }) -Context "$fullPath package.deploy.values"
+		hasComponents = [bool]$hasComponents
+		hasValues = [bool]$hasValues
+	}
+}
+
+function Expand-ToolchainDeploymentCreateTemplates {
+	param(
+		[Parameter(Mandatory)][AllowEmptyString()][string]$Text,
+		[Parameter(Mandatory)][hashtable]$Variables,
+		[Parameter(Mandatory)][string]$Context
+	)
+	$expanded = $Text
+	foreach ($name in @($Variables.Keys | Sort-Object)) {
+		$token = "###TOOLCHAIN_PKG_TMPL_$name###"
+		$value = [Convert]::ToString($Variables[$name], [Globalization.CultureInfo]::InvariantCulture)
+		$expanded = $expanded.Replace($token, $value)
+	}
+	$unknown = [regex]::Match($expanded, '###TOOLCHAIN_PKG_TMPL_([A-Z0-9_]+)###')
+	if ($unknown.Success) { throw "$Context references unset package creation variable '$($unknown.Groups[1].Value)'; configure package.create.set.$($unknown.Groups[1].Value.ToLowerInvariant()) in toolchain-config.yaml" }
+	return $expanded
 }
 
 function ConvertFrom-ToolchainDeploymentSet {
@@ -998,6 +1089,13 @@ function Get-ToolchainDeploymentBundleFiles {
 	foreach ($conventionalName in @('toolchain-values.yaml', 'toolchain-config.yaml')) {
 		$conventionalPath = Join-Path $Definition.Root $conventionalName
 		if (Test-Path -LiteralPath $conventionalPath -PathType Leaf) { AddBundleFile -File (Get-Item -LiteralPath $conventionalPath -Force) }
+	}
+	$configPath = Join-Path $Definition.Root 'toolchain-config.yaml'
+	if (Test-Path -LiteralPath $configPath -PathType Leaf) {
+		$config = Read-ToolchainDeploymentConfig -Path $configPath
+		foreach ($valuesPath in $config.values) {
+			foreach ($file in @(Get-ToolchainDeploymentSourceFiles -Root $Definition.Root -RelativePath $valuesPath -YamlOnly)) { AddBundleFile -File $file }
+		}
 	}
 	foreach ($chart in $Definition.Charts) {
 		if ($chart.Remote) {
@@ -1600,6 +1698,7 @@ function Merge-ToolchainDeploymentConfig {
 	param(
 		[Parameter(Mandatory)][hashtable]$Settings,
 		[Parameter(Mandatory)][hashtable]$Variables,
+		[Parameter(Mandatory)][hashtable]$PackageOptions,
 		[Parameter(Mandatory)][string]$Path
 	)
 	$config = Read-ToolchainDeploymentConfig -Path $Path
@@ -1608,6 +1707,23 @@ function Merge-ToolchainDeploymentConfig {
 	}
 	if ($config.variables) {
 		foreach ($name in $config.variables.Keys) { $Variables[[string]$name] = $config.variables[$name] }
+	}
+	if ($config.hasComponents) {
+		$PackageOptions.Components = [string[]]$config.components
+		$PackageOptions.HasComponents = $true
+	}
+	if ($config.hasValues) {
+		$configRoot = Split-Path -Parent (Resolve-ToolchainFileSystemPath -Path $Path)
+		$resolvedValues = @()
+		foreach ($valuesPath in $config.values) {
+			$fullValuesPath = if ([IO.Path]::IsPathRooted([string]$valuesPath)) {
+				Resolve-ToolchainFileSystemPath -Path ([string]$valuesPath)
+			} else { Resolve-ToolchainFileSystemPath -Path (Join-Path $configRoot ([string]$valuesPath)) }
+			if (-not (Test-Path -LiteralPath $fullValuesPath -PathType Leaf)) { throw "Helm values file is not a file: $fullValuesPath" }
+			$resolvedValues += $fullValuesPath
+		}
+		$PackageOptions.Values = [string[]]$resolvedValues
+		$PackageOptions.HasValues = $true
 	}
 }
 
@@ -2141,7 +2257,6 @@ function Invoke-ToolchainDeploymentBundle {
 		[switch]$PassThru
 	)
 	$definition = Read-ToolchainDeploymentDefinition -Root $Root
-	$selectedComponents = @(Resolve-ToolchainDeploymentComponentSelection -Definition $definition -Components $Components)
 	$settings = @{
 		namespace = if ($definition.Namespace) { $definition.Namespace } else { 'default' }
 		wait = $true
@@ -2149,15 +2264,19 @@ function Invoke-ToolchainDeploymentBundle {
 		createNamespace = $true
 	}
 	$configuredVariables = @{}
+	$packageOptions = @{ Components = [string[]]@(); Values = [string[]]@(); HasComponents = $false; HasValues = $false }
 	$internalConfig = Join-Path $Root 'toolchain-config.yaml'
-	if (Test-Path -LiteralPath $internalConfig -PathType Leaf) { Merge-ToolchainDeploymentConfig -Settings $settings -Variables $configuredVariables -Path $internalConfig }
-	if ($Config) { Merge-ToolchainDeploymentConfig -Settings $settings -Variables $configuredVariables -Path (Resolve-ToolchainFileSystemPath -Path $Config) }
+	if (Test-Path -LiteralPath $internalConfig -PathType Leaf) { Merge-ToolchainDeploymentConfig -Settings $settings -Variables $configuredVariables -PackageOptions $packageOptions -Path $internalConfig }
+	if ($Config) { Merge-ToolchainDeploymentConfig -Settings $settings -Variables $configuredVariables -PackageOptions $packageOptions -Path (Resolve-ToolchainFileSystemPath -Path $Config) }
 	if ($Namespace) { Assert-ToolchainDeploymentIdentifier -Value $Namespace -Kind 'namespace'; $settings.namespace = $Namespace }
 	if ($OverrideWaitSeconds) { $settings.waitSeconds = $WaitSeconds }
+	$effectiveComponents = if ($Components.Count -gt 0) { [string[]]$Components } elseif ($packageOptions.HasComponents) { [string[]]$packageOptions.Components } else { [string[]]@() }
+	$selectedComponents = @(Resolve-ToolchainDeploymentComponentSelection -Definition $definition -Components $effectiveComponents)
 	$overrides = ConvertFrom-ToolchainDeploymentSet -Set $Set
 	$resolvedVariables = Resolve-ToolchainDeploymentVariables -Definition $definition -Root $Root -Configured $configuredVariables -Overrides $overrides
 	$externalValues = @()
-	foreach ($valuesPath in @($Values | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })) {
+	$effectiveValues = if ($Values.Count -gt 0) { [string[]]$Values } elseif ($packageOptions.HasValues) { [string[]]$packageOptions.Values } else { [string[]]@() }
+	foreach ($valuesPath in @($effectiveValues | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })) {
 		$fullValuesPath = Resolve-ToolchainFileSystemPath -Path ([string]$valuesPath)
 		if (-not (Test-Path -LiteralPath $fullValuesPath -PathType Leaf)) { throw "Helm values file is not a file: $fullValuesPath" }
 		$externalValues += $fullValuesPath

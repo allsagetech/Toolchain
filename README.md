@@ -226,7 +226,9 @@ the defaults. Top-level `variables` use
 `###TOOLCHAIN_VAR_NAME###` templates and can be supplied with `-Set NAME=value`,
 `toolchain-config.yaml`, or `TOOLCHAIN_VAR_NAME` environment variables. An
 `onDeploy` command can also publish a value with `setVariable` or
-`setVariables` for later package resources.
+`setVariables` for later package resources. Nested `package.create.set` and
+`package.deploy` configuration is supported for creation templates, deployment
+variables, component defaults, and deploy-time Helm values.
 
 ## Commands
 

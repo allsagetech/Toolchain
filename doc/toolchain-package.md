@@ -278,6 +278,30 @@ variables:
 An external `-Config` file overlays the bundled configuration. Command-line
 `-Namespace`, `-WaitSeconds`, and `-Set` values take final precedence.
 
+Toolchain also accepts command-scoped package configuration without requiring a
+`schemaVersion`:
+
+```yaml
+package:
+  create:
+    set:
+      package_name: demo
+  deploy:
+    components: 'application,observability*'
+    set:
+      app_name: staging
+    values:
+      - values/staging.yaml
+```
+
+`package.create.set` values replace native
+`###TOOLCHAIN_PKG_TMPL_NAME###` tokens in `toolchain.yaml` before package
+validation. `package.deploy.set` names are case-insensitive and resolve declared
+uppercase package variables. Configured components and values act as defaults;
+explicit `-Components`, `-Values`, and `-Set` options take precedence. Relative
+deploy values resolve beside the config file and values from the bundled config
+are integrity-indexed into the package.
+
 ## Create
 
 ```powershell
