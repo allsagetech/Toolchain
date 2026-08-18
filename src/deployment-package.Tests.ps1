@@ -244,6 +244,8 @@ package:
     set:
       package_name: nested-config-demo
   deploy:
+    retries: 4
+    timeout: 15m
     set:
       app_name: nested-app
     values:
@@ -257,6 +259,8 @@ package:
 		$config.logFormat | Should -BeExactly 'json'
 		$config.skipSbom | Should -BeTrue
 		$config.hasSkipSbom | Should -BeTrue
+		$config.retries | Should -Be 4
+		$config.waitSeconds | Should -Be 900
 		$result.Name | Should -BeExactly 'nested-config-demo'
 		$expanded = Expand-ToolchainDeploymentPackage -Path $result.Path
 		try {

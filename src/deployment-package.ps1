@@ -663,6 +663,23 @@ function Read-ToolchainDeploymentDefinition {
 	}
 }
 
+function ConvertFrom-ToolchainDeploymentTimeout {
+	param(
+		[Parameter(Mandatory)]$Value,
+		[Parameter(Mandatory)][string]$Context
+	)
+	$seconds = 0L
+	if ([long]::TryParse([string]$Value, [ref]$seconds)) {
+		if ($seconds -lt 1 -or $seconds -gt 86400) { throw "$Context must be from 1 second through 24 hours" }
+		return [int]$seconds
+	}
+	$match = [regex]::Match(([string]$Value).Trim(), '^(?:(?<hours>\d+)h)?(?:(?<minutes>\d+)m)?(?:(?<seconds>\d+)s)?$', [Text.RegularExpressions.RegexOptions]::IgnoreCase)
+	if (-not $match.Success -or [string]::IsNullOrWhiteSpace($match.Value)) { throw "$Context must be a duration such as 30s, 15m, or 1h30m" }
+	$total = ([long]$match.Groups['hours'].Value * 3600L) + ([long]$match.Groups['minutes'].Value * 60L) + [long]$match.Groups['seconds'].Value
+	if ($total -lt 1 -or $total -gt 86400) { throw "$Context must be from 1 second through 24 hours" }
+	return [int]$total
+}
+
 function Read-ToolchainDeploymentConfig {
 	param([Parameter(Mandatory)][string]$Path)
 	$fullPath = Resolve-ToolchainFileSystemPath -Path $Path
@@ -701,7 +718,7 @@ function Read-ToolchainDeploymentConfig {
 	if ($null -ne $deployConfig -and $deployConfig -isnot [Collections.IDictionary]) { throw "$fullPath package.deploy must be a mapping" }
 	if ($deployConfig) {
 		foreach ($key in $deployConfig.Keys) {
-			if ([string]$key -notin @('components', 'set', 'values', 'namespace', 'wait', 'waitSeconds', 'wait_seconds', 'createNamespace', 'create_namespace')) {
+			if ([string]$key -notin @('components', 'set', 'values', 'namespace', 'wait', 'waitSeconds', 'wait_seconds', 'createNamespace', 'create_namespace', 'retries', 'timeout')) {
 				throw "$fullPath package.deploy contains unsupported key '$key'"
 			}
 		}
@@ -709,8 +726,9 @@ function Read-ToolchainDeploymentConfig {
 
 	$namespace = if ($deployConfig -and $deployConfig.Contains('namespace')) { $deployConfig['namespace'] } else { $config['namespace'] }
 	$wait = if ($deployConfig -and $deployConfig.Contains('wait')) { $deployConfig['wait'] } else { $config['wait'] }
-	$waitSeconds = if ($deployConfig -and $deployConfig.Contains('waitSeconds')) { $deployConfig['waitSeconds'] } elseif ($deployConfig -and $deployConfig.Contains('wait_seconds')) { $deployConfig['wait_seconds'] } else { $config['waitSeconds'] }
+	$waitSeconds = if ($deployConfig -and $deployConfig.Contains('timeout')) { ConvertFrom-ToolchainDeploymentTimeout -Value $deployConfig['timeout'] -Context "$fullPath package.deploy.timeout" } elseif ($deployConfig -and $deployConfig.Contains('waitSeconds')) { $deployConfig['waitSeconds'] } elseif ($deployConfig -and $deployConfig.Contains('wait_seconds')) { $deployConfig['wait_seconds'] } else { $config['waitSeconds'] }
 	$createNamespace = if ($deployConfig -and $deployConfig.Contains('createNamespace')) { $deployConfig['createNamespace'] } elseif ($deployConfig -and $deployConfig.Contains('create_namespace')) { $deployConfig['create_namespace'] } else { $config['createNamespace'] }
+	$retries = if ($deployConfig -and $deployConfig.Contains('retries')) { $deployConfig['retries'] } else { $null }
 	if ($namespace) { Assert-ToolchainDeploymentIdentifier -Value ([string]$namespace) -Kind 'namespace' }
 	foreach ($booleanKey in @('wait', 'createNamespace')) {
 		$booleanValue = if ($booleanKey -eq 'wait') { $wait } else { $createNamespace }
@@ -718,10 +736,17 @@ function Read-ToolchainDeploymentConfig {
 	}
 	if ($null -ne $waitSeconds) {
 		$seconds = 0
-		if (-not [int]::TryParse([string]$waitSeconds, [ref]$seconds) -or $seconds -lt 1 -or $seconds -gt 3600) {
-			throw "$fullPath requires waitSeconds from 1 through 3600"
+		if (-not [int]::TryParse([string]$waitSeconds, [ref]$seconds) -or $seconds -lt 1 -or $seconds -gt 86400) {
+			throw "$fullPath requires waitSeconds from 1 through 86400"
 		}
 		$waitSeconds = $seconds
+	}
+	if ($null -ne $retries) {
+		$retryCount = 0
+		if (-not [int]::TryParse([string]$retries, [ref]$retryCount) -or $retryCount -lt 0 -or $retryCount -gt 10) {
+			throw "$fullPath package.deploy.retries must be from 0 through 10"
+		}
+		$retries = $retryCount
 	}
 
 	function ConvertConfigVariables {
@@ -766,6 +791,7 @@ function Read-ToolchainDeploymentConfig {
 		namespace = $namespace
 		wait = $wait
 		waitSeconds = $waitSeconds
+		retries = $retries
 		createNamespace = $createNamespace
 		variables = $variables
 		createVariables = $createVariables
@@ -1721,7 +1747,7 @@ function Merge-ToolchainDeploymentConfig {
 		[Parameter(Mandatory)][string]$Path
 	)
 	$config = Read-ToolchainDeploymentConfig -Path $Path
-	foreach ($key in @('namespace', 'wait', 'waitSeconds', 'createNamespace')) {
+	foreach ($key in @('namespace', 'wait', 'waitSeconds', 'createNamespace', 'retries')) {
 		if ($null -ne $config[$key]) { $Settings[$key] = $config[$key] }
 	}
 	if ($config.variables) {
@@ -1745,6 +1771,21 @@ function Merge-ToolchainDeploymentConfig {
 		}
 		$PackageOptions.Values = [string[]]$resolvedValues
 		$PackageOptions.HasValues = $true
+	}
+}
+
+function Invoke-ToolchainDeploymentOperation {
+	param(
+		[Parameter(Mandatory)][scriptblock]$Operation,
+		[ValidateRange(0, 10)][int]$Retries = 3,
+		[Parameter(Mandatory)][string]$Context
+	)
+	for ($attempt = 0; $attempt -le $Retries; $attempt++) {
+		try { return (& $Operation) }
+		catch {
+			if ($attempt -ge $Retries) { throw }
+			Write-ToolchainInfo "$Context failed; retrying (attempt $($attempt + 2) of $($Retries + 1))."
+		}
 	}
 }
 
@@ -2282,6 +2323,7 @@ function Invoke-ToolchainDeploymentBundle {
 		namespace = if ($definition.Namespace) { $definition.Namespace } else { 'default' }
 		wait = $true
 		waitSeconds = 300
+		retries = 3
 		createNamespace = $true
 		logLevel = 'info'
 		logFormat = 'console'
@@ -2319,7 +2361,7 @@ function Invoke-ToolchainDeploymentBundle {
 	$kubeconfigPath = Resolve-ToolchainDeploymentKubeconfig -Cluster $Cluster -Kubeconfig $Kubeconfig
 	$kubectl = Get-ToolchainClusterExecutable -Name kubectl -Package kubectl -InstallHint 'Install kubectl and ensure its executable is available on PATH.'
 	$apiServer = Get-ToolchainBootstrapApiServer -Kubeconfig $kubeconfigPath
-	try { $null = Invoke-ToolchainBootstrapKubectl -Kubectl $kubectl -Kubeconfig $kubeconfigPath -Arguments @('get', '--request-timeout=10s', '--raw=/readyz') }
+	try { $null = Invoke-ToolchainDeploymentOperation -Retries ([int]$settings.retries) -Context 'Kubernetes API preflight' -Operation { Invoke-ToolchainBootstrapKubectl -Kubectl $kubectl -Kubeconfig $kubeconfigPath -Arguments @('get', '--request-timeout=10s', '--raw=/readyz') } }
 	catch { throw "Kubernetes API preflight failed for package deployment at $apiServer. kubectl reported: $($_.Exception.Message)" }
 	if (-not $DryRun) {
 		$deployActionsStarted = $true
@@ -2328,7 +2370,7 @@ function Invoke-ToolchainDeploymentBundle {
 
 	$appliedManifests = [Collections.ArrayList]::new()
 	$releases = [Collections.ArrayList]::new()
-	$publishedImages = @(Publish-ToolchainDeploymentImages -Definition $definition -Components $selectedComponents -Root $Root -PackageIndex $PackageIndex -Kubectl $kubectl -Kubeconfig $kubeconfigPath -DryRun:$DryRun)
+	$publishedImages = @(Invoke-ToolchainDeploymentOperation -Retries ([int]$settings.retries) -Context 'Package image publication' -Operation { Publish-ToolchainDeploymentImages -Definition $definition -Components $selectedComponents -Root $Root -PackageIndex $PackageIndex -Kubectl $kubectl -Kubeconfig $kubeconfigPath -DryRun:$DryRun })
 	$helm = $null
 	$conventionalValues = Join-Path $Root 'toolchain-values.yaml'
 	foreach ($component in $selectedComponents) {
@@ -2341,7 +2383,7 @@ function Invoke-ToolchainDeploymentBundle {
 					$manifestNamespace = if ($Namespace) { [string]$settings.namespace } else { [string]$manifestSet.Namespace }
 					if ($manifestNamespace) { $arguments += @('--namespace', $manifestNamespace) }
 					$arguments += @('-f', $renderedManifestPath)
-					$null = Invoke-ToolchainBootstrapKubectl -Kubectl $kubectl -Kubeconfig $kubeconfigPath -Arguments $arguments
+					$null = Invoke-ToolchainDeploymentOperation -Retries ([int]$settings.retries) -Context "Manifest $($manifestSet.Name)" -Operation { Invoke-ToolchainBootstrapKubectl -Kubectl $kubectl -Kubeconfig $kubeconfigPath -Arguments $arguments }
 					[void]$appliedManifests.Add([pscustomobject]@{
 						Component = $component.Name
 						Name = $manifestSet.Name
@@ -2373,7 +2415,7 @@ function Invoke-ToolchainDeploymentBundle {
 			if ($DryRun) { $arguments += '--dry-run' }
 			elseif ([bool]$settings.wait -and $chart.Wait) { $arguments += @('--wait', '--timeout', "$($settings.waitSeconds)s") }
 			if ($kubeconfigPath) { $arguments += @('--kubeconfig', $kubeconfigPath) }
-			$null = Invoke-ToolchainClusterProcess -FilePath $helm -Arguments $arguments
+			$null = Invoke-ToolchainDeploymentOperation -Retries ([int]$settings.retries) -Context "Helm release $($chart.Release)" -Operation { Invoke-ToolchainClusterProcess -FilePath $helm -Arguments $arguments }
 			[void]$releases.Add([pscustomobject]@{ Component = $component.Name; Name = $chart.Release; Namespace = $releaseNamespace; Chart = $chart.Path })
 		}
 	}
@@ -2389,6 +2431,8 @@ function Invoke-ToolchainDeploymentBundle {
 		Cluster = if ($Cluster) { $Cluster } else { 'current-context' }
 		Kubeconfig = $kubeconfigPath
 		Namespace = [string]$settings.namespace
+		Retries = [int]$settings.retries
+		TimeoutSeconds = [int]$settings.waitSeconds
 		DryRun = [bool]$DryRun
 		Components = @($selectedComponents | ForEach-Object { $_.Name })
 		Variables = @($resolvedVariables.Keys | Sort-Object)

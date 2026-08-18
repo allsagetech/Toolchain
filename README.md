@@ -228,7 +228,7 @@ the defaults. Top-level `variables` use
 `onDeploy` command can also publish a value with `setVariable` or
 `setVariables` for later package resources. Nested `package.create.set` and
 `package.deploy` configuration is supported for creation templates, deployment
-variables, component defaults, and deploy-time Helm values.
+variables, component defaults, deploy-time Helm values, retries, and timeouts.
 
 ## Commands
 

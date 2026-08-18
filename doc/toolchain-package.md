@@ -288,6 +288,8 @@ package:
     set:
       package_name: demo
   deploy:
+    retries: 3
+    timeout: 15m
     components: 'application,observability*'
     set:
       app_name: staging
@@ -307,7 +309,10 @@ as though this setting is `true`. `package.deploy.set` names are case-insensitiv
 uppercase package variables. Configured components and values act as defaults;
 explicit `-Components`, `-Values`, and `-Set` options take precedence. Relative
 deploy values resolve beside the config file and values from the bundled config
-are integrity-indexed into the package.
+are integrity-indexed into the package. `package.deploy.retries` accepts 0 through
+10 retries for Kubernetes, image-publication, and Helm operations. `timeout`
+accepts seconds or durations such as `30s`, `15m`, and `1h30m`, and controls Helm
+wait operations.
 
 ## Create
 
