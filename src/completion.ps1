@@ -38,6 +38,17 @@ function Get-ToolchainNestedCompletionValues {
 			}
 			return $helpValues | Where-Object { $_ -like "$WordToComplete*" }
 		}
+		'package' {
+			if ($Elements.Count -le 2 -or ($Elements.Count -eq 3 -and $WordToComplete)) {
+				return @('create','deploy') + $helpValues | Where-Object { $_ -like "$WordToComplete*" }
+			}
+			$options = switch ($Elements[2]) {
+				'create' { @('-Output','-Force') }
+				'deploy' { @('-Cluster','-Kubeconfig','-Values','-Config','-Namespace','-WaitSeconds','-Confirm','-DryRun','-PassThru') }
+				default { @() }
+			}
+			return @($options) + $helpValues | Where-Object { $_ -like "$WordToComplete*" }
+		}
 		'cluster' {
 			if ($previous -eq '-Provider') { return @('kind','k0s','k3s') | Where-Object { $_ -like "$WordToComplete*" } }
 			if ($previous -eq '-Engine') { return @('auto','docker','podman','nerdctl') | Where-Object { $_ -like "$WordToComplete*" } }
@@ -70,14 +81,14 @@ function Get-ToolchainNestedCompletionValues {
 		'audit' { return @('-Path','-Refresh','-VerifySignatures','-Fix','-WhatIf','-Confirm','-Strict','-Json') + $helpValues | Where-Object { $_ -like "$WordToComplete*" } }
 		'verify' { return @('-Json') + $helpValues | Where-Object { $_ -like "$WordToComplete*" } }
 		'help' {
-			return @('version','remote','list','load','pull','exec','run','remove','save','prune','update','init','lock','restore','sync','activate','deactivate','verify','audit','profile','cluster','k9s','doctor') |
+			return @('version','remote','list','load','pull','exec','run','remove','save','prune','update','init','lock','restore','sync','activate','deactivate','verify','audit','profile','package','cluster','k9s','doctor') |
 				Where-Object { $_ -like "$WordToComplete*" }
 		}
 	}
 	return $helpValues | Where-Object { $_ -like "$WordToComplete*" }
 }
 
-$script:ToolchainCompletionCommands = @('version','remote','list','load','pull','exec','run','remove','save','prune','update','init','lock','restore','sync','activate','deactivate','verify','audit','profile','cluster','k9s','doctor','help')
+$script:ToolchainCompletionCommands = @('version','remote','list','load','pull','exec','run','remove','save','prune','update','init','lock','restore','sync','activate','deactivate','verify','audit','profile','package','cluster','k9s','doctor','help')
 
 function Register-ToolchainArgumentCompleters {
 	Register-ArgumentCompleter -CommandName Invoke-Toolchain,toolchain,tool,tlc -ParameterName Command -ScriptBlock {

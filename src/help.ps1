@@ -200,6 +200,41 @@ function Get-ToolchainHelpTopics {
 		-Description 'Displays the current-user current-host PowerShell profile path.' `
 		-Usage @('tlc profile path') `
 		-Examples @('tlc profile path')
+	$topics.package = New-ToolchainHelpTopic `
+		-Description 'Creates and deploys integrity-checked Kubernetes application bundles with Helm charts and YAML manifests.' `
+		-Usage @('tlc package COMMAND [PATH] [OPTIONS]', 'tlc package COMMAND help') `
+		-Commands @(
+			'create    Build a .tlcpkg bundle from toolchain.yaml.',
+			'deploy    Verify and deploy a bundle or source directory.'
+		) `
+		-Examples @('tlc package create .', 'tlc package deploy .\dist\toolchain-package-demo-1.0.0.tlcpkg -Cluster dev -Confirm')
+	$topics.'package create' = New-ToolchainHelpTopic `
+		-Description 'Validates local Helm charts and creates a hash-indexed Toolchain deployment package.' `
+		-Usage @('tlc package create [DIRECTORY] [-Output PATH] [-Force]') `
+		-Options @(
+			'DIRECTORY       Source containing toolchain.yaml. Default: current directory.',
+			'-Output PATH    Destination .tlcpkg path. Default: dist/toolchain-package-NAME-VERSION.tlcpkg.',
+			'-Force          Replace an existing output package after the new package is complete.'
+		) `
+		-Examples @('tlc package create .', 'tlc package create . -Output .\release\app.tlcpkg', 'tlc package create . -Force') `
+		-Notes @('toolchain-values.yaml and toolchain-config.yaml are included automatically when present.', 'Additional Kubernetes YAML must be declared under deployment.manifests.', 'Charts may be local Chart.yaml directories or packaged .tgz files and are linted with Helm before packaging.')
+	$topics.'package deploy' = New-ToolchainHelpTopic `
+		-Description 'Verifies a Toolchain deployment package, applies declared YAML, and upgrades or installs its Helm releases.' `
+		-Usage @('tlc package deploy PACKAGE -Confirm [-Cluster NAME | -Kubeconfig PATH] [-Values PATH] [-Config PATH] [-Namespace NAME] [-WaitSeconds SECONDS] [-PassThru]', 'tlc package deploy DIRECTORY -DryRun [OPTIONS]') `
+		-Options @(
+			'PACKAGE             A .tlcpkg file or unpackaged source directory.',
+			'-Confirm             Required acknowledgement before changing a cluster.',
+			'-Cluster NAME        Deploy to a Toolchain-managed cluster.',
+			'-Kubeconfig PATH     Deploy through an explicit kubeconfig.',
+			'-Values PATH         Apply an additional Helm values file after bundled values.',
+			'-Config PATH         Overlay an external toolchain-config.yaml.',
+			'-Namespace NAME      Override the package default namespace.',
+			'-WaitSeconds VALUE   Override the Helm wait timeout from 1 through 3600.',
+			'-DryRun              Validate against Kubernetes and render Helm without persisting resources.',
+			'-PassThru            Return structured deployment details.'
+		) `
+		-Examples @('tlc package deploy .\dist\toolchain-package-demo-1.0.0.tlcpkg -Cluster dev -Confirm', 'tlc package deploy . -DryRun', 'tlc package deploy app.tlcpkg -Kubeconfig .\kubeconfig.yaml -Values .\production.yaml -Confirm') `
+		-Notes @('Declared manifests are server-side applied before charts.', 'Helm uses upgrade --install so repeated deployments are upgrades.', 'Archive contents are size-bounded and SHA-256 verified before any cluster operation.')
 
 	$topics.cluster = New-ToolchainHelpTopic `
 		-Description 'Creates and manages local container-engine-backed Kubernetes development clusters.' `
@@ -406,6 +441,7 @@ function Invoke-ToolchainHelp {
 			'verify         Verify package signatures.',
 			'audit          Audit project reproducibility and supply-chain status.',
 			'profile        Manage PowerShell profile package loads.',
+			'package        Create and deploy Kubernetes application bundles.',
 			'cluster        Manage local Docker-backed Kubernetes clusters.',
 			'k9s            Launch a terminal UI for a Kubernetes cluster.',
 			'doctor         Check Toolchain storage and registry configuration.',

@@ -16,6 +16,7 @@ Describe 'Toolchain command help catalog' {
 			'pull','load','exec','run','update','prune','remove','save','init',
 			'lock','restore','sync','activate','deactivate','verify','audit',
 			'profile','profile init','profile add','profile remove','profile list','profile path',
+			'package','package create','package deploy',
 			'cluster','cluster create','cluster init','cluster list','cluster status','cluster kubeconfig','cluster use','cluster current','cluster delete',
 			'k9s','doctor','help'
 		)
@@ -36,6 +37,7 @@ Describe 'Toolchain command help catalog' {
 		$text | Should -Match 'tlc COMMAND help'
 		$text | Should -Match 'remote'
 		$text | Should -Match 'cluster'
+		$text | Should -Match 'package'
 		$text | Should -Match 'k9s'
 		$text | Should -Match 'audit'
 		$text | Should -Match 'sync'

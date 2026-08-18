@@ -4,6 +4,7 @@
 
 ### Added
 
+- Add `tlc package create` and `tlc package deploy` for integrity-indexed Kubernetes bundles containing Helm charts, conventional values/configuration, and declared YAML manifests.
 - Add safe `tlc audit -Fix` remediation with preview, policy/health/signature refusal gates, atomic lock refresh, package restore, and post-fix verification.
 - Expose package-health state-transition and last-clean-scan timestamps for remediation SLO monitoring.
 - Add strict `toolchain.yaml` projects with editor schema, version constraints, merged dependency requirements, dependency-first ordering, and cycle detection while retaining legacy `Toolchain.ps1` compatibility.

@@ -133,4 +133,19 @@ packages:
 		$first.Digest | Should -Be $metadataOnly.Digest
 		$first.Digest | Should -Match '^sha256:[0-9a-f]{64}$'
 	}
+
+	It 'accepts a deployment-only toolchain.yaml without resolving developer packages' {
+		$path = Join-Path $TestDrive 'toolchain.yaml'
+		Set-Content -LiteralPath $path -Encoding utf8 -Value @'
+schemaVersion: 1
+deployment:
+  name: demo
+  version: 1.0.0
+  manifests:
+    - deployment.yaml
+'@
+		$project = Read-ToolchainProject -Path $path
+		$project.Packages | Should -BeNullOrEmpty
+		$project.Deployment.name | Should -BeExactly 'demo'
+	}
 }

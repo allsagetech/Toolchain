@@ -186,6 +186,34 @@ Executable project commands remain optional in a neighboring legacy
 toolchain run build -Configuration Debug
 ```
 
+### Package and deploy Kubernetes applications
+
+The same `toolchain.yaml` can declare a deployment containing Helm charts and
+additional Kubernetes YAML. `toolchain-values.yaml` supplies conventional Helm
+overrides and `toolchain-config.yaml` controls namespace and wait behavior:
+
+```yaml
+schemaVersion: 1
+deployment:
+  name: demo
+  version: 1.0.0
+  namespace: demo-system
+  charts:
+    - path: charts/demo
+      release: demo
+  manifests:
+    - manifests
+```
+
+```powershell
+tlc package create .
+tlc package deploy .\dist\toolchain-package-demo-1.0.0.tlcpkg -Cluster dev -Confirm
+```
+
+Toolchain lints charts, creates an integrity-indexed `.tlcpkg`, verifies every
+file before deployment, applies declared YAML, and uses Helm upgrade/install for
+repeatable releases. See [`package`](doc/toolchain-package.md).
+
 ## Commands
 
 | Command | Description | Docs |
@@ -208,6 +236,7 @@ toolchain run build -Configuration Debug
 | `verify` | Verify package and platform-index signatures | `doc/toolchain-verify.md` |
 | `audit` | Report project/lock drift, installed and remote digest state, updates, health, signatures, and policy findings; safely remediate lock/restore drift with `-Fix` | `doc/toolchain-audit.md` |
 | `profile init` / `add` / `remove` / `list` / `path` | Manage startup package loads in your PowerShell profile | `doc/toolchain-profile.md` |
+| `package create` / `deploy` | Create and deploy verified Kubernetes bundles with Helm charts and YAML manifests | `doc/toolchain-package.md` |
 | `cluster create` / `init` / `list` / `status` / `kubeconfig` / `use` / `current` / `delete` | Manage, select, and natively bootstrap local Toolchain clusters | `doc/toolchain-cluster.md` |
 | `k9s` | Launch K9s against the current context or a selected kubeconfig | `doc/toolchain-k9s.md` |
 | `doctor` | Print diagnostics for your Toolchain setup | `doc/toolchain-doctor.md` |

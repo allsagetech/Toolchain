@@ -79,6 +79,7 @@ Describe 'Invoke-Toolchain dispatcher' {
 		Mock Invoke-ToolchainAudit { param($Path,[switch]$Strict) "audit:$Path`:$([bool]$Strict)" }
 		Mock Invoke-ToolchainProfile { param($Command,[string[]]$Packages) @($Command) + @($Packages) }
 		Mock Invoke-ToolchainCluster { param($Command,$Name,$Provider,[switch]$PassThru) if ($PassThru) { @($Command,$Name,$Provider,$true) } else { @($Command,$Name,$Provider) } }
+		Mock Invoke-ToolchainDeploymentPackage { param($Command,$Path,$Cluster,[switch]$Confirm) @($Command,$Path,$Cluster,[bool]$Confirm) }
 		Mock Invoke-ToolchainK9s { param($Cluster,$Kubeconfig,[object[]]$ArgumentList) [pscustomobject]@{ Cluster = $Cluster; Kubeconfig = $Kubeconfig; Arguments = @($ArgumentList) } }
 		Mock Invoke-ToolchainDoctor { 'doctor' }
 		Mock Invoke-ToolchainHelp { param([string[]]$CommandPath) if ($CommandPath) { "help:$($CommandPath -join ' ')" } else { 'help' } }
@@ -144,6 +145,7 @@ Describe 'Invoke-Toolchain dispatcher' {
 		@(Invoke-Toolchain -Command cluster -ArgumentList @('create','dev','-Provider','kind')) | Should -Be @('create','dev','kind')
 		@(Invoke-Toolchain -Command cluster -ArgumentList @('init','dev','-Confirm','-RegistryNodePort','32000')) | Should -Be @('init','dev',$null)
 		@(Invoke-Toolchain -Command cluster -ArgumentList @('use','dev','-PassThru')) | Should -Be @('use','dev',$null,$true)
+		@(Invoke-Toolchain -Command package -ArgumentList @('deploy','app.tlcpkg','-Cluster','dev','-Confirm')) | Should -Be @('deploy','app.tlcpkg','dev',$true)
 		$k9s = Invoke-Toolchain -Command k9s -ArgumentList @('-Cluster','dev','-n','default')
 		$k9s.Cluster | Should -Be 'dev'
 		$k9s.Kubeconfig | Should -BeNullOrEmpty
@@ -161,7 +163,7 @@ Describe 'Invoke-Toolchain dispatcher' {
 	}
 
 	It 'routes suffix help for every top-level command without executing it' {
-		$commands = @('version','v','remote','list','load','pull','exec','run','remove','rm','save','prune','update','init','lock','restore','sync','activate','deactivate','verify','audit','profile','cluster','k9s','doctor')
+		$commands = @('version','v','remote','list','load','pull','exec','run','remove','rm','save','prune','update','init','lock','restore','sync','activate','deactivate','verify','audit','profile','package','cluster','k9s','doctor')
 		foreach ($command in $commands) {
 			$expected = switch ($command) { 'v' { 'version' }; 'rm' { 'remove' }; default { $command } }
 			(Invoke-Toolchain -Command $command -ArgumentList @('help')) | Should -Be "help:$expected"
@@ -176,6 +178,7 @@ Describe 'Invoke-Toolchain dispatcher' {
 		(Invoke-Toolchain -Command remote -ArgumentList @('list','help')) | Should -Be 'help:remote list'
 		(Invoke-Toolchain -Command profile -ArgumentList @('add','--help')) | Should -Be 'help:profile add'
 		(Invoke-Toolchain -Command cluster -ArgumentList @('create','-h')) | Should -Be 'help:cluster create'
+		(Invoke-Toolchain -Command package -ArgumentList @('deploy','-h')) | Should -Be 'help:package deploy'
 		(Invoke-Toolchain -Command help -ArgumentList @('cluster','kubeconfig')) | Should -Be 'help:cluster kubeconfig'
 		(Invoke-Toolchain -Command help -ArgumentList @('cluster','current')) | Should -Be 'help:cluster current'
 		Should -Invoke -CommandName Invoke-ToolchainRemote -Times 0 -Exactly

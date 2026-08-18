@@ -34,6 +34,29 @@ requirements are merged, every constraint must be satisfied, conflicting named
 configurations fail, cycles fail, and dependencies are restored before dependents.
 Toolchain does not execute package code to discover dependencies.
 
+The same manifest may also describe a Kubernetes deployment package:
+
+```yaml
+schemaVersion: 1
+packages:
+  - helm
+  - kubectl
+deployment:
+  name: demo
+  version: 1.0.0
+  namespace: demo-system
+  charts:
+    - path: charts/demo
+      release: demo
+  manifests:
+    - manifests
+```
+
+`packages` and `deployment` are independently optional, but at least one must
+be present. The deployment section is consumed by `tlc package create` and
+`tlc package deploy`; see `doc/toolchain-package.md` for conventional values,
+configuration, archive integrity, and deployment behavior.
+
 The runtime parser intentionally implements this strict schema without a YAML
 module dependency, preserving PowerShell 5.1 and offline operation. The editor
 schema is `schema/toolchain-project.schema.json`.

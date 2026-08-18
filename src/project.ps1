@@ -342,7 +342,7 @@ function Select-ToolchainPackageVersion {
 }
 
 function Resolve-ToolchainProjectPackages {
-	param([Parameter(Mandatory)][object[]]$PackageSpecs)
+	param([Parameter(Mandatory)][AllowEmptyCollection()][object[]]$PackageSpecs)
 	$nodes = @{}
 	$order = [Collections.ArrayList]::new()
 
@@ -407,7 +407,7 @@ function Resolve-ToolchainProjectPackages {
 }
 
 function Get-ToolchainProjectDigest {
-	param([Parameter(Mandatory)][object[]]$PackageSpecs)
+	param([Parameter(Mandatory)][AllowEmptyCollection()][object[]]$PackageSpecs)
 	function NormalizeSpec {
 		param([Parameter(Mandatory)][hashtable]$Spec)
 		return [ordered]@{
@@ -418,13 +418,13 @@ function Get-ToolchainProjectDigest {
 			dependencies = @($Spec.Dependencies | ForEach-Object { NormalizeSpec -Spec $_ })
 		}
 	}
-	$json = @($PackageSpecs | ForEach-Object { NormalizeSpec -Spec $_ }) | ConvertTo-Json -Depth 30 -Compress
+	$json = if ($PackageSpecs.Count -eq 0) { '[]' } else { @($PackageSpecs | ForEach-Object { NormalizeSpec -Spec $_ }) | ConvertTo-Json -Depth 30 -Compress }
 	$bytes = [Text.Encoding]::UTF8.GetBytes($json)
 	return Get-ToolchainBytesSha256Digest -Bytes $bytes
 }
 
 function Get-ToolchainProjectPackageNames {
-	param([Parameter(Mandatory)][object[]]$PackageSpecs)
+	param([Parameter(Mandatory)][AllowEmptyCollection()][object[]]$PackageSpecs)
 	$names = [Collections.ArrayList]::new()
 	function AddSpecName {
 		param([Parameter(Mandatory)][hashtable]$Spec)
@@ -449,11 +449,12 @@ function Read-ToolchainProject {
 	if ($configPath -match '(?i)\.ya?ml$') {
 		$manifest = ConvertFrom-ToolchainYaml -Text (Get-Content -LiteralPath $configPath -Raw) -Context $configPath
 		foreach ($key in $manifest.Keys) {
-			if ([string]$key -notin @('schemaVersion', 'packages')) { throw "$configPath contains unsupported top-level key '$key'" }
+			if ([string]$key -notin @('schemaVersion', 'packages', 'deployment')) { throw "$configPath contains unsupported top-level key '$key'" }
 		}
 		if ([int]$manifest.schemaVersion -ne 1) { throw "$configPath requires schemaVersion: 1" }
-		$values = @($manifest.packages)
-		if ($values.Count -eq 0) { throw "$configPath must declare at least one package" }
+		$values = @()
+		if ($null -ne $manifest['packages']) { $values = @($manifest['packages']) }
+		if ($values.Count -eq 0 -and $null -eq $manifest['deployment']) { throw "$configPath must declare at least one package or a deployment" }
 		$specs = @()
 		for ($index = 0; $index -lt $values.Count; $index++) {
 			$specs += ConvertTo-ToolchainProjectPackageSpec -Value $values[$index] -Context "package $($index + 1)"
@@ -467,6 +468,7 @@ function Read-ToolchainProject {
 			PackageNames = @(Get-ToolchainProjectPackageNames -PackageSpecs $specs)
 			Packages = @($packages)
 			Digest = Get-ToolchainProjectDigest -PackageSpecs $specs
+			Deployment = $manifest['deployment']
 		}
 	}
 
