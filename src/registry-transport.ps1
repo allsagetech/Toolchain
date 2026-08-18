@@ -49,15 +49,58 @@ function GetRegistryPlatformOs {
 	throw 'could not determine the current operating-system platform; set TOOLCHAIN_OS explicitly'
 }
 
+function ConvertTo-ToolchainRuntimeArchitecture {
+	param(
+		[AllowNull()]$Architecture
+	)
+	$text = [string]$Architecture
+	if ([string]::IsNullOrWhiteSpace($text)) { return $null }
+	switch -Regex ($text.Trim()) {
+		'^(X64|AMD64|X86_64)$' { return 'amd64' }
+		'^(ARM64|AARCH64)$' { return 'arm64' }
+		'^(X86|I[3-6]86)$' { return '386' }
+		'^(ARM|ARMV[5-8].*)$' { return 'arm' }
+	}
+	return $null
+}
+
+function Get-ToolchainRuntimeArchitecture {
+	$candidates = @()
+	try {
+		# Older Windows PowerShell/.NET combinations can expose this property as
+		# null. Never invoke instance methods on it; use native environment values
+		# as the compatibility fallback.
+		$candidates += [Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+	} catch {
+		Write-Debug "RuntimeInformation architecture detection failed: $($_.Exception.Message)"
+	}
+	$candidates += @(
+		[Environment]::GetEnvironmentVariable('PROCESSOR_ARCHITEW6432', [EnvironmentVariableTarget]::Process),
+		[Environment]::GetEnvironmentVariable('PROCESSOR_ARCHITECTURE', [EnvironmentVariableTarget]::Process)
+	)
+
+	foreach ($candidate in $candidates) {
+		$resolved = ConvertTo-ToolchainRuntimeArchitecture -Architecture $candidate
+		if ($resolved) { return $resolved }
+	}
+
+	$uname = Get-Command 'uname' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+	if ($uname -and $uname.Source) {
+		try {
+			$nativeArchitecture = & $uname.Source '-m' 2>$null | Select-Object -First 1
+			$resolved = ConvertTo-ToolchainRuntimeArchitecture -Architecture $nativeArchitecture
+			if ($resolved) { return $resolved }
+		} catch {
+			Write-Debug "uname architecture detection failed: $($_.Exception.Message)"
+		}
+	}
+
+	throw 'could not determine the current processor architecture'
+}
+
 function GetRegistryPlatformArch {
 	if ($env:TOOLCHAIN_ARCH) { return $env:TOOLCHAIN_ARCH }
-	switch ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()) {
-		'X64' { return 'amd64' }
-		'X86' { return '386' }
-		'Arm64' { return 'arm64' }
-		'Arm' { return 'arm' }
-		default { throw 'could not determine the current processor architecture; set TOOLCHAIN_ARCH explicitly' }
-	}
+	return Get-ToolchainRuntimeArchitecture
 }
 
 function ConvertTo-CanonicalSha256Digest {

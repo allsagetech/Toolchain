@@ -9,6 +9,7 @@ BeforeAll {
 	$script:testRegistryRepo = 'owner/toolchains'
 	function GetRegistryBaseUrl { $script:testRegistryUrl }
 	function GetRegistryRepoName { $script:testRegistryRepo }
+	function Get-ToolchainRuntimeArchitecture { 'amd64' }
 	function GetToolchainPath { Join-Path $TestDrive 'toolchain-default' }
 	function Write-ToolchainInfo { param([string]$Message) }
 	. $PSCommandPath.Replace('.Tests.ps1', '.ps1')
@@ -30,6 +31,18 @@ Describe 'Invoke-ToolchainCommand' {
 	It 'Throws on non-zero exit code' {
 		$exe = if ($PSVersionTable.PSEdition -eq 'Desktop') { (Get-Command 'powershell' -ErrorAction Stop).Source } else { (Get-Command 'pwsh' -ErrorAction Stop).Source }
 		{ Invoke-ToolchainCommand -File $exe -ArgumentList @('-NoProfile','-Command','exit 5') } | Should -Throw
+	}
+
+	It 'captures successful native stderr when the caller uses Stop' {
+		$exe = if ($PSVersionTable.PSEdition -eq 'Desktop') { (Get-Command 'powershell' -ErrorAction Stop).Source } else { (Get-Command 'pwsh' -ErrorAction Stop).Source }
+		$previous = $ErrorActionPreference
+		try {
+			$ErrorActionPreference = 'Stop'
+			$result = Invoke-ToolchainCommand -File $exe -ArgumentList @('-NoProfile','-Command',"[Console]::Error.WriteLine('diagnostic'); exit 0")
+			($result -join "`n") | Should -Match 'diagnostic'
+		} finally {
+			$ErrorActionPreference = $previous
+		}
 	}
 }
 
@@ -138,6 +151,12 @@ Describe 'Cosign bootstrap' {
 		$asset.Version | Should -Be 'v2.6.0'
 		$asset.Uri | Should -BeLike 'https://github.com/sigstore/cosign/releases/download/v2.6.0/*'
 		$asset.Sha256 | Should -Match '^[0-9a-f]{64}$'
+	}
+
+	It 'uses the null-safe runtime architecture resolver for bootstrap selection' {
+		Mock Get-ToolchainRuntimeArchitecture { 'amd64' }
+		(Get-ToolchainCosignBootstrapAsset).AssetName | Should -Match 'amd64'
+		Should -Invoke Get-ToolchainRuntimeArchitecture -Times 1 -Exactly
 	}
 
 	It 'uses a compatible application from PATH without bootstrapping' {

@@ -26,7 +26,12 @@ function Invoke-ToolchainCommand {
 		[switch]$Quiet
 	)
 	$prev = $PSNativeCommandUseErrorActionPreference
+	$previousErrorActionPreference = $ErrorActionPreference
 	$PSNativeCommandUseErrorActionPreference = $false
+	# Windows PowerShell 5.1 surfaces native stderr as error records. A caller's
+	# Stop preference must not abort a successful verifier before LASTEXITCODE is
+	# evaluated; stderr is already captured into the command result below.
+	$ErrorActionPreference = 'Continue'
 	try {
 		$out = & $File @ArgumentList 2>&1
 		$code = $LASTEXITCODE
@@ -37,6 +42,7 @@ function Invoke-ToolchainCommand {
 		if (-not $Quiet) { return $out }
 		return $null
 	} finally {
+		$ErrorActionPreference = $previousErrorActionPreference
 		$PSNativeCommandUseErrorActionPreference = $prev
 	}
 }
@@ -78,11 +84,7 @@ function Get-ToolchainCosignBootstrapAsset {
 		throw 'automatic Cosign bootstrap does not support this operating system'
 	}
 
-	$arch = switch ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()) {
-		'X64' { 'amd64' }
-		'Arm64' { 'arm64' }
-		default { throw "automatic Cosign bootstrap does not support architecture '$([Runtime.InteropServices.RuntimeInformation]::OSArchitecture)'" }
-	}
+	$arch = Get-ToolchainRuntimeArchitecture
 
 	$version = 'v2.6.0'
 	$key = "$os/$arch"

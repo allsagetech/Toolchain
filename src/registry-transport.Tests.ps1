@@ -51,9 +51,17 @@ Describe 'Registry transport primitives' {
 	It 'detects the native OCI operating system and architecture by default' {
 		Remove-Item Env:TOOLCHAIN_OS,Env:TOOLCHAIN_ARCH -ErrorAction SilentlyContinue
 		$expectedOs = if ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)) { 'windows' } elseif ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Linux)) { 'linux' } else { 'darwin' }
-		$expectedArch = switch ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()) { 'X64' { 'amd64' }; 'X86' { '386' }; 'Arm64' { 'arm64' }; 'Arm' { 'arm' } }
+		$expectedArch = Get-ToolchainRuntimeArchitecture
 		GetRegistryPlatformOs | Should -Be $expectedOs
 		GetRegistryPlatformArch | Should -Be $expectedArch
+	}
+
+	It 'normalizes legacy runtime architecture values without dereferencing null' {
+		ConvertTo-ToolchainRuntimeArchitecture -Architecture $null | Should -BeNullOrEmpty
+		ConvertTo-ToolchainRuntimeArchitecture -Architecture 'AMD64' | Should -Be 'amd64'
+		ConvertTo-ToolchainRuntimeArchitecture -Architecture 'x86_64' | Should -Be 'amd64'
+		ConvertTo-ToolchainRuntimeArchitecture -Architecture 'ARM64' | Should -Be 'arm64'
+		ConvertTo-ToolchainRuntimeArchitecture -Architecture 'i686' | Should -Be '386'
 	}
 
 	It 'bounds response bodies and validates expected size' {
