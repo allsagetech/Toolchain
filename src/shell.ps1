@@ -200,6 +200,13 @@ function GetPackageDefinition {
     $root = ($Digest | ParseLocalPackageRef).Root
   } else {
     $root = ResolvePackagePath -Digest $Digest
+	if (-not (Test-Path -LiteralPath $root -PathType Container)) {
+		$legacyRoot = Join-Path (GetPwrContentPath) $Digest.Substring('sha256:'.Length, 12).ToLowerInvariant()
+		if (Test-Path -LiteralPath $legacyRoot -PathType Container) {
+			throw "Package content for $Digest uses Toolchain's legacy short-digest cache layout. Run 'tlc pull <package>@${Digest}' to verify and restore that immutable package before loading."
+		}
+		throw "Package content not found for ${Digest}. Run 'tlc pull <package>@${Digest}' to verify and restore that immutable package before loading."
+	}
   }
 
 	$def = if ($Digest.StartsWith('file:///')) {

@@ -18,6 +18,6 @@ Toolchain treats registry responses, OCI manifests and layers, package labels, p
 - archive entries cannot escape the package root through paths, links, reparse points, truncated input, or resource exhaustion;
 - signed-offline enforcement identifies a configured trusted signer; the presence of any cryptographic signature is not sufficient.
 
-Cosign verification is controlled by policy or `TOOLCHAIN_COSIGN_VERIFY`. Configure a key or both an expected certificate identity and OIDC issuer. Offline CMS verification requires trusted signer thumbprints when signed manifests are required. `TOOLCHAIN_TLS_INSECURE` disables a critical transport control and must be limited to isolated recovery or private-PKI diagnostics.
+Cosign verification is controlled by policy or `TOOLCHAIN_COSIGN_VERIFY`. Configure a key or both an expected certificate identity and OIDC issuer. When no compatible Cosign application is available, supported clients bootstrap a pinned Sigstore release asset and verify its SHA-256 against a digest embedded in the Toolchain module before executing it. Offline CMS verification requires trusted signer thumbprints when signed manifests are required. `TOOLCHAIN_TLS_INSECURE` disables a critical transport control and must be limited to isolated recovery or private-PKI diagnostics.
 
 See [the security command reference](doc/toolchain-security.md) and [the cache migration guide](doc/cache-migration-v2.md).

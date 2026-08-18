@@ -9,6 +9,8 @@ BeforeAll {
 	$script:testRegistryRepo = 'owner/toolchains'
 	function GetRegistryBaseUrl { $script:testRegistryUrl }
 	function GetRegistryRepoName { $script:testRegistryRepo }
+	function GetToolchainPath { Join-Path $TestDrive 'toolchain-default' }
+	function Write-ToolchainInfo { param([string]$Message) }
 	. $PSCommandPath.Replace('.Tests.ps1', '.ps1')
 }
 
@@ -75,14 +77,14 @@ Describe 'Cosign settings' {
 
 	It 'Invoke-ToolchainCosignVerify no-ops when disabled' {
 		Mock Get-ToolchainCosignVerifyEnabled { return $false }
-		Mock Get-Command { throw 'should not be called' }
+		Mock Resolve-ToolchainCosignApplication { throw 'should not be called' }
 		{ Invoke-ToolchainCosignVerify -RepoDigestRef 'repo@sha256:abc' } | Should -Not -Throw
 	}
 
-	It 'Invoke-ToolchainCosignVerify throws when cosign missing' {
+	It 'Invoke-ToolchainCosignVerify fails closed when bootstrap fails' {
 		Mock Get-ToolchainCosignVerifyEnabled { return $true }
-		Mock Get-Command { return $null }
-		{ Invoke-ToolchainCosignVerify -RepoDigestRef 'repo@sha256:abc' } | Should -Throw
+		Mock Resolve-ToolchainCosignApplication { throw 'verified bootstrap failed' }
+		{ Invoke-ToolchainCosignVerify -RepoDigestRef 'repo@sha256:abc' } | Should -Throw '*verified bootstrap failed*'
 	}
 
 	It 'Invoke-ToolchainCosignVerify calls cosign with flags' {
@@ -91,7 +93,7 @@ Describe 'Cosign settings' {
 		$env:TOOLCHAIN_COSIGN_CERT_IDENTITY = 'me@example.com'
 		$env:TOOLCHAIN_COSIGN_OIDC_ISSUER = 'https://issuer.example'
 
-		Mock Get-Command {
+		Mock Resolve-ToolchainCosignApplication {
 			return [pscustomobject]@{ Source = 'cosign.exe' }
 		}
 		Mock Invoke-ToolchainCommand { }
@@ -115,7 +117,7 @@ Describe 'Cosign settings' {
 		$script:testRegistryRepo = 'allsagetech/toolchains'
 		Mock Get-ToolchainPolicyRequireCosign { return $false }
 		Mock Get-ToolchainCosignKey { return $null }
-		Mock Get-Command { [pscustomobject]@{ Source='cosign' } }
+		Mock Resolve-ToolchainCosignApplication { [pscustomobject]@{ Source='cosign' } }
 		Mock Invoke-ToolchainCommand { }
 
 		Invoke-ToolchainCosignVerify -RepoDigestRef ('registry-1.docker.io/allsagetech/toolchains@sha256:' + ('a' * 64))
@@ -123,6 +125,74 @@ Describe 'Cosign settings' {
 			$ArgumentList -contains 'https://github.com/allsagetech/Toolchains/.github/workflows/build-push.yml@refs/heads/main' -and
 			$ArgumentList -contains 'https://token.actions.githubusercontent.com'
 		}
+	}
+}
+
+Describe 'Cosign bootstrap' {
+	BeforeEach {
+		Mock Write-ToolchainInfo { }
+	}
+
+	It 'pins the current supported platform to an official release checksum' {
+		$asset = Get-ToolchainCosignBootstrapAsset
+		$asset.Version | Should -Be 'v2.6.0'
+		$asset.Uri | Should -BeLike 'https://github.com/sigstore/cosign/releases/download/v2.6.0/*'
+		$asset.Sha256 | Should -Match '^[0-9a-f]{64}$'
+	}
+
+	It 'uses a compatible application from PATH without bootstrapping' {
+		$assetName = (Get-ToolchainCosignBootstrapAsset).AssetName
+		Mock Get-Command {
+			param($Name)
+			if ($Name -eq $assetName) { return [pscustomobject]@{ Source='platform-cosign' } }
+			return $null
+		}
+		Mock Install-ToolchainCosignBootstrap { throw 'should not bootstrap' }
+
+		(Resolve-ToolchainCosignApplication).Source | Should -Be 'platform-cosign'
+		Should -Invoke Install-ToolchainCosignBootstrap -Times 0
+	}
+
+	It 'installs and reuses a checksum-verified bootstrap atomically' {
+		$bytes = [Text.Encoding]::UTF8.GetBytes('verified-cosign-test-binary')
+		$sha = [BitConverter]::ToString(([Security.Cryptography.SHA256]::Create()).ComputeHash($bytes)).Replace('-', '').ToLowerInvariant()
+		$asset = [pscustomobject]@{
+			Version='v-test'
+			AssetName='cosign-test.exe'
+			ExecutableName='cosign.exe'
+			Sha256=$sha
+			Uri='https://example.test/cosign.exe'
+		}
+		Mock Get-ToolchainCosignBootstrapAsset { $asset }
+		Mock GetToolchainPath { Join-Path $TestDrive 'toolchain' }
+		Mock Invoke-WebRequest {
+			param($Uri, $Method, $Headers, $OutFile)
+			[IO.File]::WriteAllBytes($OutFile, $bytes)
+		}
+
+		$installed = Install-ToolchainCosignBootstrap
+		Test-ToolchainCosignBootstrapFile -Path $installed.Source -ExpectedSha256 $sha | Should -BeTrue
+		(Resolve-ToolchainCosignApplication).Source | Should -Be $installed.Source
+		Should -Invoke Invoke-WebRequest -Times 1 -Exactly
+	}
+
+	It 'rejects a bootstrap download whose checksum does not match' {
+		$asset = [pscustomobject]@{
+			Version='v-test-bad'
+			AssetName='cosign-test.exe'
+			ExecutableName='cosign.exe'
+			Sha256=('0' * 64)
+			Uri='https://example.test/cosign.exe'
+		}
+		Mock Get-ToolchainCosignBootstrapAsset { $asset }
+		Mock GetToolchainPath { Join-Path $TestDrive 'toolchain-bad' }
+		Mock Invoke-WebRequest {
+			param($Uri, $Method, $Headers, $OutFile)
+			[IO.File]::WriteAllText($OutFile, 'tampered')
+		}
+
+		{ Install-ToolchainCosignBootstrap } | Should -Throw '*SHA-256 mismatch*'
+		Test-Path -LiteralPath (Get-ToolchainCosignBootstrapPath -Asset $asset) | Should -BeFalse
 	}
 }
 

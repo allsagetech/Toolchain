@@ -500,8 +500,8 @@ function Invoke-ToolchainDoctor {
   $repoPath = GetToolchainRepo
   try { $platform = "$(GetRegistryPlatformOs)/$(GetRegistryPlatformArch)" } catch { $errors += "Platform detection failed: $_" }
   $signatureVerification = if ($repoPath) { 'offline-policy' } elseif (Get-ToolchainCosignVerifyEnabled) { 'required' } else { 'optional' }
-	if ($signatureVerification -eq 'required' -and -not (Get-Command cosign -CommandType Application -ErrorAction SilentlyContinue)) {
-		$errors += 'Cosign verification is required, but cosign was not found in PATH.'
+	if ($signatureVerification -eq 'required' -and -not (Find-ToolchainCosignApplication) -and -not (Test-ToolchainCosignBootstrapSupported)) {
+		$errors += 'Cosign verification is required, but Cosign was not found and automatic verified bootstrap is unsupported on this platform.'
 	}
   if ($repoPath) {
     if (-not $structured) { Write-ToolchainInfo "Offline repository: $repoPath" }

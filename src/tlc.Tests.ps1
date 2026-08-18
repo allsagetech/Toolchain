@@ -447,6 +447,16 @@ Describe 'Invoke-ToolchainDoctor' {
 		(Invoke-ToolchainDoctor -Json | ConvertFrom-Json).Healthy | Should -BeTrue
 	}
 
+	It 'accepts verified Cosign bootstrap support when verification is required' {
+		Mock GetToolchainRepo { return $null }
+		Mock GetTagsList { return @{ tags = @('a') } }
+		Mock Get-ToolchainCosignVerifyEnabled { $true }
+		Mock Find-ToolchainCosignApplication { $null }
+		Mock Test-ToolchainCosignBootstrapSupported { $true }
+
+		(Invoke-ToolchainDoctor -PassThru).Healthy | Should -BeTrue
+	}
+
 	It 'Reports registry failure and throws in strict mode' {
 		Mock GetToolchainRepo { return $null }
 		Mock GetTagsList { throw 'offline' }

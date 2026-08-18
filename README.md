@@ -359,7 +359,7 @@ See `.env.example` for supported values.
 - `toolchain doctor` prints diagnostics (cache path writability, registry reachability, offline repo status).
 - `toolchain doctor -PassThru` and `toolchain doctor -Json` provide structured diagnostics for automation.
 - Add `-Refresh` to `toolchain remote ...` or `toolchain doctor` to bypass cached registry data.
-- If `cosign` verification is enabled, ensure `cosign` is installed and on `PATH`.
+- When Cosign verification is required, Toolchain uses an installed `cosign` application or downloads a pinned Sigstore verifier whose SHA-256 is embedded in the client. Unsupported platforms still require `cosign` on `PATH`.
 - If you see policy failures, confirm which policy file is being discovered (see `doc/toolchain-policy.md`).
 
 ## Development

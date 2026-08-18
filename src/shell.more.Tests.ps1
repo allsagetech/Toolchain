@@ -68,6 +68,16 @@ Describe 'GetPackageDefinition' {
 			Remove-Item -Recurse -Force $root
 		}
 	}
+
+	It 'directs legacy short-digest caches through a verified pull' {
+		$digest = 'sha256:' + ('c' * 64)
+		$legacyRoot = Join-Path $TestDrive ('c' * 12)
+		New-Item -ItemType Directory -Path $legacyRoot | Out-Null
+		Mock GetPwrContentPath { $TestDrive }
+		Mock ResolvePackagePath { Join-Path $TestDrive ('c' * 64) }
+
+		{ GetPackageDefinition -Digest $digest } | Should -Throw "*legacy short-digest cache layout*tlc pull <package>@${digest}*"
+	}
 }
 
 Describe 'ConfigurePackage and LoadPackage' {

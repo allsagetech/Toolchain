@@ -24,6 +24,7 @@
 
 - Build and import the admission agent locally when initializing managed clusters, removing the dependency on an unpublished versioned agent image.
 - Automatically select a sole managed cluster, refresh K3s kubeconfigs before initialization, distinguish stopped K3s servers, and report actionable Kubernetes API preflight failures.
+- Break the secure-verification bootstrap loop by checksum-verifying a pinned Sigstore Cosign verifier when no compatible application is installed, and report legacy short-digest package caches with an actionable verified-pull recovery message.
 
 ## 2.4.0 - 2026-08-15
 

@@ -40,7 +40,14 @@ Before blobs are downloaded, Toolchain runs:
 
 The official Docker Hub repository (`allsagetech/toolchains`) is verified by
 default against the protected `build-push.yml` GitHub Actions identity and its
-OIDC issuer. Cosign must be installed on `PATH`; a missing verifier fails closed.
+OIDC issuer. Toolchain first uses a compatible Cosign application on `PATH`. If
+one is unavailable on supported Windows, Linux, and macOS hosts, it downloads a
+pinned Sigstore Cosign release into Toolchain's security cache and verifies the
+binary against a SHA-256 embedded in the installed module before executing it.
+A failed download, checksum mismatch, unsafe cache path, or unsupported platform
+fails closed. The bootstrap verifier exists only to establish signature trust;
+the normal `cosign` Toolchain package can then be pulled and loaded like any
+other signed package.
 
 Private registries remain policy-controlled because their trust identities are
 deployment-specific. Enable verification for them with:
