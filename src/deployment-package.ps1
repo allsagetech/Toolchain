@@ -40,7 +40,7 @@ function ConvertTo-ToolchainDeploymentChart {
 	$values = @()
 	$wait = $true
 	$schemaValidation = $true
-	$zarfName = $null
+	$chartName = $null
 	if ($Value -is [string]) {
 		$path = [string]$Value
 	} elseif ($Value -is [Collections.IDictionary]) {
@@ -52,17 +52,17 @@ function ConvertTo-ToolchainDeploymentChart {
 		$path = if ($Value['path']) { [string]$Value['path'] } else { [string]$Value['localPath'] }
 		$release = if ($Value['release']) { [string]$Value['release'] } else { [string]$Value['releaseName'] }
 		$namespace = [string]$Value['namespace']
-		$zarfName = [string]$Value['name']
+		$chartName = [string]$Value['name']
 		if ($null -ne $Value['values']) { $values += @($Value['values']) }
 		if ($null -ne $Value['valuesFiles']) { $values += @($Value['valuesFiles']) }
 		if ($Value['url'] -or $Value['repoName'] -or $Value['gitPath']) {
-			throw "deployment chart $Index uses a remote Zarf chart; Toolchain packages currently require localPath so the chart can be integrity-indexed for offline deployment"
+			throw "deployment chart $Index is remote; Toolchain packages currently require localPath so the chart can be integrity-indexed for offline deployment"
 		}
 		if ($null -ne $Value['variables'] -and @($Value['variables']).Count -gt 0) {
-			throw "deployment chart $Index uses Zarf chart variables, which Toolchain does not silently emulate; use valuesFiles or toolchain-values.yaml"
+			throw "deployment chart $Index uses chart variables that Toolchain does not support; use valuesFiles or toolchain-values.yaml"
 		}
 		if ($null -ne $Value['serverSideApply'] -and [string]$Value['serverSideApply'] -notin @('', 'auto')) {
-			throw "deployment chart $Index requests Zarf serverSideApply behavior that is not supported by this Helm runtime"
+			throw "deployment chart $Index requests serverSideApply behavior that is not supported by this Helm runtime"
 		}
 		if ($null -ne $Value['noWait']) {
 			if ($Value['noWait'] -isnot [bool]) { throw "deployment chart $Index requires noWait to be true or false" }
@@ -77,7 +77,7 @@ function ConvertTo-ToolchainDeploymentChart {
 	}
 	if ([string]::IsNullOrWhiteSpace($path)) { throw "deployment chart $Index requires a path" }
 	if (-not $release) {
-		$release = if ($zarfName) { $zarfName } elseif ($ChartCount -eq 1) { $DefaultRelease } else { [IO.Path]::GetFileNameWithoutExtension($path.TrimEnd([char[]]@('/', '\'))) }
+		$release = if ($chartName) { $chartName } elseif ($ChartCount -eq 1) { $DefaultRelease } else { [IO.Path]::GetFileNameWithoutExtension($path.TrimEnd([char[]]@('/', '\'))) }
 	}
 	Assert-ToolchainDeploymentIdentifier -Value $release -Kind 'chart release' -MaximumLength 53
 	if ($namespace) { Assert-ToolchainDeploymentIdentifier -Value $namespace -Kind 'chart namespace' }
@@ -121,9 +121,9 @@ function ConvertTo-ToolchainDeploymentManifestSet {
 		if ($Value['namespace']) { $namespace = [string]$Value['namespace'] }
 		if ($null -ne $Value['files']) { $files = @($Value['files']) }
 		if ($null -ne $Value['kustomizations'] -and @($Value['kustomizations']).Count -gt 0) {
-			throw "deployment manifest '$name' uses Zarf kustomizations; render them to local YAML files before creating a Toolchain package"
+			throw "deployment manifest '$name' uses kustomizations; render them to local YAML files before creating a Toolchain package"
 		}
-		if ([bool]$Value['template']) { throw "deployment manifest '$name' uses Zarf Go templating; use Helm or pre-rendered YAML with Toolchain" }
+		if ([bool]$Value['template']) { throw "deployment manifest '$name' uses Go templating; use Helm or pre-rendered YAML with Toolchain" }
 		if ($null -ne $Value['serverSideApply'] -and [string]$Value['serverSideApply'] -eq 'false') {
 			throw "deployment manifest '$name' disables server-side apply, but Toolchain packages deploy manifests with server-side apply"
 		}
@@ -167,7 +167,7 @@ function ConvertTo-ToolchainDeploymentComponent {
 	foreach ($unsupported in @('only', 'group', 'import', 'images', 'imageArchives', 'repos', 'files', 'dataInjections', 'actions', 'scripts', 'healthChecks')) {
 		$valueForKey = $Value[$unsupported]
 		$hasValue = if ($valueForKey -is [Collections.IDictionary]) { $valueForKey.Count -gt 0 } else { @($valueForKey).Count -gt 0 -and $null -ne $valueForKey }
-		if ($hasValue) { throw "Zarf v0.76 component '$name' uses '$unsupported', which Toolchain package compatibility does not yet support" }
+		if ($hasValue) { throw "Toolchain component '$name' uses '$unsupported', which Toolchain packages do not yet support" }
 	}
 
 	$chartValues = @()
@@ -207,11 +207,11 @@ function Read-ToolchainDeploymentDefinition {
 		}
 	}
 	if ($null -ne $manifest['schemaVersion'] -and [int]$manifest['schemaVersion'] -ne 1) { throw "$manifestPath requires schemaVersion: 1" }
-	if ($manifest['kind'] -and [string]$manifest['kind'] -ne 'ZarfPackageConfig') { throw "$manifestPath supports only kind: ZarfPackageConfig for Zarf v0.76 compatibility" }
-	if ($manifest['apiVersion'] -and [string]$manifest['apiVersion'] -ne 'zarf.dev/v1alpha1') { throw "$manifestPath supports only apiVersion: zarf.dev/v1alpha1 for Zarf compatibility" }
+	if ($manifest['kind'] -and [string]$manifest['kind'] -ne 'ToolchainPackageConfig') { throw "$manifestPath supports only kind: ToolchainPackageConfig" }
+	if ($manifest['apiVersion'] -and [string]$manifest['apiVersion'] -ne 'toolchain.allsagetech.com/v1alpha1') { throw "$manifestPath supports only apiVersion: toolchain.allsagetech.com/v1alpha1" }
 	foreach ($unsupportedTopLevel in @('constants', 'variables', 'build')) {
 		if ($null -ne $manifest[$unsupportedTopLevel] -and @($manifest[$unsupportedTopLevel]).Count -gt 0) {
-			throw "Zarf v0.76 top-level field '$unsupportedTopLevel' is not yet supported by Toolchain package compatibility"
+			throw "Toolchain top-level field '$unsupportedTopLevel' is not yet supported by Toolchain packages"
 		}
 	}
 
@@ -229,7 +229,7 @@ function Read-ToolchainDeploymentDefinition {
 	if ($metadata) {
 		foreach ($key in $metadata.Keys) {
 			if ([string]$key -notin @('name', 'description', 'version', 'url', 'image', 'uncompressed', 'architecture', 'yolo', 'authors', 'documentation', 'source', 'vendor', 'aggregateChecksum', 'annotations', 'allowNamespaceOverride')) {
-				throw "$manifestPath metadata contains unsupported Zarf v0.76 key '$key'"
+				throw "$manifestPath metadata contains unsupported Toolchain key '$key'"
 			}
 		}
 	}
@@ -303,7 +303,7 @@ function Read-ToolchainDeploymentDefinition {
 		GlobalValues = [string[]]$globalValues
 		Documentation = [string[]]$documentation
 		PackageFiles = [string[]]$packageFiles
-		Compatibility = if ($manifest['components'] -or $manifest['kind']) { 'zarf-v0.76' } else { 'toolchain' }
+		Compatibility = if ($manifest['components'] -or $manifest['kind']) { 'toolchain-components-v1alpha1' } else { 'toolchain' }
 	}
 }
 

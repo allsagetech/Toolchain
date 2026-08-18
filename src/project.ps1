@@ -455,7 +455,8 @@ function Read-ToolchainProject {
 			if ([string]$key -notin @('schemaVersion', 'packages', 'deployment', 'apiVersion', 'kind', 'metadata', 'components', 'values', 'documentation', 'constants', 'variables', 'build')) { throw "$configPath contains unsupported top-level key '$key'" }
 		}
 		if ($null -ne $manifest['schemaVersion'] -and [int]$manifest['schemaVersion'] -ne 1) { throw "$configPath requires schemaVersion: 1" }
-		if ($manifest['kind'] -and [string]$manifest['kind'] -ne 'ZarfPackageConfig') { throw "$configPath supports only kind: ZarfPackageConfig" }
+		if ($manifest['kind'] -and [string]$manifest['kind'] -ne 'ToolchainPackageConfig') { throw "$configPath supports only kind: ToolchainPackageConfig" }
+		if ($manifest['apiVersion'] -and [string]$manifest['apiVersion'] -ne 'toolchain.allsagetech.com/v1alpha1') { throw "$configPath supports only apiVersion: toolchain.allsagetech.com/v1alpha1" }
 		$values = @()
 		if ($null -ne $manifest['packages']) { $values = @($manifest['packages']) }
 		if ($values.Count -eq 0 -and $null -eq $manifest['deployment'] -and $null -eq $manifest['components']) { throw "$configPath must declare at least one package, a deployment, or components" }

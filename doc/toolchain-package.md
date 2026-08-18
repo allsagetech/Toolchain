@@ -1,7 +1,7 @@
 <!-- Toolchain | SPDX-License-Identifier: MPL-2.0 -->
 # package
 
-Creates and deploys portable Kubernetes application bundles without Zarf.
+Creates and deploys portable Toolchain Kubernetes application bundles.
 Bundles can contain local Helm charts, packaged Helm `.tgz` charts, conventional
 values and deployment configuration, and additional Kubernetes YAML manifests.
 
@@ -35,14 +35,14 @@ packaged `.tgz` chart. Manifest entries may identify one YAML file or a
 directory; directories are included recursively. Paths must remain inside the
 package source and cannot traverse links or reparse points.
 
-## Zarf v0.76 component compatibility
+## Toolchain component packages
 
-Toolchain also accepts the Zarf v0.76 package shape directly in
-`toolchain.yaml`. Toolchain parses and deploys it itself; Zarf is not installed
-or invoked.
+Toolchain accepts its native component package shape directly in
+`toolchain.yaml`:
 
 ```yaml
-kind: ZarfPackageConfig
+apiVersion: toolchain.allsagetech.com/v1alpha1
+kind: ToolchainPackageConfig
 metadata:
   name: demo
   version: 1.0.0
@@ -75,7 +75,7 @@ tlc package deploy .\dist\toolchain-package-demo-1.0.0.tlcpkg `
   -Components 'application,observability*,-example-data' -Confirm
 ```
 
-Compatibility currently covers package metadata, component selection, local
+Component packages currently support package metadata, component selection, local
 Helm charts, local manifest files/directories, chart value files, package value
 files, documentation files, namespaces, wait behavior, and schema-validation
 control. Toolchain rejects remote charts/manifests, image and repository

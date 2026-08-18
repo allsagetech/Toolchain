@@ -217,7 +217,7 @@ function Get-ToolchainHelpTopics {
 			'-Force          Replace an existing output package after the new package is complete.'
 		) `
 		-Examples @('tlc package create .', 'tlc package create . -Output .\release\app.tlcpkg', 'tlc package create . -Force') `
-		-Notes @('toolchain-values.yaml and toolchain-config.yaml are included automatically when present.', 'Zarf v0.76-style metadata/components, localPath charts, valuesFiles, and named manifest files are supported without invoking Zarf.', 'Additional Kubernetes YAML must be declared under deployment.manifests or components[].manifests.', 'Charts may be local Chart.yaml directories or packaged .tgz files and are linted with Helm before packaging.')
+		-Notes @('toolchain-values.yaml and toolchain-config.yaml are included automatically when present.', 'Toolchain-native metadata/components, localPath charts, valuesFiles, and named manifest files are supported.', 'Additional Kubernetes YAML must be declared under deployment.manifests or components[].manifests.', 'Charts may be local Chart.yaml directories or packaged .tgz files and are linted with Helm before packaging.')
 	$topics.'package deploy' = New-ToolchainHelpTopic `
 		-Description 'Verifies a Toolchain deployment package, applies declared YAML, and upgrades or installs its Helm releases.' `
 		-Usage @('tlc package deploy PACKAGE -Confirm [-Components NAMES] [-Cluster NAME | -Kubeconfig PATH] [-Values PATH] [-Config PATH] [-Namespace NAME] [-WaitSeconds SECONDS] [-PassThru]', 'tlc package deploy DIRECTORY -DryRun [OPTIONS]') `
@@ -235,7 +235,7 @@ function Get-ToolchainHelpTopics {
 			'-PassThru            Return structured deployment details.'
 		) `
 		-Examples @('tlc package deploy .\dist\toolchain-package-demo-1.0.0.tlcpkg -Cluster dev -Confirm', 'tlc package deploy . -DryRun', 'tlc package deploy app.tlcpkg -Kubeconfig .\kubeconfig.yaml -Values .\production.yaml -Confirm') `
-		-Notes @('Required and default components deploy automatically; -Components follows Zarf-style include, wildcard, and -exclude selection.', 'Each selected component applies its manifests before its charts, preserving component declaration order.', 'Helm uses upgrade --install so repeated deployments are upgrades.', 'Archive contents are size-bounded and SHA-256 verified before any cluster operation.')
+		-Notes @('Required and default components deploy automatically; -Components accepts includes, wildcards, and -exclude selection.', 'Each selected component applies its manifests before its charts, preserving component declaration order.', 'Helm uses upgrade --install so repeated deployments are upgrades.', 'Archive contents are size-bounded and SHA-256 verified before any cluster operation.')
 
 	$topics.cluster = New-ToolchainHelpTopic `
 		-Description 'Creates and manages local container-engine-backed Kubernetes development clusters.' `

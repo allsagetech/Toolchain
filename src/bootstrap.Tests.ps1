@@ -19,7 +19,7 @@ BeforeAll {
 }
 
 Describe 'Toolchain native cluster bootstrap manifests' {
-	It 'renders a digest-pinned registry and fail-closing admission agent without Zarf' {
+	It 'renders a digest-pinned registry and fail-closing admission agent natively' {
 		$manifest = New-ToolchainBootstrapManifest `
 			-AgentImage 'ghcr.io/allsagetech/toolchain-agent:2.4.0' `
 			-RegistryImage $script:ToolchainRegistryImage `
@@ -36,7 +36,6 @@ Describe 'Toolchain native cluster bootstrap manifests' {
 		$manifest | Should -Match 'kind: MutatingWebhookConfiguration'
 		$manifest | Should -Match 'failurePolicy: Ignore'
 		$manifest | Should -Match 'TOOLCHAIN_MUTATION_POLICY'
-		$manifest | Should -Not -Match '(?i)zarf'
 		$manifest | Should -Not -Match 'name: toolchain-git'
 	}
 
@@ -146,7 +145,6 @@ Describe 'Toolchain native cluster initialization' {
 		$result.Cluster | Should -Be 'current-context'
 		$result.Namespace | Should -Be 'toolchain-system'
 		$script:appliedManifest | Should -Match 'kind: MutatingWebhookConfiguration'
-		$script:appliedManifest | Should -Not -Match '(?i)zarf'
 		$result.Registry | Should -Be '127.0.0.1:31999'
 		$result.RegistryCredentialSecret | Should -Be 'toolchain-registry-credentials'
 		@($script:kubectlCalls).Count | Should -Be 10

@@ -45,15 +45,16 @@ deployment:
 		[IO.File]::WriteAllText((Join-Path $Root 'manifests/namespace.yaml'), "apiVersion: v1`nkind: Namespace`nmetadata:`n  name: demo-runtime`n")
 	}
 
-	function New-TestZarfComponentSource {
+	function New-TestToolchainComponentSource {
 		param([Parameter(Mandatory)][string]$Root)
 		[void][IO.Directory]::CreateDirectory((Join-Path $Root 'chart/templates'))
 		[void][IO.Directory]::CreateDirectory((Join-Path $Root 'manifests'))
 		[IO.File]::WriteAllText((Join-Path $Root 'toolchain.yaml'), @'
-kind: ZarfPackageConfig
+apiVersion: toolchain.allsagetech.com/v1alpha1
+kind: ToolchainPackageConfig
 metadata:
   name: component-demo
-  description: Zarf-compatible component package
+  description: Toolchain component package
   version: 2.0.0
 components:
   - name: prerequisites
@@ -154,10 +155,10 @@ Describe 'Toolchain deployment package creation' {
 		}
 	}
 
-	It 'creates a package from Zarf v0.76-style metadata and components' {
-		$source = Join-Path $TestDrive 'zarf-components'
-		New-TestZarfComponentSource -Root $source
-		$output = Join-Path $TestDrive 'zarf-components.tlcpkg'
+	It 'creates a package from Toolchain-native metadata and components' {
+		$source = Join-Path $TestDrive 'toolchain-components'
+		New-TestToolchainComponentSource -Root $source
+		$output = Join-Path $TestDrive 'toolchain-components.tlcpkg'
 
 		$result = New-ToolchainDeploymentPackage -Path $source -Output $output
 
@@ -174,14 +175,14 @@ Describe 'Toolchain deployment package creation' {
 		} finally { Remove-ToolchainDeploymentTemporaryRoot -Path $expanded.Root }
 	}
 
-	It 'rejects unsupported Zarf component assets explicitly' {
-		$source = Join-Path $TestDrive 'zarf-images'
-		New-TestZarfComponentSource -Root $source
+	It 'rejects unsupported Toolchain component assets explicitly' {
+		$source = Join-Path $TestDrive 'toolchain-images'
+		New-TestToolchainComponentSource -Root $source
 		$manifestPath = Join-Path $source 'toolchain.yaml'
 		$content = (Get-Content -LiteralPath $manifestPath -Raw).Replace('    required: true', "    required: true`n    images:`n      - example.invalid/app:1")
 		[IO.File]::WriteAllText($manifestPath, $content)
 
-		{ New-ToolchainDeploymentPackage -Path $source -Output (Join-Path $TestDrive 'zarf-images.tlcpkg') } | Should -Throw "*uses 'images'*"
+		{ New-ToolchainDeploymentPackage -Path $source -Output (Join-Path $TestDrive 'toolchain-images.tlcpkg') } | Should -Throw "*uses 'images'*"
 	}
 
 	It 'rejects manifest paths that escape the package root' {
@@ -263,9 +264,9 @@ Describe 'Toolchain deployment package deployment' {
 		$script:helmCalls[0].Arguments | Should -Contain '--dry-run'
 	}
 
-	It 'deploys required and explicitly selected Zarf-style components in declaration order' {
+	It 'deploys required and explicitly selected Toolchain components in declaration order' {
 		$source = Join-Path $TestDrive 'selected-components'
-		New-TestZarfComponentSource -Root $source
+		New-TestToolchainComponentSource -Root $source
 
 		$result = Invoke-ToolchainDeploymentPackage -Command deploy -Path $source -Cluster dev -Components @('optional-*', '-application') -Confirm -PassThru
 
@@ -281,7 +282,7 @@ Describe 'Toolchain deployment package deployment' {
 
 	It 'selects required and default components when no override is supplied' {
 		$source = Join-Path $TestDrive 'default-components'
-		New-TestZarfComponentSource -Root $source
+		New-TestToolchainComponentSource -Root $source
 
 		$result = Invoke-ToolchainDeploymentPackage -Command deploy -Path $source -Cluster dev -Confirm -PassThru
 

@@ -11,8 +11,8 @@
   ],
   "properties": {
     "schemaVersion": { "const": 1 },
-    "apiVersion": { "const": "zarf.dev/v1alpha1" },
-    "kind": { "const": "ZarfPackageConfig" },
+    "apiVersion": { "const": "toolchain.allsagetech.com/v1alpha1" },
+    "kind": { "const": "ToolchainPackageConfig" },
     "metadata": { "$ref": "#/$defs/metadata" },
     "packages": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/package" } },
     "deployment": { "$ref": "#/$defs/deployment" },

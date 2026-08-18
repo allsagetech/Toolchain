@@ -149,10 +149,11 @@ deployment:
 		$project.Deployment.name | Should -BeExactly 'demo'
 	}
 
-	It 'accepts a Zarf v0.76-style component-only toolchain.yaml' {
+	It 'accepts a Toolchain-native component-only toolchain.yaml' {
 		$path = Join-Path $TestDrive 'toolchain.yaml'
 		Set-Content -LiteralPath $path -Encoding utf8 -Value @'
-kind: ZarfPackageConfig
+apiVersion: toolchain.allsagetech.com/v1alpha1
+kind: ToolchainPackageConfig
 metadata:
   name: demo
   version: 1.0.0

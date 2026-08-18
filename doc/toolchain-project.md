@@ -52,7 +52,7 @@ deployment:
     - manifests
 ```
 
-`packages`, `deployment`, and Zarf v0.76-style `metadata`/`components` are
+`packages`, `deployment`, and Toolchain-native `metadata`/`components` are
 independently optional, but at least one package or deployment form must be
 present. Deployment content is consumed by `tlc package create` and
 `tlc package deploy`; see `doc/toolchain-package.md` for component compatibility,
