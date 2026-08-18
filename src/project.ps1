@@ -52,16 +52,66 @@ function ConvertFrom-ToolchainYaml {
 	)
 
 	$tokens = [Collections.ArrayList]::new()
-	$lineNumber = 0
-	foreach ($rawLine in ($Text -split "`r?`n")) {
-		$lineNumber++
+	$rawLines = @($Text -split "`r?`n")
+	for ($lineIndex = 0; $lineIndex -lt $rawLines.Count; $lineIndex++) {
+		$lineNumber = $lineIndex + 1
+		$rawLine = $rawLines[$lineIndex]
 		if ($rawLine -match "`t") { throw "${Context}:$lineNumber`: tabs are not allowed for indentation" }
 		try { $line = Remove-ToolchainYamlComment -Line $rawLine }
 		catch { throw "${Context}:$lineNumber`: $($_.Exception.Message)" }
 		if ([string]::IsNullOrWhiteSpace($line) -or $line.TrimStart().StartsWith('---')) { continue }
 		$indent = $line.Length - $line.TrimStart(' ').Length
 		if (($indent % 2) -ne 0) { throw "${Context}:$lineNumber`: indentation must use multiples of two spaces" }
-		[void]$tokens.Add([pscustomobject]@{ Indent = $indent; Text = $line.Trim(); Line = $lineNumber })
+		$tokenText = $line.Trim()
+		if ($tokenText -match '^(?<prefix>(?:-\s+)?[A-Za-z][A-Za-z0-9_-]*\s*:)\s*(?<style>[|>])(?<chomp>[-+]?)$') {
+			$prefix = [string]$Matches.prefix
+			$style = [string]$Matches.style
+			$chomp = [string]$Matches.chomp
+			$blockLines = [Collections.ArrayList]::new()
+			$contentIndent = $null
+			$nextIndex = $lineIndex + 1
+			while ($nextIndex -lt $rawLines.Count) {
+				$blockLine = $rawLines[$nextIndex]
+				if ($blockLine -match "`t") { throw "${Context}:$($nextIndex + 1)`: tabs are not allowed for indentation" }
+				if ([string]::IsNullOrWhiteSpace($blockLine)) { [void]$blockLines.Add(''); $nextIndex++; continue }
+				$blockIndent = $blockLine.Length - $blockLine.TrimStart(' ').Length
+				if ($blockIndent -le $indent) { break }
+				if ($null -ne $contentIndent -and $blockIndent -lt $contentIndent) { break }
+				if ($null -eq $contentIndent) { $contentIndent = $blockIndent }
+				[void]$blockLines.Add($blockLine)
+				$nextIndex++
+			}
+			if ($blockLines.Count -eq 0 -or $null -eq $contentIndent) { throw "${Context}:$lineNumber`: block scalar requires indented content" }
+			# A final empty item from -split represents the document's terminating line
+			# break, not an additional blank block-scalar line.
+			if ($nextIndex -eq $rawLines.Count -and $rawLines[-1] -eq '' -and $blockLines[-1] -eq '') {
+				$blockLines.RemoveAt($blockLines.Count - 1)
+			}
+			$normalizedLines = @($blockLines | ForEach-Object { if ($_ -eq '') { '' } else { $_.Substring([int]$contentIndent) } })
+			if ($style -eq '|') {
+				$scalar = $normalizedLines -join "`n"
+			} else {
+				$paragraphs = [Collections.ArrayList]::new()
+				$currentParagraph = [Collections.ArrayList]::new()
+				foreach ($blockValue in $normalizedLines) {
+					if ($blockValue -eq '') {
+						if ($currentParagraph.Count -gt 0) { [void]$paragraphs.Add(($currentParagraph -join ' ')); $currentParagraph.Clear() }
+						[void]$paragraphs.Add('')
+					} else { [void]$currentParagraph.Add($blockValue) }
+				}
+				if ($currentParagraph.Count -gt 0) { [void]$paragraphs.Add(($currentParagraph -join ' ')) }
+				$scalar = $paragraphs -join "`n"
+			}
+			$hasFinalLineBreak = $nextIndex -lt $rawLines.Count -or $Text -match "`r?`n$"
+			if ($hasFinalLineBreak) { $scalar += "`n" }
+			switch ($chomp) {
+				'-' { $scalar = $scalar.TrimEnd("`n") }
+				'' { $scalar = $scalar.TrimEnd("`n") + "`n" }
+			}
+			$tokenText = "$prefix $($scalar | ConvertTo-Json -Compress)"
+			$lineIndex = $nextIndex - 1
+		}
+		[void]$tokens.Add([pscustomobject]@{ Indent = $indent; Text = $tokenText; Line = $lineNumber })
 	}
 	if ($tokens.Count -eq 0) { throw "${Context}: manifest is empty" }
 

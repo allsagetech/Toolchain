@@ -213,7 +213,9 @@ tlc package deploy .\dist\toolchain-package-demo-1.0.0.tlcpkg -Cluster dev -Conf
 Toolchain lints charts, bundles declared container images, creates an
 integrity-indexed `.tlcpkg`, verifies every file before deployment, publishes
 images to the cluster registry, applies declared YAML, and uses Helm
-upgrade/install for repeatable releases. See [`package`](doc/toolchain-package.md).
+upgrade/install for repeatable releases. Components can also define action-only
+gates and `onCreate` or `onDeploy` command/wait actions. See
+[`package`](doc/toolchain-package.md).
 
 `toolchain.yaml` may alternatively use Toolchain-native `kind`, `metadata`, and
 `components`. Toolchain supports required/default/explicit component
@@ -222,7 +224,9 @@ selection plus component `images`, local `charts[].localPath`, remote
 `tlc package deploy ... -Components 'name,pattern*,-default-name'` to override
 the defaults. Top-level `variables` use
 `###TOOLCHAIN_VAR_NAME###` templates and can be supplied with `-Set NAME=value`,
-`toolchain-config.yaml`, or `TOOLCHAIN_VAR_NAME` environment variables.
+`toolchain-config.yaml`, or `TOOLCHAIN_VAR_NAME` environment variables. An
+`onDeploy` command can also publish a value with `setVariable` or
+`setVariables` for later package resources.
 
 ## Commands
 

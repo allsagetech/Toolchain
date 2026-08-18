@@ -280,6 +280,164 @@ function ConvertTo-ToolchainDeploymentManifestSet {
 	}
 }
 
+function ConvertTo-ToolchainDeploymentActionShell {
+	param([object]$Value, [Parameter(Mandatory)][string]$Context)
+	if ($null -eq $Value) { return [pscustomobject]@{ Windows = $null; Linux = $null; Darwin = $null } }
+	if ($Value -is [string]) {
+		$shellName = [string]$Value
+		if ($shellName -notin @('sh', 'bash', 'powershell', 'pwsh', 'cmd')) { throw "$Context contains unsupported shell '$shellName'" }
+		return [pscustomobject]@{ Windows = $shellName; Linux = $shellName; Darwin = $shellName }
+	}
+	if ($Value -isnot [Collections.IDictionary]) { throw "$Context shell must be a string or operating-system mapping" }
+	foreach ($key in $Value.Keys) {
+		if ([string]$key -notin @('windows', 'linux', 'darwin')) { throw "$Context shell contains unsupported key '$key'" }
+		$shellName = [string]$Value[$key]
+		if ($shellName -and $shellName -notin @('sh', 'bash', 'powershell', 'pwsh', 'cmd')) { throw "$Context contains unsupported shell '$shellName'" }
+	}
+	return [pscustomobject]@{ Windows = [string]$Value['windows']; Linux = [string]$Value['linux']; Darwin = [string]$Value['darwin'] }
+}
+
+function ConvertTo-ToolchainDeploymentActionEnvironment {
+	param([object[]]$Values, [Parameter(Mandatory)][string]$Context)
+	$environment = @()
+	foreach ($entry in @($Values | Where-Object { $null -ne $_ })) {
+		if ($entry -isnot [string] -or [string]$entry -cnotmatch '^[A-Za-z_][A-Za-z0-9_]*=[\s\S]*$') { throw "$Context contains invalid env entry; expected NAME=value" }
+		$environment += [string]$entry
+	}
+	return [string[]]$environment
+}
+
+function ConvertTo-ToolchainDeploymentActionVariable {
+	param([Parameter(Mandatory)][object]$Value, [Parameter(Mandatory)][string]$Context)
+	if ($Value -is [string]) { $Value = @{ name = [string]$Value } }
+	if ($Value -isnot [Collections.IDictionary]) { throw "$Context setVariables entries must be names or mappings" }
+	foreach ($key in $Value.Keys) {
+		if ([string]$key -notin @('name', 'sensitive', 'autoIndent', 'pattern', 'type')) { throw "$Context setVariables contains unsupported key '$key'" }
+	}
+	$name = [string]$Value['name']
+	Assert-ToolchainDeploymentVariableName -Name $name -Context "$Context output variable"
+	foreach ($booleanKey in @('sensitive', 'autoIndent')) {
+		if ($null -ne $Value[$booleanKey] -and $Value[$booleanKey] -isnot [bool]) { throw "$Context output variable '$name' requires $booleanKey to be true or false" }
+	}
+	$type = if ($Value['type']) { [string]$Value['type'] } else { 'raw' }
+	if ($type -notin @('raw', 'file')) { throw "$Context output variable '$name' type must be raw or file" }
+	$pattern = [string]$Value['pattern']
+	if ($pattern) {
+		try { $null = [Text.RegularExpressions.Regex]::new($pattern, [Text.RegularExpressions.RegexOptions]::None, [TimeSpan]::FromSeconds(1)) }
+		catch { throw "$Context output variable '$name' has an invalid pattern: $($_.Exception.Message)" }
+	}
+	return [pscustomobject]@{ Name = $name; Sensitive = [bool]$Value['sensitive']; AutoIndent = [bool]$Value['autoIndent']; Pattern = $pattern; Type = $type }
+}
+
+function ConvertTo-ToolchainDeploymentActionWait {
+	param([Parameter(Mandatory)][Collections.IDictionary]$Value, [Parameter(Mandatory)][string]$Context)
+	foreach ($key in $Value.Keys) { if ([string]$key -notin @('cluster', 'network')) { throw "$Context wait contains unsupported key '$key'" } }
+	if ([bool]$Value['cluster'] -eq [bool]$Value['network']) { throw "$Context wait requires exactly one of cluster or network" }
+	if ($Value['cluster']) {
+		$cluster = $Value['cluster']
+		if ($cluster -isnot [Collections.IDictionary]) { throw "$Context wait.cluster must be a mapping" }
+		foreach ($key in $cluster.Keys) { if ([string]$key -notin @('kind', 'name', 'namespace', 'condition')) { throw "$Context wait.cluster contains unsupported key '$key'" } }
+		if (-not $cluster['kind'] -or -not $cluster['name']) { throw "$Context wait.cluster requires kind and name" }
+		return [pscustomobject]@{ Type = 'cluster'; Kind = [string]$cluster['kind']; Name = [string]$cluster['name']; Namespace = [string]$cluster['namespace']; Condition = [string]$cluster['condition'] }
+	}
+	$network = $Value['network']
+	if ($network -isnot [Collections.IDictionary]) { throw "$Context wait.network must be a mapping" }
+	foreach ($key in $network.Keys) { if ([string]$key -notin @('protocol', 'address', 'code')) { throw "$Context wait.network contains unsupported key '$key'" } }
+	$protocol = [string]$network['protocol']
+	if ($protocol -notin @('tcp', 'http', 'https') -or -not $network['address']) { throw "$Context wait.network requires protocol tcp, http, or https and an address" }
+	$code = if ($null -ne $network['code']) { [int]$network['code'] } else { 200 }
+	if ($code -lt 100 -or $code -gt 599) { throw "$Context wait.network code must be from 100 through 599" }
+	return [pscustomobject]@{ Type = 'network'; Protocol = $protocol; Address = [string]$network['address']; Code = $code }
+}
+
+function ConvertTo-ToolchainDeploymentActionDefaults {
+	param([object]$Value, [Parameter(Mandatory)][string]$Context)
+	if ($null -eq $Value) { $Value = @{} }
+	if ($Value -isnot [Collections.IDictionary]) { throw "$Context defaults must be a mapping" }
+	foreach ($key in $Value.Keys) { if ([string]$key -notin @('mute', 'maxTotalSeconds', 'maxRetries', 'dir', 'env', 'shell')) { throw "$Context defaults contains unsupported key '$key'" } }
+	if ($null -ne $Value['mute'] -and $Value['mute'] -isnot [bool]) { throw "$Context defaults.mute must be true or false" }
+	$seconds = if ($null -ne $Value['maxTotalSeconds']) { [int]$Value['maxTotalSeconds'] } else { 300 }
+	$retries = if ($null -ne $Value['maxRetries']) { [int]$Value['maxRetries'] } else { 0 }
+	if ($seconds -lt 0 -or $seconds -gt 86400) { throw "$Context defaults.maxTotalSeconds must be from 0 through 86400" }
+	if ($retries -lt 0 -or $retries -gt 10) { throw "$Context defaults.maxRetries must be from 0 through 10" }
+	return [pscustomobject]@{
+		Mute = [bool]$Value['mute']; MaxTotalSeconds = $seconds; MaxRetries = $retries; Dir = [string]$Value['dir']
+		Env = ConvertTo-ToolchainDeploymentActionEnvironment -Values @($Value['env']) -Context "$Context defaults"
+		Shell = ConvertTo-ToolchainDeploymentActionShell -Value $Value['shell'] -Context "$Context defaults"
+	}
+}
+
+function ConvertTo-ToolchainDeploymentAction {
+	param(
+		[Parameter(Mandatory)][Collections.IDictionary]$Value,
+		[Parameter(Mandatory)]$Defaults,
+		[Parameter(Mandatory)][string]$Lifecycle,
+		[Parameter(Mandatory)][string]$Context
+	)
+	foreach ($key in $Value.Keys) {
+		if ([string]$key -notin @('mute', 'maxTotalSeconds', 'maxRetries', 'dir', 'env', 'cmd', 'shell', 'setVariable', 'setVariables', 'description', 'wait')) { throw "$Context contains unsupported key '$key'" }
+	}
+	if ($null -ne $Value['mute'] -and $Value['mute'] -isnot [bool]) { throw "$Context mute must be true or false" }
+	$cmd = [string]$Value['cmd']
+	$wait = $null
+	if ($Value['wait']) {
+		if ($Value['wait'] -isnot [Collections.IDictionary]) { throw "$Context wait must be a mapping" }
+		$wait = ConvertTo-ToolchainDeploymentActionWait -Value $Value['wait'] -Context $Context
+	}
+	if ([bool]$cmd -eq [bool]$wait) { throw "$Context requires exactly one of cmd or wait" }
+	$seconds = if ($null -ne $Value['maxTotalSeconds']) { [int]$Value['maxTotalSeconds'] } else { [int]$Defaults.MaxTotalSeconds }
+	$retries = if ($null -ne $Value['maxRetries']) { [int]$Value['maxRetries'] } else { [int]$Defaults.MaxRetries }
+	if ($seconds -lt 0 -or $seconds -gt 86400) { throw "$Context maxTotalSeconds must be from 0 through 86400" }
+	if ($retries -lt 0 -or $retries -gt 10) { throw "$Context maxRetries must be from 0 through 10" }
+	$setVariables = @()
+	if ($Value['setVariable']) { $setVariables += ConvertTo-ToolchainDeploymentActionVariable -Value ([string]$Value['setVariable']) -Context $Context }
+	if ($null -ne $Value['setVariables']) {
+		foreach ($variable in @($Value['setVariables'])) { $setVariables += ConvertTo-ToolchainDeploymentActionVariable -Value $variable -Context $Context }
+	}
+	if ($setVariables.Count -gt 0 -and ($Lifecycle -ne 'onDeploy' -or -not $cmd)) { throw "$Context setVariables is supported only by onDeploy command actions" }
+	return [pscustomobject]@{
+		Cmd = $cmd; Wait = $wait; Description = [string]$Value['description']
+		Mute = if ($Value.Contains('mute')) { [bool]$Value['mute'] } else { [bool]$Defaults.Mute }
+		MaxTotalSeconds = $seconds; MaxRetries = $retries
+		Dir = if ($Value.Contains('dir')) { [string]$Value['dir'] } else { [string]$Defaults.Dir }
+		Env = if ($Value.Contains('env')) { ConvertTo-ToolchainDeploymentActionEnvironment -Values @($Value['env']) -Context $Context } else { [string[]]$Defaults.Env }
+		Shell = if ($Value.Contains('shell')) { ConvertTo-ToolchainDeploymentActionShell -Value $Value['shell'] -Context $Context } else { $Defaults.Shell }
+		SetVariables = [object[]]$setVariables
+	}
+}
+
+function ConvertTo-ToolchainDeploymentActionSet {
+	param([object]$Value, [Parameter(Mandatory)][string]$Lifecycle, [Parameter(Mandatory)][string]$Context)
+	if ($null -eq $Value) { $Value = @{} }
+	if ($Value -isnot [Collections.IDictionary]) { throw "$Context must be a mapping" }
+	foreach ($key in $Value.Keys) { if ([string]$key -notin @('defaults', 'before', 'after', 'onSuccess', 'onFailure')) { throw "$Context contains unsupported key '$key'" } }
+	$defaults = ConvertTo-ToolchainDeploymentActionDefaults -Value $Value['defaults'] -Context $Context
+	$result = [ordered]@{ Defaults = $defaults }
+	foreach ($phase in @('before', 'after', 'onSuccess', 'onFailure')) {
+		$actions = @()
+		$values = @()
+		if ($null -ne $Value[$phase]) { $values += @($Value[$phase]) }
+		for ($index = 0; $index -lt $values.Count; $index++) {
+			if ($values[$index] -isnot [Collections.IDictionary]) { throw "$Context.$phase action $($index + 1) must be a mapping" }
+			$actions += ConvertTo-ToolchainDeploymentAction -Value $values[$index] -Defaults $defaults -Lifecycle $Lifecycle -Context "$Context.$phase action $($index + 1)"
+		}
+		$result[$phase] = [object[]]$actions
+	}
+	return [pscustomobject]$result
+}
+
+function ConvertTo-ToolchainDeploymentActions {
+	param([object]$Value, [Parameter(Mandatory)][string]$ComponentName)
+	if ($null -eq $Value) { $Value = @{} }
+	if ($Value -isnot [Collections.IDictionary]) { throw "deployment component '$ComponentName' actions must be a mapping" }
+	foreach ($key in $Value.Keys) { if ([string]$key -notin @('onCreate', 'onDeploy', 'onRemove')) { throw "deployment component '$ComponentName' actions contains unsupported key '$key'" } }
+	return [pscustomobject]@{
+		OnCreate = ConvertTo-ToolchainDeploymentActionSet -Value $Value['onCreate'] -Lifecycle 'onCreate' -Context "component '$ComponentName' actions.onCreate"
+		OnDeploy = ConvertTo-ToolchainDeploymentActionSet -Value $Value['onDeploy'] -Lifecycle 'onDeploy' -Context "component '$ComponentName' actions.onDeploy"
+		OnRemove = ConvertTo-ToolchainDeploymentActionSet -Value $Value['onRemove'] -Lifecycle 'onRemove' -Context "component '$ComponentName' actions.onRemove"
+	}
+}
+
 function ConvertTo-ToolchainDeploymentComponent {
 	param(
 		[Parameter(Mandatory)][Collections.IDictionary]$Value,
@@ -297,7 +455,7 @@ function ConvertTo-ToolchainDeploymentComponent {
 	foreach ($booleanKey in @('default', 'required')) {
 		if ($null -ne $Value[$booleanKey] -and $Value[$booleanKey] -isnot [bool]) { throw "deployment component '$name' requires $booleanKey to be true or false" }
 	}
-	foreach ($unsupported in @('only', 'group', 'import', 'imageArchives', 'repos', 'files', 'dataInjections', 'actions', 'scripts', 'healthChecks')) {
+	foreach ($unsupported in @('only', 'group', 'import', 'imageArchives', 'repos', 'files', 'dataInjections', 'scripts', 'healthChecks')) {
 		$valueForKey = $Value[$unsupported]
 		$hasValue = if ($valueForKey -is [Collections.IDictionary]) { $valueForKey.Count -gt 0 } else { @($valueForKey).Count -gt 0 -and $null -ne $valueForKey }
 		if ($hasValue) { throw "Toolchain component '$name' uses '$unsupported', which Toolchain packages do not yet support" }
@@ -324,7 +482,9 @@ function ConvertTo-ToolchainDeploymentComponent {
 		if (-not $imageSources.Add([string]$image.Source)) { throw "deployment component '$name' contains duplicate image '$($image.Source)'" }
 		$images += $image
 	}
-	if ($charts.Count -eq 0 -and $manifestSets.Count -eq 0 -and $images.Count -eq 0) { throw "deployment component '$name' must declare at least one chart, manifest, or image" }
+	$actions = ConvertTo-ToolchainDeploymentActions -Value $Value['actions'] -ComponentName $name
+	$actionCount = @($actions.OnCreate.before + $actions.OnCreate.after + $actions.OnCreate.onSuccess + $actions.OnCreate.onFailure + $actions.OnDeploy.before + $actions.OnDeploy.after + $actions.OnDeploy.onSuccess + $actions.OnDeploy.onFailure + $actions.OnRemove.before + $actions.OnRemove.after + $actions.OnRemove.onSuccess + $actions.OnRemove.onFailure).Count
+	if ($charts.Count -eq 0 -and $manifestSets.Count -eq 0 -and $images.Count -eq 0 -and $actionCount -eq 0) { throw "deployment component '$name' must declare at least one chart, manifest, image, or action" }
 	return [pscustomobject]@{
 		Name = $name
 		Description = [string]$Value['description']
@@ -333,6 +493,7 @@ function ConvertTo-ToolchainDeploymentComponent {
 		Charts = [object[]]$charts
 		ManifestSets = [object[]]$manifestSets
 		Images = [object[]]$images
+		Actions = $actions
 	}
 }
 
@@ -418,6 +579,22 @@ function Read-ToolchainDeploymentDefinition {
 	if ($components.Count -eq 0) { throw "$manifestPath must declare deployment charts/manifests or at least one component" }
 	$componentNames = @($components | ForEach-Object { $_.Name })
 	if (@($componentNames | Sort-Object -Unique).Count -ne $componentNames.Count) { throw "$manifestPath contains duplicate component names" }
+	$actionVariablesByName = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::OrdinalIgnoreCase)
+	foreach ($component in $components) {
+		foreach ($phase in @('before', 'after', 'onSuccess', 'onFailure')) {
+			foreach ($action in @($component.Actions.OnDeploy.$phase)) {
+				foreach ($actionVariable in $action.SetVariables) {
+					if ($actionVariablesByName.ContainsKey([string]$actionVariable.Name)) {
+						$existing = $actionVariablesByName[[string]$actionVariable.Name]
+						if ($existing.Sensitive -ne $actionVariable.Sensitive -or $existing.AutoIndent -ne $actionVariable.AutoIndent -or $existing.Pattern -ne $actionVariable.Pattern -or $existing.Type -ne $actionVariable.Type) {
+							throw "$manifestPath declares conflicting action output variable '$($actionVariable.Name)'"
+						}
+					} else { $actionVariablesByName.Add([string]$actionVariable.Name, $actionVariable) }
+					[void]$variableNames.Add([string]$actionVariable.Name)
+				}
+			}
+		}
+	}
 
 	$globalValues = @()
 	$packageFiles = @()
@@ -472,6 +649,7 @@ function Read-ToolchainDeploymentDefinition {
 		Manifests = [string[]]$allManifests
 		Images = [object[]]$allImages
 		Variables = [object[]]$variables
+		ActionVariables = [object[]]@($actionVariablesByName.Values)
 		GlobalValues = [string[]]$globalValues
 		Documentation = [string[]]$documentation
 		PackageFiles = [string[]]$packageFiles
@@ -600,6 +778,13 @@ function Resolve-ToolchainDeploymentVariables {
 			Sensitive = [bool]$variable.Sensitive
 			AutoIndent = [bool]$variable.AutoIndent
 			Source = $valueSource
+		}
+	}
+	foreach ($variable in $Definition.ActionVariables) {
+		if ($resolved.ContainsKey([string]$variable.Name)) { continue }
+		$resolved[[string]$variable.Name] = [pscustomobject]@{
+			Name = [string]$variable.Name; Value = ''; Sensitive = [bool]$variable.Sensitive
+			AutoIndent = [bool]$variable.AutoIndent; Source = 'action-pending'
 		}
 	}
 	return $resolved
@@ -748,6 +933,13 @@ function Get-ToolchainDeploymentBuildVariables {
 			Sensitive = [bool]$variable.Sensitive
 			AutoIndent = [bool]$variable.AutoIndent
 			Source = 'build-validation'
+		}
+	}
+	foreach ($variable in $Definition.ActionVariables) {
+		if ($resolved.ContainsKey([string]$variable.Name)) { continue }
+		$resolved[[string]$variable.Name] = [pscustomobject]@{
+			Name = [string]$variable.Name; Value = 'toolchain-action-variable'; Sensitive = [bool]$variable.Sensitive
+			AutoIndent = [bool]$variable.AutoIndent; Source = 'build-validation'
 		}
 	}
 	return $resolved
@@ -1199,7 +1391,12 @@ function New-ToolchainDeploymentPackage {
 	if (Test-Path -LiteralPath $configPath -PathType Leaf) { $null = Read-ToolchainDeploymentConfig -Path $configPath }
 	$chartTemporaryRoot = $null
 	$imageTemporaryRoot = $null
+	$createActionsStarted = $false
+	$createActionResults = [Collections.ArrayList]::new()
+	$createVariables = Get-ToolchainDeploymentBuildVariables -Definition $definition
 	try {
+	$createActionsStarted = $true
+	foreach ($actionResult in @(Invoke-ToolchainDeploymentActionPhase -Components $definition.Components -Lifecycle OnCreate -Phase before -Root $root -Definition $definition -Variables $createVariables)) { [void]$createActionResults.Add($actionResult) }
 	$chartTemporaryRoot = Initialize-ToolchainDeploymentRemoteCharts -Definition $definition
 	Test-ToolchainDeploymentCharts -Definition $definition
 	$files = Get-ToolchainDeploymentBundleFiles -Definition $definition
@@ -1242,7 +1439,7 @@ function New-ToolchainDeploymentPackage {
 		architecture = $definition.Architecture
 		manifest = 'toolchain.yaml'
 		components = @($definition.Components | ForEach-Object { $_.Name })
-		variables = @($definition.Variables | ForEach-Object { $_.Name })
+		variables = @($definition.Variables + $definition.ActionVariables | ForEach-Object { $_.Name } | Sort-Object -Unique)
 		images = @($imageArtifacts)
 		files = @($entries.ToArray())
 	}
@@ -1256,6 +1453,8 @@ function New-ToolchainDeploymentPackage {
 		foreach ($entry in $entries) { Add-ToolchainZipFile -Archive $archive -EntryName ([string]$entry.path) -SourcePath $files[[string]$entry.path] }
 		$archive.Dispose(); $archive = $null
 		$fileStream.Dispose(); $fileStream = $null
+		foreach ($actionResult in @(Invoke-ToolchainDeploymentActionPhase -Components $definition.Components -Lifecycle OnCreate -Phase after -Root $root -Definition $definition -Variables $createVariables)) { [void]$createActionResults.Add($actionResult) }
+		foreach ($actionResult in @(Invoke-ToolchainDeploymentActionPhase -Components $definition.Components -Lifecycle OnCreate -Phase onSuccess -Root $root -Definition $definition -Variables $createVariables)) { [void]$createActionResults.Add($actionResult) }
 		if (Test-Path -LiteralPath $outputPath) { [IO.File]::Delete($outputPath) }
 		[IO.File]::Move($tempPath, $outputPath)
 	} finally {
@@ -1272,13 +1471,21 @@ function New-ToolchainDeploymentPackage {
 		Digest = 'sha256:' + (Get-FileHash -LiteralPath $outputPath -Algorithm SHA256).Hash.ToLowerInvariant()
 		Files = $entries.Count
 		Components = @($definition.Components | ForEach-Object { $_.Name })
-		Variables = @($definition.Variables | ForEach-Object { $_.Name })
+		Variables = @($definition.Variables + $definition.ActionVariables | ForEach-Object { $_.Name } | Sort-Object -Unique)
 		Charts = $definition.Charts.Count
 		Manifests = $definition.Manifests.Count
 		Images = $definition.Images.Count
+		Actions = @($createActionResults.ToArray())
 	}
 	Write-ToolchainInfo "Created Toolchain deployment package '$($result.Name):$($result.Version)' at $outputPath."
 	return $result
+	} catch {
+		$originalError = $_
+		if ($createActionsStarted) {
+			try { $null = Invoke-ToolchainDeploymentActionPhase -Components $definition.Components -Lifecycle OnCreate -Phase onFailure -Root $root -Definition $definition -Variables $createVariables }
+			catch { Write-Warning "Package onCreate failure action also failed: $($_.Exception.Message)" }
+		}
+		throw $originalError
 	} finally {
 		if ($imageTemporaryRoot) { Remove-ToolchainDeploymentImageTemporaryRoot -Path $imageTemporaryRoot }
 		if ($chartTemporaryRoot) { Remove-ToolchainDeploymentChartTemporaryRoot -Path $chartTemporaryRoot }
@@ -1452,6 +1659,222 @@ function ConvertTo-ToolchainDeploymentNativeArgument {
 	if ($slashes -gt 0) { [void]$builder.Append(('\' * ($slashes * 2))) }
 	[void]$builder.Append('"')
 	return $builder.ToString()
+}
+
+function Expand-ToolchainDeploymentActionText {
+	param(
+		[Parameter(Mandatory)][AllowEmptyString()][string]$Text,
+		[Parameter(Mandatory)][hashtable]$Variables,
+		[Parameter(Mandatory)]$Definition,
+		[Parameter(Mandatory)]$Component,
+		[Parameter(Mandatory)][string]$Context
+	)
+	$expanded = Expand-ToolchainDeploymentVariableText -Text $Text -Variables $Variables -Context $Context
+	return $expanded.Replace('###TOOLCHAIN_COMPONENT_NAME###', [string]$Component.Name).
+		Replace('###TOOLCHAIN_PKG_NAME###', [string]$Definition.Name).
+		Replace('###TOOLCHAIN_PKG_VERSION###', [string]$Definition.Version)
+}
+
+function Get-ToolchainDeploymentActionShellCommand {
+	param([Parameter(Mandatory)]$Action)
+	$runningOnWindows = [Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)
+	$runningOnLinux = [Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Linux)
+	$shellName = if ($runningOnWindows) { [string]$Action.Shell.Windows } elseif ($runningOnLinux) { [string]$Action.Shell.Linux } else { [string]$Action.Shell.Darwin }
+	if (-not $shellName) { $shellName = if ($runningOnWindows) { 'powershell' } else { 'sh' } }
+	$command = Get-Command -Name $shellName -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+	if (-not $command) { throw "package action shell '$shellName' was not found on PATH" }
+	$prefix = switch ($shellName) {
+		'powershell' { @('-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command') }
+		'pwsh' { @('-NoLogo', '-NoProfile', '-NonInteractive', '-Command') }
+		'cmd' { @('/d', '/s', '/c') }
+		default { @('-c') }
+	}
+	return [pscustomobject]@{ Path = [string]$command.Source; Arguments = [string[]]$prefix; Name = $shellName }
+}
+
+function Protect-ToolchainDeploymentActionOutput {
+	param([AllowEmptyString()][string]$Text, [Parameter(Mandatory)][hashtable]$Variables)
+	$protected = [string]$Text
+	foreach ($variable in $Variables.Values) {
+		if ($variable.Sensitive -and -not [string]::IsNullOrEmpty([string]$variable.Value)) { $protected = $protected.Replace([string]$variable.Value, '***') }
+	}
+	return $protected
+}
+
+function Set-ToolchainDeploymentActionVariables {
+	param(
+		[Parameter(Mandatory)]$Action,
+		[Parameter(Mandatory)][hashtable]$Variables,
+		[Parameter(Mandatory)][AllowEmptyString()][string]$Output,
+		[Parameter(Mandatory)][string]$WorkingDirectory,
+		[Parameter(Mandatory)][string]$Root
+	)
+	if ($Action.SetVariables.Count -eq 0) { return }
+	$value = $Output.TrimEnd([char[]]@("`r", "`n"))
+	foreach ($variable in $Action.SetVariables) {
+		$resolvedValue = $value
+		if ($variable.Type -eq 'file') {
+			if ([string]::IsNullOrWhiteSpace($resolvedValue)) { throw "package action output variable '$($variable.Name)' requires a file path" }
+			$candidate = if ([IO.Path]::IsPathRooted($resolvedValue)) { [IO.Path]::GetFullPath($resolvedValue) } else { [IO.Path]::GetFullPath((Join-Path $WorkingDirectory $resolvedValue)) }
+			$relative = Get-ToolchainDeploymentRelativePath -Root $Root -Path $candidate
+			$filePath = Resolve-ToolchainChildPath -Root $Root -RelativePath $relative -RejectReparsePoints -RejectRootReparsePoint
+			if (-not (Test-Path -LiteralPath $filePath -PathType Leaf)) { throw "package action output variable '$($variable.Name)' file is not a file: $filePath" }
+			$fileItem = Get-Item -LiteralPath $filePath -Force
+			if ($fileItem.Length -gt 1MB) { throw "package action output variable '$($variable.Name)' file exceeds the 1 MiB limit" }
+			$resolvedValue = Get-Content -LiteralPath $filePath -Raw
+		}
+		if ($variable.Pattern) {
+			$matcher = [Text.RegularExpressions.Regex]::new([string]$variable.Pattern, [Text.RegularExpressions.RegexOptions]::None, [TimeSpan]::FromSeconds(1))
+			if (-not $matcher.IsMatch([string]$resolvedValue)) { throw "package action output variable '$($variable.Name)' does not match its required pattern" }
+		}
+		$Variables[[string]$variable.Name] = [pscustomobject]@{
+			Name = [string]$variable.Name; Value = [string]$resolvedValue; Sensitive = [bool]$variable.Sensitive
+			AutoIndent = [bool]$variable.AutoIndent; Source = 'action'
+		}
+	}
+}
+
+function Invoke-ToolchainDeploymentCommandAction {
+	param(
+		[Parameter(Mandatory)]$Action,
+		[Parameter(Mandatory)][string]$Root,
+		[Parameter(Mandatory)]$Definition,
+		[Parameter(Mandatory)]$Component,
+		[Parameter(Mandatory)][hashtable]$Variables,
+		[string]$Kubeconfig,
+		[Parameter(Mandatory)][string]$Context
+	)
+	$commandText = Expand-ToolchainDeploymentActionText -Text ([string]$Action.Cmd) -Variables $Variables -Definition $Definition -Component $Component -Context $Context
+	$directoryText = Expand-ToolchainDeploymentActionText -Text ([string]$Action.Dir) -Variables $Variables -Definition $Definition -Component $Component -Context "$Context directory"
+	$workingDirectory = if ($directoryText) { Resolve-ToolchainChildPath -Root $Root -RelativePath $directoryText -RejectReparsePoints -RejectRootReparsePoint } else { $Root }
+	if (-not (Test-Path -LiteralPath $workingDirectory -PathType Container)) { throw "$Context working directory does not exist: $directoryText" }
+	$shell = Get-ToolchainDeploymentActionShellCommand -Action $Action
+	$deadline = if ($Action.MaxTotalSeconds -gt 0) { [DateTime]::UtcNow.AddSeconds([int]$Action.MaxTotalSeconds) } else { [DateTime]::MaxValue }
+	$lastFailure = $null
+	for ($attempt = 0; $attempt -le [int]$Action.MaxRetries; $attempt++) {
+		$startInfo = [Diagnostics.ProcessStartInfo]::new()
+		$startInfo.FileName = $shell.Path
+		$arguments = @($shell.Arguments) + @($commandText)
+		$startInfo.Arguments = (@($arguments | ForEach-Object { ConvertTo-ToolchainDeploymentNativeArgument -Value ([string]$_) }) -join ' ')
+		$startInfo.WorkingDirectory = $workingDirectory
+		$startInfo.UseShellExecute = $false
+		$startInfo.CreateNoWindow = $true
+		$startInfo.RedirectStandardOutput = $true
+		$startInfo.RedirectStandardError = $true
+		foreach ($variable in $Variables.Values) { $startInfo.EnvironmentVariables["TOOLCHAIN_VAR_$($variable.Name)"] = [string]$variable.Value }
+		$startInfo.EnvironmentVariables['TOOLCHAIN_PACKAGE_NAME'] = [string]$Definition.Name
+		$startInfo.EnvironmentVariables['TOOLCHAIN_PACKAGE_VERSION'] = [string]$Definition.Version
+		$startInfo.EnvironmentVariables['TOOLCHAIN_COMPONENT_NAME'] = [string]$Component.Name
+		$startInfo.EnvironmentVariables['TOOLCHAIN_PACKAGE_ROOT'] = $Root
+		if ($Kubeconfig) { $startInfo.EnvironmentVariables['KUBECONFIG'] = $Kubeconfig }
+		foreach ($entry in $Action.Env) {
+			$separator = $entry.IndexOf('=')
+			$name = $entry.Substring(0, $separator)
+			$value = Expand-ToolchainDeploymentActionText -Text $entry.Substring($separator + 1) -Variables $Variables -Definition $Definition -Component $Component -Context "$Context environment"
+			$startInfo.EnvironmentVariables[$name] = $value
+		}
+		$process = [Diagnostics.Process]::new()
+		$process.StartInfo = $startInfo
+		try {
+			if (-not $process.Start()) { throw "$Context did not start" }
+			$outputTask = $process.StandardOutput.ReadToEndAsync()
+			$errorTask = $process.StandardError.ReadToEndAsync()
+			$remainingMilliseconds = if ($deadline -eq [DateTime]::MaxValue) { -1 } else { [Math]::Max(0, [int][Math]::Ceiling(($deadline - [DateTime]::UtcNow).TotalMilliseconds)) }
+			$completed = if ($remainingMilliseconds -lt 0) { $process.WaitForExit(); $true } else { $process.WaitForExit($remainingMilliseconds) }
+			if (-not $completed) { try { $process.Kill() } catch { Write-Debug "Failed to stop timed-out package action: $($_.Exception.Message)" }; $null = $process.WaitForExit(5000) }
+			$output = $outputTask.GetAwaiter().GetResult()
+			$errorOutput = $errorTask.GetAwaiter().GetResult()
+			if ($completed -and $process.ExitCode -eq 0) {
+				if (-not $Action.Mute -and $output) { Write-ToolchainInfo (Protect-ToolchainDeploymentActionOutput -Text $output.TrimEnd() -Variables $Variables) }
+				Set-ToolchainDeploymentActionVariables -Action $Action -Variables $Variables -Output $output -WorkingDirectory $workingDirectory -Root $Root
+				return [pscustomobject]@{ State = 'succeeded'; Output = $output; Attempts = $attempt + 1 }
+			}
+			$reason = if (-not $completed) { "timed out after $($Action.MaxTotalSeconds) seconds" } elseif ($errorOutput) { "exited with code $($process.ExitCode): $($errorOutput.Trim())" } else { "exited with code $($process.ExitCode)" }
+			$lastFailure = Protect-ToolchainDeploymentActionOutput -Text $reason -Variables $Variables
+		} finally { $process.Dispose() }
+		if ([DateTime]::UtcNow -ge $deadline) { break }
+	}
+	throw "$Context failed after $([int]$Action.MaxRetries + 1) attempt(s): $lastFailure"
+}
+
+function Invoke-ToolchainDeploymentWaitAction {
+	param(
+		[Parameter(Mandatory)]$Action,
+		[string]$Kubectl,
+		[string]$Kubeconfig,
+		[Parameter(Mandatory)][string]$Context
+	)
+	$seconds = if ($Action.MaxTotalSeconds -gt 0) { [int]$Action.MaxTotalSeconds } else { 300 }
+	if ($Action.Wait.Type -eq 'cluster') {
+		if (-not $Kubectl) { throw "$Context requires a Kubernetes deployment context" }
+		$resource = "$($Action.Wait.Kind)/$($Action.Wait.Name)"
+		$arguments = @()
+		if ($Action.Wait.Namespace) { $arguments += @('--namespace', [string]$Action.Wait.Namespace) }
+		$condition = [string]$Action.Wait.Condition
+		if ($condition -and $condition -ne 'exist') {
+			$for = if ($condition.StartsWith('jsonpath=')) { $condition } else { "condition=$condition" }
+			$arguments += @('wait', "--for=$for", $resource, '--timeout', "${seconds}s")
+			$null = Invoke-ToolchainBootstrapKubectl -Kubectl $Kubectl -Kubeconfig $Kubeconfig -Arguments $arguments
+			return [pscustomobject]@{ State = 'succeeded'; Attempts = 1 }
+		}
+		$deadline = [DateTime]::UtcNow.AddSeconds($seconds)
+		do {
+			$result = Invoke-ToolchainBootstrapKubectl -Kubectl $Kubectl -Kubeconfig $Kubeconfig -Arguments ($arguments + @('get', $resource, '--request-timeout=5s')) -AllowFailure
+			if ($result.ExitCode -eq 0) { return [pscustomobject]@{ State = 'succeeded'; Attempts = 1 } }
+			Start-Sleep -Milliseconds 250
+		} while ([DateTime]::UtcNow -lt $deadline)
+		throw "$Context timed out waiting for $resource to exist"
+	}
+	$deadline = [DateTime]::UtcNow.AddSeconds($seconds)
+	do {
+		try {
+			if ($Action.Wait.Protocol -eq 'tcp') {
+				if ([string]$Action.Wait.Address -notmatch '^\[?(?<host>[^\]]+)\]?:(?<port>[0-9]+)$') { throw 'expected HOST:PORT' }
+				$client = [Net.Sockets.TcpClient]::new()
+				try {
+					$task = $client.ConnectAsync($Matches.host, [int]$Matches.port)
+					if ($task.Wait(2000) -and $client.Connected) { return [pscustomobject]@{ State = 'succeeded'; Attempts = 1 } }
+				} finally { $client.Dispose() }
+			} else {
+				Add-Type -AssemblyName System.Net.Http
+				$uri = if ([string]$Action.Wait.Address -match '^https?://') { [string]$Action.Wait.Address } else { "$($Action.Wait.Protocol)://$($Action.Wait.Address)" }
+				$client = [Net.Http.HttpClient]::new()
+				try { $client.Timeout = [TimeSpan]::FromSeconds(2); $response = $client.GetAsync($uri).GetAwaiter().GetResult(); if ([int]$response.StatusCode -eq [int]$Action.Wait.Code) { return [pscustomobject]@{ State = 'succeeded'; Attempts = 1 } } }
+				finally { if ($response) { $response.Dispose() }; $client.Dispose() }
+			}
+		} catch { Write-Debug "$Context is still waiting: $($_.Exception.Message)" }
+		Start-Sleep -Milliseconds 250
+	} while ([DateTime]::UtcNow -lt $deadline)
+	throw "$Context timed out waiting for $($Action.Wait.Protocol)://$($Action.Wait.Address)"
+}
+
+function Invoke-ToolchainDeploymentActionPhase {
+	param(
+		[Parameter(Mandatory)][object[]]$Components,
+		[Parameter(Mandatory)][ValidateSet('OnCreate', 'OnDeploy', 'OnRemove')][string]$Lifecycle,
+		[Parameter(Mandatory)][ValidateSet('before', 'after', 'onSuccess', 'onFailure')][string]$Phase,
+		[Parameter(Mandatory)][string]$Root,
+		[Parameter(Mandatory)]$Definition,
+		[Parameter(Mandatory)][hashtable]$Variables,
+		[string]$Kubectl,
+		[string]$Kubeconfig
+	)
+	$results = [Collections.ArrayList]::new()
+	foreach ($component in $Components) {
+		$set = $component.Actions.$Lifecycle
+		$actions = @($set.$Phase)
+		for ($index = 0; $index -lt $actions.Count; $index++) {
+			$action = $actions[$index]
+			$context = "component '$($component.Name)' $Lifecycle.$Phase action $($index + 1)"
+			$label = if ($action.Description) { [string]$action.Description } elseif ($action.Cmd) { [string]$action.Cmd } else { 'wait action' }
+			Write-ToolchainInfo "Running package action: $label"
+			$outcome = if ($action.Cmd) {
+				Invoke-ToolchainDeploymentCommandAction -Action $action -Root $Root -Definition $Definition -Component $component -Variables $Variables -Kubeconfig $Kubeconfig -Context $context
+			} else { Invoke-ToolchainDeploymentWaitAction -Action $action -Kubectl $Kubectl -Kubeconfig $Kubeconfig -Context $context }
+			[void]$results.Add([pscustomobject]@{ Component = $component.Name; Lifecycle = $Lifecycle; Phase = $Phase; Description = $label; State = $outcome.State; Attempts = $outcome.Attempts })
+		}
+	}
+	return @($results.ToArray())
 }
 
 function Get-ToolchainDeploymentAvailableTcpPort {
@@ -1747,12 +2170,18 @@ function Invoke-ToolchainDeploymentBundle {
 	$selectedCharts = @($selectedComponents | ForEach-Object { $_.Charts })
 	$chartTemporaryRoot = Initialize-ToolchainDeploymentRemoteCharts -Definition $definition -Charts $selectedCharts
 	$renderRoot = New-ToolchainDeploymentRenderRoot
+	$deployActionsStarted = $false
+	$deployActionResults = [Collections.ArrayList]::new()
 	try {
 	$kubeconfigPath = Resolve-ToolchainDeploymentKubeconfig -Cluster $Cluster -Kubeconfig $Kubeconfig
 	$kubectl = Get-ToolchainClusterExecutable -Name kubectl -Package kubectl -InstallHint 'Install kubectl and ensure its executable is available on PATH.'
 	$apiServer = Get-ToolchainBootstrapApiServer -Kubeconfig $kubeconfigPath
 	try { $null = Invoke-ToolchainBootstrapKubectl -Kubectl $kubectl -Kubeconfig $kubeconfigPath -Arguments @('get', '--request-timeout=10s', '--raw=/readyz') }
 	catch { throw "Kubernetes API preflight failed for package deployment at $apiServer. kubectl reported: $($_.Exception.Message)" }
+	if (-not $DryRun) {
+		$deployActionsStarted = $true
+		foreach ($actionResult in @(Invoke-ToolchainDeploymentActionPhase -Components $selectedComponents -Lifecycle OnDeploy -Phase before -Root $Root -Definition $definition -Variables $resolvedVariables -Kubectl $kubectl -Kubeconfig $kubeconfigPath)) { [void]$deployActionResults.Add($actionResult) }
+	}
 
 	$appliedManifests = [Collections.ArrayList]::new()
 	$releases = [Collections.ArrayList]::new()
@@ -1805,6 +2234,10 @@ function Invoke-ToolchainDeploymentBundle {
 			[void]$releases.Add([pscustomobject]@{ Component = $component.Name; Name = $chart.Release; Namespace = $releaseNamespace; Chart = $chart.Path })
 		}
 	}
+	if (-not $DryRun) {
+		foreach ($actionResult in @(Invoke-ToolchainDeploymentActionPhase -Components $selectedComponents -Lifecycle OnDeploy -Phase after -Root $Root -Definition $definition -Variables $resolvedVariables -Kubectl $kubectl -Kubeconfig $kubeconfigPath)) { [void]$deployActionResults.Add($actionResult) }
+		foreach ($actionResult in @(Invoke-ToolchainDeploymentActionPhase -Components $selectedComponents -Lifecycle OnDeploy -Phase onSuccess -Root $Root -Definition $definition -Variables $resolvedVariables -Kubectl $kubectl -Kubeconfig $kubeconfigPath)) { [void]$deployActionResults.Add($actionResult) }
+	}
 	$result = [pscustomobject]@{
 		PSTypeName = 'Toolchain.DeploymentResult'
 		Name = $definition.Name
@@ -1815,7 +2248,8 @@ function Invoke-ToolchainDeploymentBundle {
 		Namespace = [string]$settings.namespace
 		DryRun = [bool]$DryRun
 		Components = @($selectedComponents | ForEach-Object { $_.Name })
-		Variables = @($definition.Variables | ForEach-Object { $_.Name })
+		Variables = @($resolvedVariables.Keys | Sort-Object)
+		Actions = @($deployActionResults.ToArray())
 		Images = $publishedImages
 		Releases = @($releases.ToArray())
 		Manifests = @($appliedManifests.ToArray() | ForEach-Object { $_.Path })
@@ -1824,6 +2258,13 @@ function Invoke-ToolchainDeploymentBundle {
 	$suffix = if ($DryRun) { ' (dry run)' } else { '' }
 	Write-ToolchainInfo "Deployed Toolchain package '$($result.Name):$($result.Version)' to $($result.Cluster)$suffix."
 	if ($PassThru) { return $result }
+	} catch {
+		$originalError = $_
+		if ($deployActionsStarted -and -not $DryRun) {
+			try { $null = Invoke-ToolchainDeploymentActionPhase -Components $selectedComponents -Lifecycle OnDeploy -Phase onFailure -Root $Root -Definition $definition -Variables $resolvedVariables -Kubectl $kubectl -Kubeconfig $kubeconfigPath }
+			catch { Write-Warning "Package onDeploy failure action also failed: $($_.Exception.Message)" }
+		}
+		throw $originalError
 	} finally {
 		Remove-ToolchainDeploymentRenderRoot -Path $renderRoot
 		if ($chartTemporaryRoot) { Remove-ToolchainDeploymentChartTemporaryRoot -Path $chartTemporaryRoot }

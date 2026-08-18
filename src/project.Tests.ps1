@@ -60,6 +60,24 @@ packages:
 		{ ConvertFrom-ToolchainYaml -Text "schemaVersion: 1`nschemaVersion: 1" } | Should -Throw '*duplicate key*'
 		{ ConvertFrom-ToolchainYaml -Text "schemaVersion: 1`npackages:`n  - name: [git]" } | Should -Throw '*unsupported YAML scalar*'
 	}
+
+	It 'parses literal and folded block scalars used by package actions' {
+		$manifest = ConvertFrom-ToolchainYaml -Text @'
+actions:
+  before:
+    - cmd: |
+        echo first
+        echo second
+      description: literal command
+    - cmd: >-
+        echo folded
+        value
+'@
+
+		$manifest.actions.before[0].cmd | Should -Be "echo first`necho second`n"
+		$manifest.actions.before[0].description | Should -BeExactly 'literal command'
+		$manifest.actions.before[1].cmd | Should -BeExactly 'echo folded value'
+	}
 }
 
 Describe 'Toolchain version constraints' {

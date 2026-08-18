@@ -122,6 +122,115 @@
         "description": { "type": "string" }
       }
     },
+    "actionShell": {
+      "oneOf": [
+        { "enum": ["sh", "bash", "powershell", "pwsh", "cmd"] },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "windows": { "enum": ["powershell", "pwsh", "cmd", "sh", "bash"] },
+            "linux": { "enum": ["sh", "bash", "pwsh", "powershell"] },
+            "darwin": { "enum": ["sh", "bash", "pwsh", "powershell"] }
+          }
+        }
+      ]
+    },
+    "actionVariable": {
+      "oneOf": [
+        { "type": "string", "pattern": "^[A-Z0-9_]+$" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name"],
+          "properties": {
+            "name": { "type": "string", "pattern": "^[A-Z0-9_]+$" },
+            "sensitive": { "type": "boolean" },
+            "autoIndent": { "type": "boolean" },
+            "pattern": { "type": "string" },
+            "type": { "enum": ["raw", "file"] }
+          }
+        }
+      ]
+    },
+    "actionWait": {
+      "type": "object",
+      "additionalProperties": false,
+      "oneOf": [{ "required": ["cluster"] }, { "required": ["network"] }],
+      "properties": {
+        "cluster": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "name"],
+          "properties": {
+            "kind": { "type": "string", "minLength": 1 },
+            "name": { "type": "string", "minLength": 1 },
+            "namespace": { "type": "string" },
+            "condition": { "type": "string" }
+          }
+        },
+        "network": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocol", "address"],
+          "properties": {
+            "protocol": { "enum": ["tcp", "http", "https"] },
+            "address": { "type": "string", "minLength": 1 },
+            "code": { "type": "integer", "minimum": 100, "maximum": 599 }
+          }
+        }
+      }
+    },
+    "actionDefaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mute": { "type": "boolean" },
+        "maxTotalSeconds": { "type": "integer", "minimum": 0, "maximum": 86400 },
+        "maxRetries": { "type": "integer", "minimum": 0, "maximum": 10 },
+        "dir": { "type": "string" },
+        "env": { "type": "array", "items": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*=" } },
+        "shell": { "$ref": "#/$defs/actionShell" }
+      }
+    },
+    "action": {
+      "type": "object",
+      "additionalProperties": false,
+      "oneOf": [{ "required": ["cmd"] }, { "required": ["wait"] }],
+      "properties": {
+        "mute": { "type": "boolean" },
+        "maxTotalSeconds": { "type": "integer", "minimum": 0, "maximum": 86400 },
+        "maxRetries": { "type": "integer", "minimum": 0, "maximum": 10 },
+        "dir": { "type": "string" },
+        "env": { "type": "array", "items": { "type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_]*=" } },
+        "cmd": { "type": "string", "minLength": 1 },
+        "shell": { "$ref": "#/$defs/actionShell" },
+        "setVariable": { "type": "string", "pattern": "^[A-Z0-9_]+$" },
+        "setVariables": { "type": "array", "items": { "$ref": "#/$defs/actionVariable" } },
+        "description": { "type": "string" },
+        "wait": { "$ref": "#/$defs/actionWait" }
+      }
+    },
+    "actionSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "defaults": { "$ref": "#/$defs/actionDefaults" },
+        "before": { "type": "array", "items": { "$ref": "#/$defs/action" } },
+        "after": { "type": "array", "items": { "$ref": "#/$defs/action" } },
+        "onSuccess": { "type": "array", "items": { "$ref": "#/$defs/action" } },
+        "onFailure": { "type": "array", "items": { "$ref": "#/$defs/action" } }
+      }
+    },
+    "actions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "onCreate": { "$ref": "#/$defs/actionSet" },
+        "onDeploy": { "$ref": "#/$defs/actionSet" },
+        "onRemove": { "$ref": "#/$defs/actionSet" }
+      }
+    },
     "manifest": {
       "oneOf": [
         { "type": "string", "minLength": 1 },
@@ -170,7 +279,7 @@
         "repos": { "type": "array" },
         "files": { "type": "array" },
         "dataInjections": { "type": "array" },
-        "actions": { "type": "object" },
+        "actions": { "$ref": "#/$defs/actions" },
         "scripts": { "type": "object" },
         "healthChecks": { "type": "array" }
       }

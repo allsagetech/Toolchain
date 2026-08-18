@@ -4,6 +4,7 @@
 
 ### Added
 
+- Add component lifecycle actions, including action-only gates, create/deploy phases, command defaults, retries, timeouts, environment and shell selection, deployment output variables, and Kubernetes or network waits.
 - Add remote Helm chart packaging from HTTP(S) repositories, OCI registries, direct `.tgz` URLs, and version-pinned Git sources while preserving integrity-indexed offline deployment.
 - Add native component image bundling, offline integrity verification, digest-pinned cluster-registry publication, and exact admission mappings for deployment packages.
 - Add native top-level package variables with validation, prompting, sensitive/file values, config/environment/CLI overrides, auto-indented templates, and Helm value mappings.

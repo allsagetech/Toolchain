@@ -372,6 +372,41 @@ components:
 		Should -Invoke Invoke-ToolchainClusterProcess -Times 0
 	}
 
+	It 'creates packages with action-only components and runs onCreate lifecycle actions' {
+		$source = Join-Path $TestDrive 'create-actions'
+		[void][IO.Directory]::CreateDirectory($source)
+		[IO.File]::WriteAllText((Join-Path $source 'toolchain.yaml'), @'
+apiVersion: toolchain.allsagetech.com/v1alpha1
+kind: ToolchainPackageConfig
+metadata:
+  name: action-create-demo
+  version: 1.0.0
+components:
+  - name: gate
+    required: true
+    actions:
+      onCreate:
+        defaults:
+          maxTotalSeconds: 30
+        before:
+          - cmd: |
+              echo before > action.log
+            description: Open creation gate
+        after:
+          - cmd: 'echo after >> action.log'
+        onSuccess:
+          - cmd: 'echo success >> action.log'
+'@)
+
+		$result = New-ToolchainDeploymentPackage -Path $source -Output (Join-Path $TestDrive 'action-create.tlcpkg')
+
+		$result.Actions.Count | Should -Be 3
+		$content = Get-Content -LiteralPath (Join-Path $source 'action.log') -Raw
+		$content | Should -Match 'before'
+		$content | Should -Match 'after'
+		$content | Should -Match 'success'
+	}
+
 	It 'resolves dot against the current PowerShell filesystem location' {
 		$source = Join-Path $TestDrive 'dot-source'
 		New-TestDeploymentSource -Root $source
@@ -576,6 +611,156 @@ Describe 'Toolchain deployment package deployment' {
 		$helm.Arguments | Should -Contain $override
 		$helm.Arguments | Should -Contain '42s'
 		$helm.Arguments | Should -Contain 'managed-kubeconfig.yaml'
+	}
+
+	It 'runs action-only deployment gates and templates their output variables into later resources' {
+		$source = Join-Path $TestDrive 'deploy-actions'
+		[void][IO.Directory]::CreateDirectory((Join-Path $source 'manifests'))
+		[IO.File]::WriteAllText((Join-Path $source 'toolchain.yaml'), @'
+apiVersion: toolchain.allsagetech.com/v1alpha1
+kind: ToolchainPackageConfig
+metadata:
+  name: action-deploy-demo
+  version: 1.0.0
+components:
+  - name: gate
+    required: true
+    actions:
+      onDeploy:
+        before:
+          - cmd: echo action-name
+            mute: true
+            setVariables:
+              - name: ACTION_NAME
+                pattern: '^[a-z-]+$'
+  - name: application
+    required: true
+    manifests:
+      - name: application
+        files:
+          - manifests
+'@)
+		[IO.File]::WriteAllText((Join-Path $source 'manifests/configmap.yaml'), "apiVersion: v1`nkind: ConfigMap`nmetadata:`n  name: ###TOOLCHAIN_VAR_ACTION_NAME###`n")
+
+		$result = Invoke-ToolchainDeploymentPackage -Command deploy -Path $source -Confirm -PassThru
+
+		$result.Components | Should -Be @('gate', 'application')
+		$result.Actions.Count | Should -Be 1
+		$result.Variables | Should -Contain 'ACTION_NAME'
+		$script:appliedManifestContents[0] | Should -Match 'name: action-name'
+		$package = New-ToolchainDeploymentPackage -Path $source -Output (Join-Path $TestDrive 'action-deploy.tlcpkg')
+		$package.Variables | Should -Contain 'ACTION_NAME'
+		$expanded = Expand-ToolchainDeploymentPackage -Path $package.Path
+		try { $expanded.Index.variables | Should -Contain 'ACTION_NAME' }
+		finally { Remove-ToolchainDeploymentTemporaryRoot -Path $expanded.Root }
+	}
+
+	It 'does not execute deployment actions during a dry run' {
+		$source = Join-Path $TestDrive 'dry-run-actions'
+		[void][IO.Directory]::CreateDirectory($source)
+		[IO.File]::WriteAllText((Join-Path $source 'toolchain.yaml'), @'
+apiVersion: toolchain.allsagetech.com/v1alpha1
+kind: ToolchainPackageConfig
+metadata:
+  name: dry-run-actions
+  version: 1.0.0
+components:
+  - name: gate
+    required: true
+    actions:
+      onDeploy:
+        before:
+          - cmd: exit 19
+'@)
+
+		{ Invoke-ToolchainDeploymentPackage -Command deploy -Path $source -DryRun -PassThru } | Should -Not -Throw
+	}
+
+	It 'supports Kubernetes wait actions in deployment gates' {
+		$source = Join-Path $TestDrive 'wait-actions'
+		[void][IO.Directory]::CreateDirectory($source)
+		[IO.File]::WriteAllText((Join-Path $source 'toolchain.yaml'), @'
+apiVersion: toolchain.allsagetech.com/v1alpha1
+kind: ToolchainPackageConfig
+metadata:
+  name: wait-actions
+  version: 1.0.0
+components:
+  - name: gate
+    required: true
+    actions:
+      onDeploy:
+        before:
+          - wait:
+              cluster:
+                kind: Deployment
+                name: prerequisite
+                namespace: toolchain-system
+                condition: Available
+            maxTotalSeconds: 30
+'@)
+
+		$result = Invoke-ToolchainDeploymentPackage -Command deploy -Path $source -Confirm -PassThru
+
+		$result.Actions.Count | Should -Be 1
+		@($script:kubectlCalls | Where-Object { $_.Arguments -contains 'wait' -and $_.Arguments -contains '--for=condition=Available' }).Count | Should -Be 1
+	}
+
+	It 'runs failure actions when a deployment gate command fails' {
+		$source = Join-Path $TestDrive 'failure-actions'
+		[void][IO.Directory]::CreateDirectory($source)
+		[IO.File]::WriteAllText((Join-Path $source 'toolchain.yaml'), @'
+apiVersion: toolchain.allsagetech.com/v1alpha1
+kind: ToolchainPackageConfig
+metadata:
+  name: failure-actions
+  version: 1.0.0
+components:
+  - name: gate
+    required: true
+    actions:
+      onDeploy:
+        before:
+          - cmd: exit 19
+        onFailure:
+          - cmd: 'echo failed > failure.log'
+'@)
+
+		{ Invoke-ToolchainDeploymentPackage -Command deploy -Path $source -Confirm } | Should -Throw '*failed after 1 attempt*'
+		(Get-Content -LiteralPath (Join-Path $source 'failure.log') -Raw) | Should -Match 'failed'
+	}
+
+	It 'supports TCP network waits in deployment gates' {
+		$listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+		$listener.Start()
+		try {
+			$port = ([Net.IPEndPoint]$listener.LocalEndpoint).Port
+			$source = Join-Path $TestDrive 'network-actions'
+			[void][IO.Directory]::CreateDirectory($source)
+			[IO.File]::WriteAllText((Join-Path $source 'toolchain.yaml'), @"
+apiVersion: toolchain.allsagetech.com/v1alpha1
+kind: ToolchainPackageConfig
+metadata:
+  name: network-actions
+  version: 1.0.0
+components:
+  - name: gate
+    required: true
+    actions:
+      onDeploy:
+        before:
+          - wait:
+              network:
+                protocol: tcp
+                address: 127.0.0.1:$port
+            maxTotalSeconds: 5
+"@)
+
+			$result = Invoke-ToolchainDeploymentPackage -Command deploy -Path $source -Confirm -PassThru
+
+			$result.Actions.Count | Should -Be 1
+			$result.Actions[0].State | Should -BeExactly 'succeeded'
+		} finally { $listener.Stop() }
 	}
 
 	It 'requires confirmation for mutations but permits an unconfirmed dry run' {

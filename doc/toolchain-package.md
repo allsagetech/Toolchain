@@ -82,10 +82,69 @@ tlc package deploy .\dist\toolchain-package-demo-1.0.0.tlcpkg `
 Component packages currently support package metadata, component selection,
 container images, local and remote Helm charts, local manifest files/directories,
 chart value files, package value files, documentation files, variables,
-namespaces, wait behavior, and schema-validation control. Toolchain rejects
-remote manifests, image archives, repository bundling, file placement, actions,
-imports, kustomizations, and health checks with an explicit error. These fields
-are never silently ignored.
+namespaces, wait behavior, schema-validation control, and component lifecycle
+actions. Toolchain rejects remote manifests, image archives, repository
+bundling, file placement, imports, kustomizations, and health checks with an
+explicit error. These fields are never silently ignored.
+
+## Component actions
+
+An action-only component can serve as a deployment gate. `onCreate` runs while
+building the package, and `onDeploy` runs for each selected component during a
+confirmed deployment:
+
+```yaml
+components:
+  - name: gate
+    required: true
+    actions:
+      onDeploy:
+        defaults:
+          maxTotalSeconds: 60
+          maxRetries: 2
+        before:
+          - cmd: |
+              kubectl get namespace prerequisite
+            description: Verify the prerequisite namespace
+          - wait:
+              cluster:
+                kind: Deployment
+                name: prerequisite
+                namespace: toolchain-system
+                condition: Available
+        onSuccess:
+          - cmd: echo deployment gate passed
+```
+
+Each lifecycle supports `before`, `after`, `onSuccess`, and `onFailure` lists.
+Command actions support `mute`, `maxTotalSeconds`, `maxRetries`, `dir`, `env`,
+and an operating-system-specific `shell`. Working directories must remain
+inside the package. Toolchain supplies package, component, variable, and
+Kubernetes context environment variables to the command. Network waits support
+TCP, HTTP, and HTTPS endpoints; cluster waits support resource existence or a
+Kubernetes wait condition.
+
+An `onDeploy` command can capture standard output for later manifests, charts,
+or values files:
+
+```yaml
+before:
+  - cmd: echo generated-name
+    mute: true
+    setVariables:
+      - name: GENERATED_NAME
+        pattern: '^[a-z0-9-]+$'
+```
+
+Reference that output as `###TOOLCHAIN_VAR_GENERATED_NAME###`. Output variables
+also support `sensitive`, `autoIndent`, and `type: file`. Deployment actions run
+only after `-Confirm`; `-DryRun` validates them but does not execute them.
+`onRemove` definitions are retained for package compatibility, but Toolchain
+does not execute them until a package-removal command exists.
+
+Actions execute local commands with the current user's permissions. Only create
+or deploy package source you trust; archive integrity verification detects
+changes but does not establish publisher identity.
 
 ## Remote Helm charts
 
