@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.4.9 - 2026-08-19
 
 ### Added
 
@@ -30,6 +30,7 @@
 ### Fixed
 
 - Accept `log_level`, `log_format`, `package.create.skip_sbom`, and nested `package.create` and `package.deploy` settings in `toolchain-config.yaml`, including creation templates, deployment variables, component selection, retries, timeouts, and bundled deploy-time Helm values.
+- Prompt for all unset package creation templates during interactive creation and report every missing name together for confirmed, non-interactive builds.
 - Resolve relative deployment-package paths from PowerShell's current filesystem location instead of the process launch directory.
 - Build and import the admission agent locally when initializing managed clusters, removing the dependency on an unpublished versioned agent image.
 - Automatically select a sole managed cluster, refresh K3s kubeconfigs before initialization, distinguish stopped K3s servers, and report actionable Kubernetes API preflight failures.

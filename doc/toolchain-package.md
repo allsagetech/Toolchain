@@ -303,7 +303,10 @@ duration of package creation or deployment and are restored afterward.
 
 `package.create.set` values replace native
 `###TOOLCHAIN_PKG_TMPL_NAME###` tokens in `toolchain.yaml` before package
-validation. `package.create.skip_sbom` accepts a Boolean for compatibility with
+validation. Values can also come from matching `TOOLCHAIN_PKG_TMPL_NAME`
+environment variables. Interactive creation prompts once for every remaining
+template value; `-Confirm` instead reports all unset names together.
+`package.create.skip_sbom` accepts a Boolean for compatibility with
 v0.76-style package configuration; Toolchain package creation currently behaves
 as though this setting is `true`. `package.deploy.set` names are case-insensitive and resolve declared
 uppercase package variables. Configured components and values act as defaults;

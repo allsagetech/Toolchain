@@ -268,6 +268,23 @@ package:
 		} finally { Remove-ToolchainDeploymentTemporaryRoot -Path $expanded.Root }
 	}
 
+	It 'prompts for package creation template values missing from config' {
+		$source = Join-Path $TestDrive 'prompted-package-template'
+		New-TestVariableDeploymentSource -Root $source
+		$manifestPath = Join-Path $source 'toolchain.yaml'
+		$manifest = (Get-Content -LiteralPath $manifestPath -Raw).Replace('  version: 1.0.0', "  version: 1.0.0`n  description: `"###TOOLCHAIN_PKG_TMPL_CLASSIFICATION###`"")
+		[IO.File]::WriteAllText($manifestPath, $manifest)
+		Mock Read-Host { 'UNCLASSIFIED' }
+
+		$result = New-ToolchainDeploymentPackage -Path $source -Output (Join-Path $TestDrive 'prompted-package-template.tlcpkg')
+
+		Should -Invoke Read-Host -Times 1 -Exactly -ParameterFilter { $Prompt -match 'CLASSIFICATION' }
+		$expanded = Expand-ToolchainDeploymentPackage -Path $result.Path
+		try {
+			(Get-Content -LiteralPath (Join-Path $expanded.Root 'toolchain.yaml') -Raw) | Should -Match 'description: "UNCLASSIFIED"'
+		} finally { Remove-ToolchainDeploymentTemporaryRoot -Path $expanded.Root }
+	}
+
 	It 'downloads and integrity-indexes a remote Helm repository chart for offline deployment' {
 		$source = Join-Path $TestDrive 'remote-chart-source'
 		[void][IO.Directory]::CreateDirectory($source)

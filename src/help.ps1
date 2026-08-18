@@ -210,14 +210,15 @@ function Get-ToolchainHelpTopics {
 		-Examples @('tlc package create .', 'tlc package deploy .\dist\toolchain-package-demo-1.0.0.tlcpkg -Cluster dev -Confirm')
 	$topics.'package create' = New-ToolchainHelpTopic `
 		-Description 'Bundles container images and local or remote Helm charts into a hash-indexed Toolchain deployment package.' `
-		-Usage @('tlc package create [DIRECTORY] [-Output PATH] [-Force]') `
+		-Usage @('tlc package create [DIRECTORY] [-Output PATH] [-Force] [-Confirm]') `
 		-Options @(
 			'DIRECTORY       Source containing toolchain.yaml. Default: current directory.',
 			'-Output PATH    Destination .tlcpkg path. Default: dist/toolchain-package-NAME-VERSION.tlcpkg.',
-			'-Force          Replace an existing output package after the new package is complete.'
+			'-Force          Replace an existing output package after the new package is complete.',
+			'-Confirm        Disable creation-template prompts; all template values must already be configured.'
 		) `
 		-Examples @('tlc package create .', 'tlc package create . -Output .\release\app.tlcpkg', 'tlc package create . -Force') `
-		-Notes @('toolchain-values.yaml and toolchain-config.yaml are included automatically when present.', 'Nested package.create.set values replace ###TOOLCHAIN_PKG_TMPL_NAME### creation templates.', 'Toolchain-native metadata/components, component images, localPath charts, URL charts, valuesFiles, named manifest files, and action-only components are supported.', 'Remote chart URLs support HTTP(S) Helm repositories, OCI sources, direct .tgz files, and version-pinned Git repositories.', 'Images require a ready Linux Docker, Podman, or nerdctl engine plus tar during package creation.', 'onCreate actions execute locally while the package is built.', 'Additional Kubernetes YAML must be declared under deployment.manifests or components[].manifests.', 'Charts are linted with Helm and integrity-indexed for offline package deployment.')
+		-Notes @('toolchain-values.yaml and toolchain-config.yaml are included automatically when present.', 'Nested package.create.set values replace ###TOOLCHAIN_PKG_TMPL_NAME### creation templates; unset values prompt during interactive creation.', 'Toolchain-native metadata/components, component images, localPath charts, URL charts, valuesFiles, named manifest files, and action-only components are supported.', 'Remote chart URLs support HTTP(S) Helm repositories, OCI sources, direct .tgz files, and version-pinned Git repositories.', 'Images require a ready Linux Docker, Podman, or nerdctl engine plus tar during package creation.', 'onCreate actions execute locally while the package is built.', 'Additional Kubernetes YAML must be declared under deployment.manifests or components[].manifests.', 'Charts are linted with Helm and integrity-indexed for offline package deployment.')
 	$topics.'package deploy' = New-ToolchainHelpTopic `
 		-Description 'Verifies a Toolchain deployment package, publishes bundled images, applies declared YAML, and upgrades or installs its Helm releases.' `
 		-Usage @('tlc package deploy PACKAGE -Confirm [-Components NAMES] [-Set NAME=value] [-Cluster NAME | -Kubeconfig PATH] [-Values PATH] [-Config PATH] [-Namespace NAME] [-WaitSeconds SECONDS] [-PassThru]', 'tlc package deploy DIRECTORY -DryRun [OPTIONS]') `

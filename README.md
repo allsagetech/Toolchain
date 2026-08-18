@@ -229,6 +229,8 @@ the defaults. Top-level `variables` use
 `setVariables` for later package resources. Nested `package.create.set` and
 `package.deploy` configuration is supported for creation templates, deployment
 variables, component defaults, deploy-time Helm values, retries, and timeouts.
+Interactive package creation prompts for any `###TOOLCHAIN_PKG_TMPL_*###` values
+not supplied by configuration or environment variables.
 
 ## Commands
 

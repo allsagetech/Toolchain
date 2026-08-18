@@ -498,7 +498,11 @@ function ConvertTo-ToolchainDeploymentComponent {
 }
 
 function Read-ToolchainDeploymentDefinition {
-	param([Parameter(Mandatory)][string]$Root)
+	param(
+		[Parameter(Mandatory)][string]$Root,
+		[switch]$ResolveCreateTemplates,
+		[switch]$PromptForMissingCreateTemplates
+	)
 	$rootPath = Resolve-ToolchainFileSystemPath -Path $Root
 	$manifestPath = Join-Path $rootPath 'toolchain.yaml'
 	if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
@@ -506,9 +510,13 @@ function Read-ToolchainDeploymentDefinition {
 	}
 	$manifestText = Get-Content -LiteralPath $manifestPath -Raw
 	$configPath = Join-Path $rootPath 'toolchain-config.yaml'
+	$createVariables = @{}
 	if (Test-Path -LiteralPath $configPath -PathType Leaf) {
 		$config = Read-ToolchainDeploymentConfig -Path $configPath
-		$manifestText = Expand-ToolchainDeploymentCreateTemplates -Text $manifestText -Variables $config.createVariables -Context $manifestPath
+		$createVariables = $config.createVariables
+	}
+	if ($ResolveCreateTemplates -or $createVariables.Count -gt 0) {
+		$manifestText = Expand-ToolchainDeploymentCreateTemplates -Text $manifestText -Variables $createVariables -Context $manifestPath -PromptForMissing:$PromptForMissingCreateTemplates
 	}
 	$manifest = ConvertFrom-ToolchainYaml -Text $manifestText -Context $manifestPath
 	foreach ($key in $manifest.Keys) {
@@ -812,7 +820,8 @@ function Expand-ToolchainDeploymentCreateTemplates {
 	param(
 		[Parameter(Mandatory)][AllowEmptyString()][string]$Text,
 		[Parameter(Mandatory)][hashtable]$Variables,
-		[Parameter(Mandatory)][string]$Context
+		[Parameter(Mandatory)][string]$Context,
+		[switch]$PromptForMissing
 	)
 	$expanded = $Text
 	foreach ($name in @($Variables.Keys | Sort-Object)) {
@@ -820,8 +829,20 @@ function Expand-ToolchainDeploymentCreateTemplates {
 		$value = [Convert]::ToString($Variables[$name], [Globalization.CultureInfo]::InvariantCulture)
 		$expanded = $expanded.Replace($token, $value)
 	}
-	$unknown = [regex]::Match($expanded, '###TOOLCHAIN_PKG_TMPL_([A-Z0-9_]+)###')
-	if ($unknown.Success) { throw "$Context references unset package creation variable '$($unknown.Groups[1].Value)'; configure package.create.set.$($unknown.Groups[1].Value.ToLowerInvariant()) in toolchain-config.yaml" }
+	$missingNames = @([regex]::Matches($expanded, '###TOOLCHAIN_PKG_TMPL_([A-Z0-9_]+)###') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+	foreach ($name in $missingNames) {
+		$value = [Environment]::GetEnvironmentVariable("TOOLCHAIN_PKG_TMPL_$name")
+		if ($null -eq $value -and $PromptForMissing) {
+			try { $value = Read-Host -Prompt "Enter a package creation value for $name" }
+			catch { throw "package creation variable '$name' requires input; configure package.create.set.$($name.ToLowerInvariant()) or TOOLCHAIN_PKG_TMPL_$name" }
+		}
+		if ($null -ne $value) { $expanded = $expanded.Replace("###TOOLCHAIN_PKG_TMPL_$name###", [string]$value) }
+	}
+	$unresolved = @([regex]::Matches($expanded, '###TOOLCHAIN_PKG_TMPL_([A-Z0-9_]+)###') | ForEach-Object { $_.Groups[1].Value } | Sort-Object -Unique)
+	if ($unresolved.Count -gt 0) {
+		$settings = @($unresolved | ForEach-Object { "package.create.set.$($_.ToLowerInvariant())" }) -join ', '
+		throw "$Context references unset package creation variables: $($unresolved -join ', '). Configure $settings, set matching TOOLCHAIN_PKG_TMPL_* environment variables, or create interactively without -Confirm."
+	}
 	return $expanded
 }
 
@@ -1521,13 +1542,14 @@ function New-ToolchainDeploymentPackage {
 	param(
 		[string]$Path = (Get-Location).Path,
 		[string]$Output,
-		[switch]$Force
+		[switch]$Force,
+		[switch]$Confirm
 	)
 	$root = Resolve-ToolchainFileSystemPath -Path $Path
 	if (-not (Test-Path -LiteralPath $root -PathType Container)) { throw "deployment package source is not a directory: $root" }
 	$rootItem = Get-Item -LiteralPath $root -Force
 	if ($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "deployment package source cannot be a link or reparse point: $root" }
-	$definition = Read-ToolchainDeploymentDefinition -Root $root
+	$definition = Read-ToolchainDeploymentDefinition -Root $root -ResolveCreateTemplates -PromptForMissingCreateTemplates:(-not $Confirm)
 	$configPath = Join-Path $root 'toolchain-config.yaml'
 	$config = if (Test-Path -LiteralPath $configPath -PathType Leaf) { Read-ToolchainDeploymentConfig -Path $configPath } else { @{ logLevel = 'info'; logFormat = 'console' } }
 	$previousLogConfiguration = Set-ToolchainLogConfiguration -Level ([string]$config.logLevel) -Format ([string]$config.logFormat)
@@ -2481,7 +2503,7 @@ function Invoke-ToolchainDeploymentPackage {
 	if ($Command -eq 'create') {
 		if ($Cluster -or $Kubeconfig -or $Components -or $Set -or $Values -or $Config -or $Namespace -or $DryRun) { throw 'package create does not accept deployment target options' }
 		$source = if ($Path) { $Path } else { (Get-Location).Path }
-		return (New-ToolchainDeploymentPackage -Path $source -Output $Output -Force:$Force)
+		return (New-ToolchainDeploymentPackage -Path $source -Output $Output -Force:$Force -Confirm:$Confirm)
 	}
 	if (-not $Path) { throw 'package deploy requires a .tlcpkg file or source directory' }
 	if ($Output -or $Force) { throw 'package deploy does not accept -Output or -Force' }
