@@ -44,6 +44,56 @@ deployment:
 		[IO.File]::WriteAllText((Join-Path $Root 'chart/templates/configmap.yaml'), "apiVersion: v1`nkind: ConfigMap`nmetadata:`n  name: demo`n")
 		[IO.File]::WriteAllText((Join-Path $Root 'manifests/namespace.yaml'), "apiVersion: v1`nkind: Namespace`nmetadata:`n  name: demo-runtime`n")
 	}
+
+	function New-TestZarfComponentSource {
+		param([Parameter(Mandatory)][string]$Root)
+		[void][IO.Directory]::CreateDirectory((Join-Path $Root 'chart/templates'))
+		[void][IO.Directory]::CreateDirectory((Join-Path $Root 'manifests'))
+		[IO.File]::WriteAllText((Join-Path $Root 'toolchain.yaml'), @'
+kind: ZarfPackageConfig
+metadata:
+  name: component-demo
+  description: Zarf-compatible component package
+  version: 2.0.0
+components:
+  - name: prerequisites
+    required: true
+    manifests:
+      - name: prerequisite-resources
+        namespace: component-system
+        files:
+          - manifests
+  - name: application
+    description: Main application
+    default: true
+    charts:
+      - name: application
+        localPath: chart
+        releaseName: component-app
+        namespace: component-system
+        valuesFiles:
+          - chart-values.yaml
+        noWait: true
+        schemaValidation: false
+  - name: optional-addon
+    charts:
+      - name: addon
+        localPath: chart
+        releaseName: component-addon
+        namespace: addon-system
+values:
+  files:
+    - package-values.yaml
+documentation:
+  readme: package-readme.md
+'@)
+		[IO.File]::WriteAllText((Join-Path $Root 'chart-values.yaml'), "imageTag: stable`n")
+		[IO.File]::WriteAllText((Join-Path $Root 'package-values.yaml'), "replicas: 2`n")
+		[IO.File]::WriteAllText((Join-Path $Root 'package-readme.md'), "# component demo`n")
+		[IO.File]::WriteAllText((Join-Path $Root 'chart/Chart.yaml'), "apiVersion: v2`nname: component-demo`nversion: 2.0.0`n")
+		[IO.File]::WriteAllText((Join-Path $Root 'chart/templates/configmap.yaml'), "apiVersion: v1`nkind: ConfigMap`nmetadata:`n  name: component-demo`n")
+		[IO.File]::WriteAllText((Join-Path $Root 'manifests/configmap.yaml'), "apiVersion: v1`nkind: ConfigMap`nmetadata:`n  name: prerequisite`n")
+	}
 }
 
 Describe 'Toolchain deployment package creation' {
@@ -102,6 +152,36 @@ Describe 'Toolchain deployment package creation' {
 			Set-Location -LiteralPath $originalLocation.Path
 			[Environment]::CurrentDirectory = $originalProcessDirectory
 		}
+	}
+
+	It 'creates a package from Zarf v0.76-style metadata and components' {
+		$source = Join-Path $TestDrive 'zarf-components'
+		New-TestZarfComponentSource -Root $source
+		$output = Join-Path $TestDrive 'zarf-components.tlcpkg'
+
+		$result = New-ToolchainDeploymentPackage -Path $source -Output $output
+
+		$result.Name | Should -BeExactly 'component-demo'
+		$result.Components | Should -Be @('prerequisites', 'application', 'optional-addon')
+		$result.Charts | Should -Be 2
+		$script:packageProcessCalls.Count | Should -Be 2
+		$script:packageProcessCalls[0].Arguments | Should -Contain (Join-Path $source 'package-values.yaml')
+		$script:packageProcessCalls[0].Arguments | Should -Contain '--skip-schema-validation'
+		$expanded = Expand-ToolchainDeploymentPackage -Path $output
+		try {
+			Test-Path -LiteralPath (Join-Path $expanded.Root 'package-readme.md') -PathType Leaf | Should -BeTrue
+			$expanded.Index.components | Should -Be @('prerequisites', 'application', 'optional-addon')
+		} finally { Remove-ToolchainDeploymentTemporaryRoot -Path $expanded.Root }
+	}
+
+	It 'rejects unsupported Zarf component assets explicitly' {
+		$source = Join-Path $TestDrive 'zarf-images'
+		New-TestZarfComponentSource -Root $source
+		$manifestPath = Join-Path $source 'toolchain.yaml'
+		$content = (Get-Content -LiteralPath $manifestPath -Raw).Replace('    required: true', "    required: true`n    images:`n      - example.invalid/app:1")
+		[IO.File]::WriteAllText($manifestPath, $content)
+
+		{ New-ToolchainDeploymentPackage -Path $source -Output (Join-Path $TestDrive 'zarf-images.tlcpkg') } | Should -Throw "*uses 'images'*"
 	}
 
 	It 'rejects manifest paths that escape the package root' {
@@ -181,5 +261,33 @@ Describe 'Toolchain deployment package deployment' {
 		{ Invoke-ToolchainDeploymentPackage -Command deploy -Path $source -DryRun } | Should -Not -Throw
 		$script:kubectlCalls[1].Arguments | Should -Contain '--dry-run=server'
 		$script:helmCalls[0].Arguments | Should -Contain '--dry-run'
+	}
+
+	It 'deploys required and explicitly selected Zarf-style components in declaration order' {
+		$source = Join-Path $TestDrive 'selected-components'
+		New-TestZarfComponentSource -Root $source
+
+		$result = Invoke-ToolchainDeploymentPackage -Command deploy -Path $source -Cluster dev -Components @('optional-*', '-application') -Confirm -PassThru
+
+		$result.Components | Should -Be @('prerequisites', 'optional-addon')
+		$result.Manifests[0] | Should -BeExactly 'manifests/configmap.yaml'
+		$result.ManifestDetails[0].Component | Should -BeExactly 'prerequisites'
+		$result.ManifestDetails[0].Name | Should -BeExactly 'prerequisite-resources'
+		$result.Releases.Count | Should -Be 1
+		$result.Releases[0].Component | Should -BeExactly 'optional-addon'
+		$result.Releases[0].Name | Should -BeExactly 'component-addon'
+		$script:helmCalls[0].Arguments | Should -Contain (Join-Path $source 'package-values.yaml')
+	}
+
+	It 'selects required and default components when no override is supplied' {
+		$source = Join-Path $TestDrive 'default-components'
+		New-TestZarfComponentSource -Root $source
+
+		$result = Invoke-ToolchainDeploymentPackage -Command deploy -Path $source -Cluster dev -Confirm -PassThru
+
+		$result.Components | Should -Be @('prerequisites', 'application')
+		$result.Releases[0].Name | Should -BeExactly 'component-app'
+		$script:helmCalls[0].Arguments | Should -Not -Contain '--wait'
+		$script:helmCalls[0].Arguments | Should -Contain '--skip-schema-validation'
 	}
 }

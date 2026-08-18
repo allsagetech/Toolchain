@@ -79,7 +79,7 @@ Describe 'Invoke-Toolchain dispatcher' {
 		Mock Invoke-ToolchainAudit { param($Path,[switch]$Strict) "audit:$Path`:$([bool]$Strict)" }
 		Mock Invoke-ToolchainProfile { param($Command,[string[]]$Packages) @($Command) + @($Packages) }
 		Mock Invoke-ToolchainCluster { param($Command,$Name,$Provider,[switch]$PassThru) if ($PassThru) { @($Command,$Name,$Provider,$true) } else { @($Command,$Name,$Provider) } }
-		Mock Invoke-ToolchainDeploymentPackage { param($Command,$Path,$Cluster,[switch]$Confirm) @($Command,$Path,$Cluster,[bool]$Confirm) }
+		Mock Invoke-ToolchainDeploymentPackage { param($Command,$Path,$Cluster,$Components,[switch]$Confirm) @($Command,$Path,$Cluster,@($Components),[bool]$Confirm) }
 		Mock Invoke-ToolchainK9s { param($Cluster,$Kubeconfig,[object[]]$ArgumentList) [pscustomobject]@{ Cluster = $Cluster; Kubeconfig = $Kubeconfig; Arguments = @($ArgumentList) } }
 		Mock Invoke-ToolchainDoctor { 'doctor' }
 		Mock Invoke-ToolchainHelp { param([string[]]$CommandPath) if ($CommandPath) { "help:$($CommandPath -join ' ')" } else { 'help' } }
@@ -145,7 +145,7 @@ Describe 'Invoke-Toolchain dispatcher' {
 		@(Invoke-Toolchain -Command cluster -ArgumentList @('create','dev','-Provider','kind')) | Should -Be @('create','dev','kind')
 		@(Invoke-Toolchain -Command cluster -ArgumentList @('init','dev','-Confirm','-RegistryNodePort','32000')) | Should -Be @('init','dev',$null)
 		@(Invoke-Toolchain -Command cluster -ArgumentList @('use','dev','-PassThru')) | Should -Be @('use','dev',$null,$true)
-		@(Invoke-Toolchain -Command package -ArgumentList @('deploy','app.tlcpkg','-Cluster','dev','-Confirm')) | Should -Be @('deploy','app.tlcpkg','dev',$true)
+		@(Invoke-Toolchain -Command package -ArgumentList @('deploy','app.tlcpkg','-Cluster','dev','-Components','app,-demo','-Confirm')) | Should -Be @('deploy','app.tlcpkg','dev','app,-demo',$true)
 		$k9s = Invoke-Toolchain -Command k9s -ArgumentList @('-Cluster','dev','-n','default')
 		$k9s.Cluster | Should -Be 'dev'
 		$k9s.Kubeconfig | Should -BeNullOrEmpty

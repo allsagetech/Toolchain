@@ -31,30 +31,53 @@ function ConvertTo-ToolchainDeploymentChart {
 		[Parameter(Mandatory)][object]$Value,
 		[Parameter(Mandatory)][string]$DefaultRelease,
 		[Parameter(Mandatory)][int]$ChartCount,
-		[Parameter(Mandatory)][int]$Index
+		[Parameter(Mandatory)][int]$Index,
+		[string]$ComponentName
 	)
 	$path = $null
 	$release = $null
 	$namespace = $null
 	$values = @()
+	$wait = $true
+	$schemaValidation = $true
+	$zarfName = $null
 	if ($Value -is [string]) {
 		$path = [string]$Value
 	} elseif ($Value -is [Collections.IDictionary]) {
 		foreach ($key in $Value.Keys) {
-			if ([string]$key -notin @('path', 'release', 'namespace', 'values')) {
+			if ([string]$key -notin @('path', 'release', 'namespace', 'values', 'name', 'version', 'url', 'repoName', 'gitPath', 'localPath', 'releaseName', 'noWait', 'valuesFiles', 'variables', 'schemaValidation', 'serverSideApply')) {
 				throw "deployment chart $Index contains unsupported key '$key'"
 			}
 		}
-		$path = [string]$Value['path']
-		$release = [string]$Value['release']
+		$path = if ($Value['path']) { [string]$Value['path'] } else { [string]$Value['localPath'] }
+		$release = if ($Value['release']) { [string]$Value['release'] } else { [string]$Value['releaseName'] }
 		$namespace = [string]$Value['namespace']
-		if ($null -ne $Value['values']) { $values = @($Value['values']) }
+		$zarfName = [string]$Value['name']
+		if ($null -ne $Value['values']) { $values += @($Value['values']) }
+		if ($null -ne $Value['valuesFiles']) { $values += @($Value['valuesFiles']) }
+		if ($Value['url'] -or $Value['repoName'] -or $Value['gitPath']) {
+			throw "deployment chart $Index uses a remote Zarf chart; Toolchain packages currently require localPath so the chart can be integrity-indexed for offline deployment"
+		}
+		if ($null -ne $Value['variables'] -and @($Value['variables']).Count -gt 0) {
+			throw "deployment chart $Index uses Zarf chart variables, which Toolchain does not silently emulate; use valuesFiles or toolchain-values.yaml"
+		}
+		if ($null -ne $Value['serverSideApply'] -and [string]$Value['serverSideApply'] -notin @('', 'auto')) {
+			throw "deployment chart $Index requests Zarf serverSideApply behavior that is not supported by this Helm runtime"
+		}
+		if ($null -ne $Value['noWait']) {
+			if ($Value['noWait'] -isnot [bool]) { throw "deployment chart $Index requires noWait to be true or false" }
+			$wait = -not [bool]$Value['noWait']
+		}
+		if ($null -ne $Value['schemaValidation']) {
+			if ($Value['schemaValidation'] -isnot [bool]) { throw "deployment chart $Index requires schemaValidation to be true or false" }
+			$schemaValidation = [bool]$Value['schemaValidation']
+		}
 	} else {
 		throw "deployment chart $Index must be a path string or mapping"
 	}
 	if ([string]::IsNullOrWhiteSpace($path)) { throw "deployment chart $Index requires a path" }
 	if (-not $release) {
-		$release = if ($ChartCount -eq 1) { $DefaultRelease } else { [IO.Path]::GetFileNameWithoutExtension($path.TrimEnd([char[]]@('/', '\'))) }
+		$release = if ($zarfName) { $zarfName } elseif ($ChartCount -eq 1) { $DefaultRelease } else { [IO.Path]::GetFileNameWithoutExtension($path.TrimEnd([char[]]@('/', '\'))) }
 	}
 	Assert-ToolchainDeploymentIdentifier -Value $release -Kind 'chart release' -MaximumLength 53
 	if ($namespace) { Assert-ToolchainDeploymentIdentifier -Value $namespace -Kind 'chart namespace' }
@@ -70,6 +93,103 @@ function ConvertTo-ToolchainDeploymentChart {
 		Release = $release
 		Namespace = $namespace
 		Values = [string[]]$normalizedValues
+		Wait = $wait
+		SchemaValidation = $schemaValidation
+		Component = $ComponentName
+	}
+}
+
+function ConvertTo-ToolchainDeploymentManifestSet {
+	param(
+		[Parameter(Mandatory)][object]$Value,
+		[Parameter(Mandatory)][int]$Index,
+		[string]$ComponentName,
+		[string]$DefaultNamespace
+	)
+	$name = "manifest-$Index"
+	$namespace = $DefaultNamespace
+	$files = @()
+	if ($Value -is [string]) {
+		$files = @([string]$Value)
+	} elseif ($Value -is [Collections.IDictionary]) {
+		foreach ($key in $Value.Keys) {
+			if ([string]$key -notin @('name', 'namespace', 'files', 'kustomizations', 'kustomizeAllowAnyDirectory', 'enableKustomizePlugins', 'noWait', 'serverSideApply', 'template')) {
+				throw "deployment manifest $Index contains unsupported key '$key'"
+			}
+		}
+		if ($Value['name']) { $name = [string]$Value['name'] }
+		if ($Value['namespace']) { $namespace = [string]$Value['namespace'] }
+		if ($null -ne $Value['files']) { $files = @($Value['files']) }
+		if ($null -ne $Value['kustomizations'] -and @($Value['kustomizations']).Count -gt 0) {
+			throw "deployment manifest '$name' uses Zarf kustomizations; render them to local YAML files before creating a Toolchain package"
+		}
+		if ([bool]$Value['template']) { throw "deployment manifest '$name' uses Zarf Go templating; use Helm or pre-rendered YAML with Toolchain" }
+		if ($null -ne $Value['serverSideApply'] -and [string]$Value['serverSideApply'] -eq 'false') {
+			throw "deployment manifest '$name' disables server-side apply, but Toolchain packages deploy manifests with server-side apply"
+		}
+	} else {
+		throw "deployment manifest $Index must be a path string or mapping"
+	}
+	Assert-ToolchainDeploymentIdentifier -Value $name -Kind 'manifest name'
+	if ($namespace) { Assert-ToolchainDeploymentIdentifier -Value $namespace -Kind 'manifest namespace' }
+	$normalizedFiles = @()
+	foreach ($file in $files) {
+		if ($file -isnot [string] -or [string]::IsNullOrWhiteSpace([string]$file)) { throw "deployment manifest '$name' contains an invalid file path" }
+		if ([string]$file -match '^(?i:https?|oci)://') { throw "deployment manifest '$name' uses a remote file; download it locally so Toolchain can integrity-index it" }
+		$normalizedFiles += [string]$file
+	}
+	if ($normalizedFiles.Count -eq 0) { throw "deployment manifest '$name' requires at least one local file or directory" }
+	return [pscustomobject]@{
+		Name = $name
+		Namespace = $namespace
+		Files = [string[]]$normalizedFiles
+		Component = $ComponentName
+	}
+}
+
+function ConvertTo-ToolchainDeploymentComponent {
+	param(
+		[Parameter(Mandatory)][Collections.IDictionary]$Value,
+		[Parameter(Mandatory)][string]$PackageName,
+		[string]$DefaultNamespace,
+		[Parameter(Mandatory)][int]$Index
+	)
+	foreach ($key in $Value.Keys) {
+		if ([string]$key -notin @('name', 'description', 'default', 'required', 'charts', 'manifests', 'only', 'group', 'import', 'images', 'imageArchives', 'repos', 'files', 'dataInjections', 'actions', 'scripts', 'healthChecks')) {
+			throw "deployment component $Index contains unsupported key '$key'"
+		}
+	}
+	$name = [string]$Value['name']
+	Assert-ToolchainDeploymentIdentifier -Value $name -Kind 'component name'
+	foreach ($booleanKey in @('default', 'required')) {
+		if ($null -ne $Value[$booleanKey] -and $Value[$booleanKey] -isnot [bool]) { throw "deployment component '$name' requires $booleanKey to be true or false" }
+	}
+	foreach ($unsupported in @('only', 'group', 'import', 'images', 'imageArchives', 'repos', 'files', 'dataInjections', 'actions', 'scripts', 'healthChecks')) {
+		$valueForKey = $Value[$unsupported]
+		$hasValue = if ($valueForKey -is [Collections.IDictionary]) { $valueForKey.Count -gt 0 } else { @($valueForKey).Count -gt 0 -and $null -ne $valueForKey }
+		if ($hasValue) { throw "Zarf v0.76 component '$name' uses '$unsupported', which Toolchain package compatibility does not yet support" }
+	}
+
+	$chartValues = @()
+	if ($null -ne $Value['charts']) { $chartValues = @($Value['charts']) }
+	$charts = @()
+	for ($chartIndex = 0; $chartIndex -lt $chartValues.Count; $chartIndex++) {
+		$charts += ConvertTo-ToolchainDeploymentChart -Value $chartValues[$chartIndex] -DefaultRelease $PackageName -ChartCount $chartValues.Count -Index ($chartIndex + 1) -ComponentName $name
+	}
+	$manifestValues = @()
+	if ($null -ne $Value['manifests']) { $manifestValues = @($Value['manifests']) }
+	$manifestSets = @()
+	for ($manifestIndex = 0; $manifestIndex -lt $manifestValues.Count; $manifestIndex++) {
+		$manifestSets += ConvertTo-ToolchainDeploymentManifestSet -Value $manifestValues[$manifestIndex] -Index ($manifestIndex + 1) -ComponentName $name -DefaultNamespace $DefaultNamespace
+	}
+	if ($charts.Count -eq 0 -and $manifestSets.Count -eq 0) { throw "deployment component '$name' must declare at least one chart or manifest" }
+	return [pscustomobject]@{
+		Name = $name
+		Description = [string]$Value['description']
+		Required = [bool]$Value['required']
+		Default = [bool]$Value['default']
+		Charts = [object[]]$charts
+		ManifestSets = [object[]]$manifestSets
 	}
 }
 
@@ -82,52 +202,108 @@ function Read-ToolchainDeploymentDefinition {
 	}
 	$manifest = ConvertFrom-ToolchainYaml -Text (Get-Content -LiteralPath $manifestPath -Raw) -Context $manifestPath
 	foreach ($key in $manifest.Keys) {
-		if ([string]$key -notin @('schemaVersion', 'packages', 'deployment')) {
+		if ([string]$key -notin @('schemaVersion', 'packages', 'deployment', 'apiVersion', 'kind', 'metadata', 'components', 'values', 'documentation', 'constants', 'variables', 'build')) {
 			throw "$manifestPath contains unsupported top-level key '$key'"
 		}
 	}
-	if ([int]$manifest.schemaVersion -ne 1) { throw "$manifestPath requires schemaVersion: 1" }
-	$deployment = $manifest['deployment']
-	if ($deployment -isnot [Collections.IDictionary]) { throw "$manifestPath requires a deployment mapping" }
-	foreach ($key in $deployment.Keys) {
-		if ([string]$key -notin @('name', 'version', 'description', 'namespace', 'charts', 'manifests')) {
-			throw "$manifestPath deployment contains unsupported key '$key'"
+	if ($null -ne $manifest['schemaVersion'] -and [int]$manifest['schemaVersion'] -ne 1) { throw "$manifestPath requires schemaVersion: 1" }
+	if ($manifest['kind'] -and [string]$manifest['kind'] -ne 'ZarfPackageConfig') { throw "$manifestPath supports only kind: ZarfPackageConfig for Zarf v0.76 compatibility" }
+	if ($manifest['apiVersion'] -and [string]$manifest['apiVersion'] -ne 'zarf.dev/v1alpha1') { throw "$manifestPath supports only apiVersion: zarf.dev/v1alpha1 for Zarf compatibility" }
+	foreach ($unsupportedTopLevel in @('constants', 'variables', 'build')) {
+		if ($null -ne $manifest[$unsupportedTopLevel] -and @($manifest[$unsupportedTopLevel]).Count -gt 0) {
+			throw "Zarf v0.76 top-level field '$unsupportedTopLevel' is not yet supported by Toolchain package compatibility"
 		}
 	}
-	$name = [string]$deployment['name']
-	$version = [string]$deployment['version']
-	$namespace = [string]$deployment['namespace']
+
+	$deployment = $manifest['deployment']
+	$metadata = $manifest['metadata']
+	if ($null -ne $deployment -and $deployment -isnot [Collections.IDictionary]) { throw "$manifestPath deployment must be a mapping" }
+	if ($null -ne $metadata -and $metadata -isnot [Collections.IDictionary]) { throw "$manifestPath metadata must be a mapping" }
+	if ($deployment) {
+		foreach ($key in $deployment.Keys) {
+			if ([string]$key -notin @('name', 'version', 'description', 'namespace', 'charts', 'manifests')) {
+				throw "$manifestPath deployment contains unsupported key '$key'"
+			}
+		}
+	}
+	if ($metadata) {
+		foreach ($key in $metadata.Keys) {
+			if ([string]$key -notin @('name', 'description', 'version', 'url', 'image', 'uncompressed', 'architecture', 'yolo', 'authors', 'documentation', 'source', 'vendor', 'aggregateChecksum', 'annotations', 'allowNamespaceOverride')) {
+				throw "$manifestPath metadata contains unsupported Zarf v0.76 key '$key'"
+			}
+		}
+	}
+	if (-not $deployment -and -not $metadata) { throw "$manifestPath requires either a deployment or metadata mapping" }
+	$name = if ($deployment -and $deployment['name']) { [string]$deployment['name'] } else { [string]$metadata['name'] }
+	$version = if ($deployment -and $deployment['version']) { [string]$deployment['version'] } else { [string]$metadata['version'] }
+	$description = if ($deployment -and $deployment['description']) { [string]$deployment['description'] } else { [string]$metadata['description'] }
+	$namespace = if ($deployment) { [string]$deployment['namespace'] } else { $null }
 	Assert-ToolchainDeploymentIdentifier -Value $name -Kind 'name'
 	Assert-ToolchainDeploymentVersion -Version $version
 	if ($namespace) { Assert-ToolchainDeploymentIdentifier -Value $namespace -Kind 'namespace' }
 
-	$chartValues = @()
-	if ($null -ne $deployment['charts']) { $chartValues = @($deployment['charts']) }
-	$charts = @()
-	for ($index = 0; $index -lt $chartValues.Count; $index++) {
-		$charts += ConvertTo-ToolchainDeploymentChart -Value $chartValues[$index] -DefaultRelease $name -ChartCount $chartValues.Count -Index ($index + 1)
-	}
-	$manifests = @()
-	$manifestValues = @()
-	if ($null -ne $deployment['manifests']) { $manifestValues = @($deployment['manifests']) }
-	foreach ($manifestValue in $manifestValues) {
-		if ($manifestValue -isnot [string] -or [string]::IsNullOrWhiteSpace([string]$manifestValue)) {
-			throw 'deployment manifests must contain only relative file or directory paths'
+	$components = @()
+	if ($deployment -and ($null -ne $deployment['charts'] -or $null -ne $deployment['manifests'])) {
+		$legacyComponent = @{
+			name = 'default'
+			description = 'Toolchain deployment resources'
+			required = $true
+			charts = @($deployment['charts'])
+			manifests = @($deployment['manifests'])
 		}
-		$manifests += [string]$manifestValue
+		$components += ConvertTo-ToolchainDeploymentComponent -Value $legacyComponent -PackageName $name -DefaultNamespace $namespace -Index 1
 	}
-	if ($charts.Count -eq 0 -and $manifests.Count -eq 0) {
-		throw "$manifestPath deployment must declare at least one chart or manifest"
+	$componentValues = @()
+	if ($null -ne $manifest['components']) { $componentValues = @($manifest['components']) }
+	for ($componentIndex = 0; $componentIndex -lt $componentValues.Count; $componentIndex++) {
+		if ($componentValues[$componentIndex] -isnot [Collections.IDictionary]) { throw "deployment component $($componentIndex + 1) must be a mapping" }
+		$components += ConvertTo-ToolchainDeploymentComponent -Value $componentValues[$componentIndex] -PackageName $name -DefaultNamespace $namespace -Index ($componentIndex + 1)
 	}
+	if ($components.Count -eq 0) { throw "$manifestPath must declare deployment charts/manifests or at least one component" }
+	$componentNames = @($components | ForEach-Object { $_.Name })
+	if (@($componentNames | Sort-Object -Unique).Count -ne $componentNames.Count) { throw "$manifestPath contains duplicate component names" }
+
+	$globalValues = @()
+	$packageFiles = @()
+	if ($null -ne $manifest['values']) {
+		if ($manifest['values'] -isnot [Collections.IDictionary]) { throw "$manifestPath values must be a mapping" }
+		foreach ($key in $manifest['values'].Keys) {
+			if ([string]$key -notin @('files', 'schema')) { throw "$manifestPath values contains unsupported key '$key'" }
+		}
+		foreach ($valuePath in @($manifest['values']['files'])) {
+			if ($valuePath -isnot [string] -or [string]::IsNullOrWhiteSpace([string]$valuePath)) { throw "$manifestPath values.files contains an invalid path" }
+			$globalValues += [string]$valuePath
+			$packageFiles += [string]$valuePath
+		}
+		if ($manifest['values']['schema']) { $packageFiles += [string]$manifest['values']['schema'] }
+	}
+	$documentation = @()
+	if ($null -ne $manifest['documentation']) {
+		if ($manifest['documentation'] -isnot [Collections.IDictionary]) { throw "$manifestPath documentation must be a mapping" }
+		foreach ($documentationPath in $manifest['documentation'].Values) {
+			if ($documentationPath -isnot [string] -or [string]::IsNullOrWhiteSpace([string]$documentationPath)) { throw "$manifestPath documentation contains an invalid path" }
+			$documentation += [string]$documentationPath
+			$packageFiles += [string]$documentationPath
+		}
+	}
+	$allCharts = @($components | ForEach-Object { $_.Charts })
+	$allManifestSets = @($components | ForEach-Object { $_.ManifestSets })
+	$allManifests = @($allManifestSets | ForEach-Object { $_.Files })
 	return [pscustomobject]@{
 		Root = $rootPath
 		ManifestPath = $manifestPath
 		Name = $name
 		Version = $version
-		Description = [string]$deployment['description']
+		Description = $description
 		Namespace = $namespace
-		Charts = [object[]]$charts
-		Manifests = [string[]]$manifests
+		Components = [object[]]$components
+		Charts = [object[]]$allCharts
+		ManifestSets = [object[]]$allManifestSets
+		Manifests = [string[]]$allManifests
+		GlobalValues = [string[]]$globalValues
+		Documentation = [string[]]$documentation
+		PackageFiles = [string[]]$packageFiles
+		Compatibility = if ($manifest['components'] -or $manifest['kind']) { 'zarf-v0.76' } else { 'toolchain' }
 	}
 }
 
@@ -217,6 +393,9 @@ function Get-ToolchainDeploymentBundleFiles {
 	foreach ($manifestPath in $Definition.Manifests) {
 		foreach ($file in @(Get-ToolchainDeploymentSourceFiles -Root $Definition.Root -RelativePath $manifestPath -YamlOnly)) { AddBundleFile -File $file }
 	}
+	foreach ($packageFile in $Definition.PackageFiles) {
+		foreach ($file in @(Get-ToolchainDeploymentSourceFiles -Root $Definition.Root -RelativePath $packageFile)) { AddBundleFile -File $file }
+	}
 	if ($files.Count -gt $script:ToolchainDeploymentPackageMaximumFiles) {
 		throw "deployment bundle exceeds the limit of $script:ToolchainDeploymentPackageMaximumFiles files"
 	}
@@ -271,7 +450,11 @@ function Test-ToolchainDeploymentCharts {
 		foreach ($valuesPath in $chart.Values) {
 			$arguments += @('--values', (Resolve-ToolchainChildPath -Root $Definition.Root -RelativePath $valuesPath -RejectReparsePoints -RejectRootReparsePoint))
 		}
+		foreach ($valuesPath in $Definition.GlobalValues) {
+			$arguments += @('--values', (Resolve-ToolchainChildPath -Root $Definition.Root -RelativePath $valuesPath -RejectReparsePoints -RejectRootReparsePoint))
+		}
 		if (Test-Path -LiteralPath $conventionalValues -PathType Leaf) { $arguments += @('--values', $conventionalValues) }
+		if (-not $chart.SchemaValidation) { $arguments += '--skip-schema-validation' }
 		$null = Invoke-ToolchainClusterProcess -FilePath $helm -Arguments $arguments
 	}
 }
@@ -316,6 +499,7 @@ function New-ToolchainDeploymentPackage {
 		name = $definition.Name
 		version = $definition.Version
 		manifest = 'toolchain.yaml'
+		components = @($definition.Components | ForEach-Object { $_.Name })
 		files = @($entries.ToArray())
 	}
 	Initialize-ToolchainCompression
@@ -342,6 +526,7 @@ function New-ToolchainDeploymentPackage {
 		Path = $outputPath
 		Digest = 'sha256:' + (Get-FileHash -LiteralPath $outputPath -Algorithm SHA256).Hash.ToLowerInvariant()
 		Files = $entries.Count
+		Components = @($definition.Components | ForEach-Object { $_.Name })
 		Charts = $definition.Charts.Count
 		Manifests = $definition.Manifests.Count
 	}
@@ -451,12 +636,42 @@ function Merge-ToolchainDeploymentConfig {
 	}
 }
 
+function Resolve-ToolchainDeploymentComponentSelection {
+	param(
+		[Parameter(Mandatory)]$Definition,
+		[string[]]$Components
+	)
+	$selected = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+	foreach ($component in $Definition.Components) {
+		if ($component.Required -or $component.Default) { [void]$selected.Add([string]$component.Name) }
+	}
+	$requests = @($Components | ForEach-Object { @([string]$_ -split ',') } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+	foreach ($request in $requests) {
+		$exclude = $request.StartsWith('-')
+		$pattern = if ($exclude) { $request.Substring(1) } else { $request }
+		if ([string]::IsNullOrWhiteSpace($pattern)) { throw "invalid component selection '$request'" }
+		$matchedComponents = @($Definition.Components | Where-Object { [string]$_.Name -like $pattern })
+		if ($matchedComponents.Count -eq 0) { throw "component selection '$request' did not match any package component" }
+		foreach ($component in $matchedComponents) {
+			if ($exclude) {
+				if (-not $component.Required) { [void]$selected.Remove([string]$component.Name) }
+			} else {
+				[void]$selected.Add([string]$component.Name)
+			}
+		}
+	}
+	$resolved = @($Definition.Components | Where-Object { $selected.Contains([string]$_.Name) })
+	if ($resolved.Count -eq 0) { throw 'no required, default, or explicitly selected package components remain' }
+	return $resolved
+}
+
 function Invoke-ToolchainDeploymentBundle {
 	[CmdletBinding()]
 	param(
 		[Parameter(Mandatory)][string]$Root,
 		[string]$Cluster,
 		[string]$Kubeconfig,
+		[string[]]$Components,
 		[string[]]$Values,
 		[string]$Config,
 		[string]$Namespace,
@@ -466,6 +681,7 @@ function Invoke-ToolchainDeploymentBundle {
 		[switch]$PassThru
 	)
 	$definition = Read-ToolchainDeploymentDefinition -Root $Root
+	$selectedComponents = @(Resolve-ToolchainDeploymentComponentSelection -Definition $definition -Components $Components)
 	$settings = @{
 		namespace = if ($definition.Namespace) { $definition.Namespace } else { 'default' }
 		wait = $true
@@ -483,6 +699,10 @@ function Invoke-ToolchainDeploymentBundle {
 		if (-not (Test-Path -LiteralPath $fullValuesPath -PathType Leaf)) { throw "Helm values file is not a file: $fullValuesPath" }
 		$externalValues += $fullValuesPath
 	}
+	$globalValues = @()
+	foreach ($valuesPath in $definition.GlobalValues) {
+		$globalValues += Resolve-ToolchainChildPath -Root $Root -RelativePath $valuesPath -RejectReparsePoints -RejectRootReparsePoint
+	}
 
 	$kubeconfigPath = Resolve-ToolchainDeploymentKubeconfig -Cluster $Cluster -Kubeconfig $Kubeconfig
 	$kubectl = Get-ToolchainClusterExecutable -Name kubectl -Package kubectl -InstallHint 'Install kubectl and ensure its executable is available on PATH.'
@@ -491,35 +711,48 @@ function Invoke-ToolchainDeploymentBundle {
 	catch { throw "Kubernetes API preflight failed for package deployment at $apiServer. kubectl reported: $($_.Exception.Message)" }
 
 	$appliedManifests = [Collections.ArrayList]::new()
-	foreach ($manifestPath in $definition.Manifests) {
-		foreach ($file in @(Get-ToolchainDeploymentSourceFiles -Root $Root -RelativePath $manifestPath -YamlOnly)) {
-			$arguments = @('apply', '--server-side', '--field-manager=toolchain-package')
-			if ($DryRun) { $arguments += '--dry-run=server' }
-			$arguments += @('-f', $file.FullName)
-			$null = Invoke-ToolchainBootstrapKubectl -Kubectl $kubectl -Kubeconfig $kubeconfigPath -Arguments $arguments
-			[void]$appliedManifests.Add((Get-ToolchainDeploymentRelativePath -Root $Root -Path $file.FullName))
-		}
-	}
-
 	$releases = [Collections.ArrayList]::new()
-	if ($definition.Charts.Count -gt 0) {
-		$helm = Get-ToolchainClusterExecutable -Name helm -Package helm -InstallHint 'Install Helm and ensure its executable is available on PATH.'
-		$conventionalValues = Join-Path $Root 'toolchain-values.yaml'
-		foreach ($chart in $definition.Charts) {
+	$helm = $null
+	$conventionalValues = Join-Path $Root 'toolchain-values.yaml'
+	foreach ($component in $selectedComponents) {
+		foreach ($manifestSet in $component.ManifestSets) {
+			foreach ($manifestPath in $manifestSet.Files) {
+				foreach ($file in @(Get-ToolchainDeploymentSourceFiles -Root $Root -RelativePath $manifestPath -YamlOnly)) {
+					$arguments = @('apply', '--server-side', '--field-manager=toolchain-package')
+					if ($DryRun) { $arguments += '--dry-run=server' }
+					$manifestNamespace = if ($Namespace) { [string]$settings.namespace } else { [string]$manifestSet.Namespace }
+					if ($manifestNamespace) { $arguments += @('--namespace', $manifestNamespace) }
+					$arguments += @('-f', $file.FullName)
+					$null = Invoke-ToolchainBootstrapKubectl -Kubectl $kubectl -Kubeconfig $kubeconfigPath -Arguments $arguments
+					[void]$appliedManifests.Add([pscustomobject]@{
+						Component = $component.Name
+						Name = $manifestSet.Name
+						Path = Get-ToolchainDeploymentRelativePath -Root $Root -Path $file.FullName
+						Namespace = $manifestNamespace
+					})
+				}
+			}
+		}
+		if ($component.Charts.Count -gt 0 -and -not $helm) {
+			$helm = Get-ToolchainClusterExecutable -Name helm -Package helm -InstallHint 'Install Helm and ensure its executable is available on PATH.'
+		}
+		foreach ($chart in $component.Charts) {
 			$chartPath = Resolve-ToolchainChildPath -Root $Root -RelativePath $chart.Path -RejectReparsePoints -RejectRootReparsePoint
-			$releaseNamespace = if ($chart.Namespace) { $chart.Namespace } else { [string]$settings.namespace }
+			$releaseNamespace = if ($Namespace) { [string]$settings.namespace } elseif ($chart.Namespace) { $chart.Namespace } else { [string]$settings.namespace }
 			$arguments = @('upgrade', '--install', $chart.Release, $chartPath, '--namespace', $releaseNamespace)
 			if ([bool]$settings.createNamespace) { $arguments += '--create-namespace' }
 			foreach ($valuesPath in $chart.Values) {
 				$arguments += @('--values', (Resolve-ToolchainChildPath -Root $Root -RelativePath $valuesPath -RejectReparsePoints -RejectRootReparsePoint))
 			}
+			foreach ($valuesPath in $globalValues) { $arguments += @('--values', $valuesPath) }
 			if (Test-Path -LiteralPath $conventionalValues -PathType Leaf) { $arguments += @('--values', $conventionalValues) }
 			foreach ($valuesPath in $externalValues) { $arguments += @('--values', $valuesPath) }
+			if (-not $chart.SchemaValidation) { $arguments += '--skip-schema-validation' }
 			if ($DryRun) { $arguments += '--dry-run' }
-			elseif ([bool]$settings.wait) { $arguments += @('--wait', '--timeout', "$($settings.waitSeconds)s") }
+			elseif ([bool]$settings.wait -and $chart.Wait) { $arguments += @('--wait', '--timeout', "$($settings.waitSeconds)s") }
 			if ($kubeconfigPath) { $arguments += @('--kubeconfig', $kubeconfigPath) }
 			$null = Invoke-ToolchainClusterProcess -FilePath $helm -Arguments $arguments
-			[void]$releases.Add([pscustomobject]@{ Name = $chart.Release; Namespace = $releaseNamespace; Chart = $chart.Path })
+			[void]$releases.Add([pscustomobject]@{ Component = $component.Name; Name = $chart.Release; Namespace = $releaseNamespace; Chart = $chart.Path })
 		}
 	}
 	$result = [pscustomobject]@{
@@ -530,8 +763,10 @@ function Invoke-ToolchainDeploymentBundle {
 		Kubeconfig = $kubeconfigPath
 		Namespace = [string]$settings.namespace
 		DryRun = [bool]$DryRun
+		Components = @($selectedComponents | ForEach-Object { $_.Name })
 		Releases = @($releases.ToArray())
-		Manifests = @($appliedManifests.ToArray())
+		Manifests = @($appliedManifests.ToArray() | ForEach-Object { $_.Path })
+		ManifestDetails = @($appliedManifests.ToArray())
 	}
 	$suffix = if ($DryRun) { ' (dry run)' } else { '' }
 	Write-ToolchainInfo "Deployed Toolchain package '$($result.Name):$($result.Version)' to $($result.Cluster)$suffix."
@@ -546,6 +781,7 @@ function Invoke-ToolchainDeploymentPackage {
 		[string]$Output,
 		[string]$Cluster,
 		[string]$Kubeconfig,
+		[string[]]$Components,
 		[string[]]$Values,
 		[string]$Config,
 		[string]$Namespace,
@@ -556,7 +792,7 @@ function Invoke-ToolchainDeploymentPackage {
 		[switch]$PassThru
 	)
 	if ($Command -eq 'create') {
-		if ($Cluster -or $Kubeconfig -or $Values -or $Config -or $Namespace -or $DryRun) { throw 'package create does not accept deployment target options' }
+		if ($Cluster -or $Kubeconfig -or $Components -or $Values -or $Config -or $Namespace -or $DryRun) { throw 'package create does not accept deployment target options' }
 		$source = if ($Path) { $Path } else { (Get-Location).Path }
 		return (New-ToolchainDeploymentPackage -Path $source -Output $Output -Force:$Force)
 	}
@@ -578,6 +814,7 @@ function Invoke-ToolchainDeploymentPackage {
 			Root = $root
 			Cluster = $Cluster
 			Kubeconfig = $Kubeconfig
+			Components = $Components
 			Values = $Values
 			Config = $Config
 			DryRun = $DryRun

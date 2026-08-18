@@ -22,7 +22,7 @@ Describe 'Toolchain nested argument completion' {
 		@(Get-ToolchainNestedCompletionValues -Subcommand profile -Elements @('tlc','profile','a') -WordToComplete 'a') | Should -Be @('add')
 		@(Get-ToolchainNestedCompletionValues -Subcommand profile -Elements @('tlc','profile','add','h') -WordToComplete 'h') | Should -Be @('help')
 		@(Get-ToolchainNestedCompletionValues -Subcommand package -Elements @('tlc','package','d') -WordToComplete 'd') | Should -Be @('deploy')
-		@(Get-ToolchainNestedCompletionValues -Subcommand package -Elements @('tlc','package','deploy','-C') -WordToComplete '-C') | Should -Be @('-Cluster','-Config','-Confirm')
+		@(Get-ToolchainNestedCompletionValues -Subcommand package -Elements @('tlc','package','deploy','-C') -WordToComplete '-C') | Should -Be @('-Components','-Cluster','-Config','-Confirm')
 		@(Get-ToolchainNestedCompletionValues -Subcommand cluster -Elements @('tlc','cluster','create','dev','-Engine','p') -WordToComplete 'p') | Should -Be @('podman')
 		@(Get-ToolchainNestedCompletionValues -Subcommand doctor -Elements @('tlc','doctor','-J') -WordToComplete '-J') | Should -Be @('-Json')
 		@(Get-ToolchainNestedCompletionValues -Subcommand lock -Elements @('tlc','lock','-U') -WordToComplete '-U') | Should -Be @('-Update')

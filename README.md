@@ -214,6 +214,12 @@ Toolchain lints charts, creates an integrity-indexed `.tlcpkg`, verifies every
 file before deployment, applies declared YAML, and uses Helm upgrade/install for
 repeatable releases. See [`package`](doc/toolchain-package.md).
 
+`toolchain.yaml` may alternatively use Zarf v0.76-style `kind`, `metadata`, and
+`components`. Toolchain natively supports required/default/explicit component
+selection plus local `charts[].localPath`, `valuesFiles`, and named manifest
+`files`; use `tlc package deploy ... -Components 'name,pattern*,-default-name'`
+to override the defaults. Toolchain does not install or invoke Zarf.
+
 ## Commands
 
 | Command | Description | Docs |

@@ -148,4 +148,25 @@ deployment:
 		$project.Packages | Should -BeNullOrEmpty
 		$project.Deployment.name | Should -BeExactly 'demo'
 	}
+
+	It 'accepts a Zarf v0.76-style component-only toolchain.yaml' {
+		$path = Join-Path $TestDrive 'toolchain.yaml'
+		Set-Content -LiteralPath $path -Encoding utf8 -Value @'
+kind: ZarfPackageConfig
+metadata:
+  name: demo
+  version: 1.0.0
+components:
+  - name: application
+    required: true
+    manifests:
+      - name: app
+        files:
+          - deployment.yaml
+'@
+		$project = Read-ToolchainProject -Path $path
+		$project.Packages | Should -BeNullOrEmpty
+		$project.Components.Count | Should -Be 1
+		$project.Components[0].name | Should -BeExactly 'application'
+	}
 }

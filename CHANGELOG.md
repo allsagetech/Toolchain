@@ -4,6 +4,7 @@
 
 ### Added
 
+- Add native Zarf v0.76-style package metadata, components, required/default/explicit selection, local Helm chart fields, and named manifest group compatibility without invoking Zarf.
 - Add `tlc package create` and `tlc package deploy` for integrity-indexed Kubernetes bundles containing Helm charts, conventional values/configuration, and declared YAML manifests.
 - Add safe `tlc audit -Fix` remediation with preview, policy/health/signature refusal gates, atomic lock refresh, package restore, and post-fix verification.
 - Expose package-health state-transition and last-clean-scan timestamps for remediation SLO monitoring.

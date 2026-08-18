@@ -35,6 +35,53 @@ packaged `.tgz` chart. Manifest entries may identify one YAML file or a
 directory; directories are included recursively. Paths must remain inside the
 package source and cannot traverse links or reparse points.
 
+## Zarf v0.76 component compatibility
+
+Toolchain also accepts the Zarf v0.76 package shape directly in
+`toolchain.yaml`. Toolchain parses and deploys it itself; Zarf is not installed
+or invoked.
+
+```yaml
+kind: ZarfPackageConfig
+metadata:
+  name: demo
+  version: 1.0.0
+components:
+  - name: core
+    required: true
+    manifests:
+      - name: demo-prerequisites
+        namespace: demo-system
+        files:
+          - manifests
+  - name: application
+    description: Install the application chart
+    default: true
+    charts:
+      - name: demo
+        localPath: charts/demo
+        releaseName: demo
+        namespace: demo-system
+        valuesFiles:
+          - values/base.yaml
+        noWait: false
+```
+
+Required and default components are selected automatically. Select additional
+components, use wildcards, or deselect a default with a leading `-`:
+
+```powershell
+tlc package deploy .\dist\toolchain-package-demo-1.0.0.tlcpkg `
+  -Components 'application,observability*,-example-data' -Confirm
+```
+
+Compatibility currently covers package metadata, component selection, local
+Helm charts, local manifest files/directories, chart value files, package value
+files, documentation files, namespaces, wait behavior, and schema-validation
+control. Toolchain rejects remote charts/manifests, image and repository
+bundling, file placement, actions, imports, kustomizations, templating, and
+health checks with an explicit error. These fields are never silently ignored.
+
 ## Conventional files
 
 When present beside `toolchain.yaml`, these files are included automatically:
@@ -89,7 +136,8 @@ tlc package deploy .\dist\toolchain-package-demo-1.0.0.tlcpkg `
 ```
 
 Toolchain verifies the archive before contacting Kubernetes, performs an API
-readiness check, server-side applies declared manifests, and then runs
+readiness check, and deploys selected components in declaration order. Within
+each component it server-side applies declared manifests and then runs
 `helm upgrade --install` for each chart. Repeated deployments therefore upgrade
 existing releases. Use `-DryRun` without `-Confirm` to validate and render
 without persisting resources.

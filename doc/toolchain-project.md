@@ -52,10 +52,11 @@ deployment:
     - manifests
 ```
 
-`packages` and `deployment` are independently optional, but at least one must
-be present. The deployment section is consumed by `tlc package create` and
-`tlc package deploy`; see `doc/toolchain-package.md` for conventional values,
-configuration, archive integrity, and deployment behavior.
+`packages`, `deployment`, and Zarf v0.76-style `metadata`/`components` are
+independently optional, but at least one package or deployment form must be
+present. Deployment content is consumed by `tlc package create` and
+`tlc package deploy`; see `doc/toolchain-package.md` for component compatibility,
+conventional values, configuration, archive integrity, and deployment behavior.
 
 The runtime parser intentionally implements this strict schema without a YAML
 module dependency, preserving PowerShell 5.1 and offline operation. The editor

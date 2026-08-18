@@ -444,17 +444,21 @@ function Read-ToolchainProject {
 		[string]$Path,
 		[switch]$NoResolve
 	)
-	$configPath = if ($Path) { [IO.Path]::GetFullPath($Path) } else { Find-ToolchainProjectConfig }
+	$configPath = if ($Path) {
+		if (Get-Command Resolve-ToolchainFileSystemPath -ErrorAction SilentlyContinue) { Resolve-ToolchainFileSystemPath -Path $Path }
+		else { [IO.Path]::GetFullPath($Path) }
+	} else { Find-ToolchainProjectConfig }
 	if (-not $configPath) { throw 'toolchain.yaml or Toolchain.ps1 not found from current directory upward' }
 	if ($configPath -match '(?i)\.ya?ml$') {
 		$manifest = ConvertFrom-ToolchainYaml -Text (Get-Content -LiteralPath $configPath -Raw) -Context $configPath
 		foreach ($key in $manifest.Keys) {
-			if ([string]$key -notin @('schemaVersion', 'packages', 'deployment')) { throw "$configPath contains unsupported top-level key '$key'" }
+			if ([string]$key -notin @('schemaVersion', 'packages', 'deployment', 'apiVersion', 'kind', 'metadata', 'components', 'values', 'documentation', 'constants', 'variables', 'build')) { throw "$configPath contains unsupported top-level key '$key'" }
 		}
-		if ([int]$manifest.schemaVersion -ne 1) { throw "$configPath requires schemaVersion: 1" }
+		if ($null -ne $manifest['schemaVersion'] -and [int]$manifest['schemaVersion'] -ne 1) { throw "$configPath requires schemaVersion: 1" }
+		if ($manifest['kind'] -and [string]$manifest['kind'] -ne 'ZarfPackageConfig') { throw "$configPath supports only kind: ZarfPackageConfig" }
 		$values = @()
 		if ($null -ne $manifest['packages']) { $values = @($manifest['packages']) }
-		if ($values.Count -eq 0 -and $null -eq $manifest['deployment']) { throw "$configPath must declare at least one package or a deployment" }
+		if ($values.Count -eq 0 -and $null -eq $manifest['deployment'] -and $null -eq $manifest['components']) { throw "$configPath must declare at least one package, a deployment, or components" }
 		$specs = @()
 		for ($index = 0; $index -lt $values.Count; $index++) {
 			$specs += ConvertTo-ToolchainProjectPackageSpec -Value $values[$index] -Context "package $($index + 1)"
@@ -469,6 +473,7 @@ function Read-ToolchainProject {
 			Packages = @($packages)
 			Digest = Get-ToolchainProjectDigest -PackageSpecs $specs
 			Deployment = $manifest['deployment']
+			Components = @($manifest['components'])
 		}
 	}
 

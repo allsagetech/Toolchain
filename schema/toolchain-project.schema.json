@@ -1,24 +1,57 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://allsagetech.com/toolchain/schemas/project-v1.json",
-  "title": "Toolchain project manifest",
+  "title": "Toolchain project and deployment manifest",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion"],
   "anyOf": [
     { "required": ["packages"] },
-    { "required": ["deployment"] }
+    { "required": ["deployment"] },
+    { "required": ["components"] }
   ],
   "properties": {
     "schemaVersion": { "const": 1 },
-    "packages": {
-      "type": "array",
-      "minItems": 1,
-      "items": { "$ref": "#/$defs/package" }
+    "apiVersion": { "const": "zarf.dev/v1alpha1" },
+    "kind": { "const": "ZarfPackageConfig" },
+    "metadata": { "$ref": "#/$defs/metadata" },
+    "packages": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/package" } },
+    "deployment": { "$ref": "#/$defs/deployment" },
+    "components": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/component" } },
+    "values": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "files": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "schema": { "type": "string", "minLength": 1 }
+      }
     },
-    "deployment": { "$ref": "#/$defs/deployment" }
+    "documentation": { "type": "object", "additionalProperties": { "type": "string", "minLength": 1 } },
+    "constants": { "type": "array" },
+    "variables": { "type": "array" },
+    "build": { "type": "object" }
   },
   "$defs": {
+    "metadata": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?$" },
+        "version": { "type": ["string", "number"] },
+        "description": { "type": "string" },
+        "url": { "type": "string" },
+        "image": { "type": "string" },
+        "uncompressed": { "type": "boolean" },
+        "architecture": { "type": "string" },
+        "yolo": { "type": "boolean" },
+        "authors": { "type": "string" },
+        "documentation": { "type": "string" },
+        "source": { "type": "string" },
+        "vendor": { "type": "string" },
+        "aggregateChecksum": { "type": "string" },
+        "annotations": { "type": "object" },
+        "allowNamespaceOverride": { "type": "boolean" }
+      }
+    },
     "package": {
       "oneOf": [
         { "type": "string", "minLength": 1 },
@@ -27,26 +60,87 @@
           "additionalProperties": false,
           "required": ["name"],
           "properties": {
-            "name": {
-              "type": "string",
-              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
-            },
+            "name": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
             "version": { "type": ["string", "number"] },
-            "configuration": {
-              "type": "string",
-              "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
-            },
-            "dependencies": {
-              "type": "array",
-              "items": { "$ref": "#/$defs/package" }
-            },
-            "dependsOn": {
-              "type": "array",
-              "items": { "$ref": "#/$defs/package" }
-            }
+            "configuration": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$" },
+            "dependencies": { "type": "array", "items": { "$ref": "#/$defs/package" } },
+            "dependsOn": { "type": "array", "items": { "$ref": "#/$defs/package" } }
           }
         }
       ]
+    },
+    "chart": {
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "anyOf": [{ "required": ["path"] }, { "required": ["localPath"] }],
+          "properties": {
+            "path": { "type": "string", "minLength": 1 },
+            "release": { "type": "string" },
+            "values": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+            "name": { "type": "string" },
+            "version": { "type": ["string", "number"] },
+            "url": { "type": "string" },
+            "repoName": { "type": "string" },
+            "gitPath": { "type": "string" },
+            "localPath": { "type": "string", "minLength": 1 },
+            "namespace": { "type": "string" },
+            "releaseName": { "type": "string" },
+            "noWait": { "type": "boolean" },
+            "valuesFiles": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+            "variables": { "type": "array" },
+            "schemaValidation": { "type": "boolean" },
+            "serverSideApply": { "enum": ["auto", "true", "false"] }
+          }
+        }
+      ]
+    },
+    "manifest": {
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "files"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "namespace": { "type": "string" },
+            "files": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+            "kustomizations": { "type": "array", "items": { "type": "string" } },
+            "kustomizeAllowAnyDirectory": { "type": "boolean" },
+            "enableKustomizePlugins": { "type": "boolean" },
+            "noWait": { "type": "boolean" },
+            "serverSideApply": { "enum": ["auto", "true", "false"] },
+            "template": { "type": "boolean" }
+          }
+        }
+      ]
+    },
+    "component": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?$" },
+        "description": { "type": "string" },
+        "default": { "type": "boolean" },
+        "required": { "type": "boolean" },
+        "charts": { "type": "array", "items": { "$ref": "#/$defs/chart" } },
+        "manifests": { "type": "array", "items": { "$ref": "#/$defs/manifest" } },
+        "only": { "type": "object" },
+        "group": { "type": "string" },
+        "import": { "type": "object" },
+        "images": { "type": "array" },
+        "imageArchives": { "type": "array" },
+        "repos": { "type": "array" },
+        "files": { "type": "array" },
+        "dataInjections": { "type": "array" },
+        "actions": { "type": "object" },
+        "scripts": { "type": "object" },
+        "healthChecks": { "type": "array" }
+      }
     },
     "deployment": {
       "type": "object",
@@ -56,32 +150,10 @@
         "name": { "type": "string", "pattern": "^[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?$" },
         "version": { "type": ["string", "number"] },
         "description": { "type": "string" },
-        "namespace": { "type": "string", "pattern": "^[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?$" },
-        "charts": {
-          "type": "array",
-          "items": {
-            "oneOf": [
-              { "type": "string", "minLength": 1 },
-              {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["path"],
-                "properties": {
-                  "path": { "type": "string", "minLength": 1 },
-                  "release": { "type": "string", "pattern": "^[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?$" },
-                  "namespace": { "type": "string", "pattern": "^[a-z0-9](?:[-a-z0-9.]*[a-z0-9])?$" },
-                  "values": { "type": "array", "items": { "type": "string", "minLength": 1 } }
-                }
-              }
-            ]
-          }
-        },
-        "manifests": { "type": "array", "items": { "type": "string", "minLength": 1 } }
-      },
-      "anyOf": [
-        { "required": ["charts"] },
-        { "required": ["manifests"] }
-      ]
+        "namespace": { "type": "string" },
+        "charts": { "type": "array", "items": { "$ref": "#/$defs/chart" } },
+        "manifests": { "type": "array", "items": { "$ref": "#/$defs/manifest" } }
+      }
     }
   }
 }
