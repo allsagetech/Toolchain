@@ -24,6 +24,7 @@
 
 ### Fixed
 
+- Resolve relative deployment-package paths from PowerShell's current filesystem location instead of the process launch directory.
 - Build and import the admission agent locally when initializing managed clusters, removing the dependency on an unpublished versioned agent image.
 - Automatically select a sole managed cluster, refresh K3s kubeconfigs before initialization, distinguish stopped K3s servers, and report actionable Kubernetes API preflight failures.
 - Reconcile managed K3s kubeconfigs with the container engine's live published API port and use IPv4 loopback, avoiding stale or unresolvable Docker Desktop endpoints.

@@ -75,7 +75,7 @@ function ConvertTo-ToolchainDeploymentChart {
 
 function Read-ToolchainDeploymentDefinition {
 	param([Parameter(Mandatory)][string]$Root)
-	$rootPath = [IO.Path]::GetFullPath($Root)
+	$rootPath = Resolve-ToolchainFileSystemPath -Path $Root
 	$manifestPath = Join-Path $rootPath 'toolchain.yaml'
 	if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
 		throw "Toolchain deployment manifest not found: $manifestPath"
@@ -133,7 +133,7 @@ function Read-ToolchainDeploymentDefinition {
 
 function Read-ToolchainDeploymentConfig {
 	param([Parameter(Mandatory)][string]$Path)
-	$fullPath = [IO.Path]::GetFullPath($Path)
+	$fullPath = Resolve-ToolchainFileSystemPath -Path $Path
 	if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) { throw "Toolchain deployment config is not a file: $fullPath" }
 	$config = ConvertFrom-ToolchainYaml -Text (Get-Content -LiteralPath $fullPath -Raw) -Context $fullPath
 	foreach ($key in $config.Keys) {
@@ -283,7 +283,7 @@ function New-ToolchainDeploymentPackage {
 		[string]$Output,
 		[switch]$Force
 	)
-	$root = [IO.Path]::GetFullPath($Path)
+	$root = Resolve-ToolchainFileSystemPath -Path $Path
 	if (-not (Test-Path -LiteralPath $root -PathType Container)) { throw "deployment package source is not a directory: $root" }
 	$rootItem = Get-Item -LiteralPath $root -Force
 	if ($rootItem.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "deployment package source cannot be a link or reparse point: $root" }
@@ -293,7 +293,7 @@ function New-ToolchainDeploymentPackage {
 	Test-ToolchainDeploymentCharts -Definition $definition
 	$files = Get-ToolchainDeploymentBundleFiles -Definition $definition
 	if (-not $Output) { $Output = Join-Path (Join-Path $root 'dist') "toolchain-package-$($definition.Name)-$($definition.Version).tlcpkg" }
-	$outputPath = [IO.Path]::GetFullPath($Output)
+	$outputPath = Resolve-ToolchainFileSystemPath -Path $Output
 	if ([IO.Path]::GetExtension($outputPath) -ine '.tlcpkg') { throw "deployment package output must use the .tlcpkg extension: $outputPath" }
 	if ((Test-Path -LiteralPath $outputPath) -and -not $Force) { throw "deployment package already exists: $outputPath (use -Force to replace it)" }
 	$parent = Split-Path -Parent $outputPath
@@ -369,7 +369,7 @@ function Remove-ToolchainDeploymentTemporaryRoot {
 
 function Expand-ToolchainDeploymentPackage {
 	param([Parameter(Mandatory)][string]$Path)
-	$packagePath = [IO.Path]::GetFullPath($Path)
+	$packagePath = Resolve-ToolchainFileSystemPath -Path $Path
 	if (-not (Test-Path -LiteralPath $packagePath -PathType Leaf)) { throw "deployment package is not a file: $packagePath" }
 	$packageItem = Get-Item -LiteralPath $packagePath -Force
 	if ($packageItem.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "deployment package cannot be a link or reparse point: $packagePath" }
@@ -474,12 +474,12 @@ function Invoke-ToolchainDeploymentBundle {
 	}
 	$internalConfig = Join-Path $Root 'toolchain-config.yaml'
 	if (Test-Path -LiteralPath $internalConfig -PathType Leaf) { Merge-ToolchainDeploymentConfig -Settings $settings -Path $internalConfig }
-	if ($Config) { Merge-ToolchainDeploymentConfig -Settings $settings -Path ([IO.Path]::GetFullPath($Config)) }
+	if ($Config) { Merge-ToolchainDeploymentConfig -Settings $settings -Path (Resolve-ToolchainFileSystemPath -Path $Config) }
 	if ($Namespace) { Assert-ToolchainDeploymentIdentifier -Value $Namespace -Kind 'namespace'; $settings.namespace = $Namespace }
 	if ($OverrideWaitSeconds) { $settings.waitSeconds = $WaitSeconds }
 	$externalValues = @()
 	foreach ($valuesPath in @($Values | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })) {
-		$fullValuesPath = [IO.Path]::GetFullPath([string]$valuesPath)
+		$fullValuesPath = Resolve-ToolchainFileSystemPath -Path ([string]$valuesPath)
 		if (-not (Test-Path -LiteralPath $fullValuesPath -PathType Leaf)) { throw "Helm values file is not a file: $fullValuesPath" }
 		$externalValues += $fullValuesPath
 	}
@@ -566,7 +566,7 @@ function Invoke-ToolchainDeploymentPackage {
 	$root = $null
 	$temporaryRoot = $null
 	try {
-		$fullPath = [IO.Path]::GetFullPath($Path)
+		$fullPath = Resolve-ToolchainFileSystemPath -Path $Path
 		if (Test-Path -LiteralPath $fullPath -PathType Container) {
 			$root = $fullPath
 		} else {

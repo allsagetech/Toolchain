@@ -107,6 +107,18 @@ function ResolvePackagePath {
 	return (Join-Path $contentRoot $digestHex)
 }
 
+function Resolve-ToolchainFileSystemPath {
+	param([Parameter(Mandatory)][string]$Path)
+
+	$provider = $null
+	$drive = $null
+	$resolved = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path, [ref]$provider, [ref]$drive)
+	if (-not $provider -or $provider.Name -ne 'FileSystem') {
+		throw "path must use the FileSystem provider: $Path"
+	}
+	return [IO.Path]::GetFullPath($resolved)
+}
+
 function Resolve-ToolchainChildPath {
 	param(
 		[Parameter(Mandatory)][string]$Root,

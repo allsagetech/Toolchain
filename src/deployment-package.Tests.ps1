@@ -83,6 +83,27 @@ Describe 'Toolchain deployment package creation' {
 		}
 	}
 
+	It 'resolves dot against the current PowerShell filesystem location' {
+		$source = Join-Path $TestDrive 'dot-source'
+		New-TestDeploymentSource -Root $source
+		$output = Join-Path $TestDrive 'dot-source.tlcpkg'
+		$originalLocation = Get-Location
+		$originalProcessDirectory = [Environment]::CurrentDirectory
+		try {
+			[Environment]::CurrentDirectory = $TestDrive
+			Set-Location -LiteralPath $source
+
+			$result = Invoke-ToolchainDeploymentPackage -Command create -Path '.' -Output $output
+
+			$result.Path | Should -BeExactly $output
+			Test-Path -LiteralPath $output -PathType Leaf | Should -BeTrue
+			$script:packageProcessCalls[0].Arguments | Should -Contain (Join-Path $source 'chart')
+		} finally {
+			Set-Location -LiteralPath $originalLocation.Path
+			[Environment]::CurrentDirectory = $originalProcessDirectory
+		}
+	}
+
 	It 'rejects manifest paths that escape the package root' {
 		$source = Join-Path $TestDrive 'unsafe'
 		New-TestDeploymentSource -Root $source
