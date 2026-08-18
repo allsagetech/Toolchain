@@ -42,6 +42,13 @@ toolchain cluster create kind-dev -Provider kind -Workers 2 -ApiPort 6443
 toolchain cluster create k3s-dev -Provider k3s -Servers 1 -Workers 2 -ApiPort 6550
 ```
 
+Toolchain-created K3s clusters disable the bundled Traefik ingress controller.
+Install an ingress controller explicitly if the cluster needs ingress. Toolchain
+also stores the live API port published by Docker or Podman and uses
+`127.0.0.1` in the managed kubeconfig so Docker Desktop host aliases cannot
+break cluster access. Existing clusters retain their original K3s arguments;
+recreate an existing K3s cluster to remove a previously installed Traefik.
+
 Pass a provider-specific kind or k3d configuration file with `-Config`. A
 configuration file cannot be combined with `-Servers`, `-Workers`, or
 `-ApiPort`. Use `-Image` to pin the kind node or K3s image and `-WaitSeconds` to

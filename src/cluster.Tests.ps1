@@ -210,14 +210,30 @@ Describe 'Toolchain local cluster agent image' {
 		$kubeconfig = Join-Path $TestDrive 'kubeconfig.yaml'
 		Mock Get-ToolchainClusterExecutable { 'k3d.exe' }
 		Mock Get-ToolchainClusterKubeconfigPath { $kubeconfig }
-		Mock Invoke-ToolchainClusterProcess { New-TestClusterProcessResult -Output @('apiVersion: v1', 'clusters: []') }
+		Mock Resolve-ToolchainContainerEngine { [pscustomobject]@{ Name = 'docker'; Path = 'docker.exe' } }
+		Mock Invoke-ToolchainClusterProcess {
+			if ($FilePath -eq 'docker.exe') { return (New-TestClusterProcessResult -Output @('0.0.0.0:49152', '[::]:49152')) }
+			New-TestClusterProcessResult -Output @('apiVersion: v1', 'clusters:', '- cluster:', '    server: https://host.docker.internal:6443')
+		}
 
-		Sync-ToolchainClusterKubeconfig -State ([pscustomobject]@{ name = 'dev'; provider = 'k3s' })
+		Sync-ToolchainClusterKubeconfig -State ([pscustomobject]@{ name = 'dev'; provider = 'k3s'; engine = 'docker' })
 
-		Get-Content -LiteralPath $kubeconfig -Raw | Should -BeExactly "apiVersion: v1`nclusters: []`n"
+		Get-Content -LiteralPath $kubeconfig -Raw | Should -BeExactly "apiVersion: v1`nclusters:`n- cluster:`n    server: https://127.0.0.1:49152`n"
 		Should -Invoke Invoke-ToolchainClusterProcess -Times 1 -Exactly -ParameterFilter {
 			$FilePath -eq 'k3d.exe' -and ($Arguments -join ' ') -eq 'kubeconfig get dev'
 		}
+		Should -Invoke Invoke-ToolchainClusterProcess -Times 1 -Exactly -ParameterFilter {
+			$FilePath -eq 'docker.exe' -and ($Arguments -join ' ') -eq 'port k3d-dev-serverlb 6443/tcp'
+		}
+	}
+
+	It 'falls back to the first server when a k3d cluster has no load balancer' {
+		Mock Invoke-ToolchainClusterProcess {
+			if ($Arguments[1] -eq 'k3d-dev-serverlb') { return (New-TestClusterProcessResult -ExitCode 1) }
+			New-TestClusterProcessResult -Output @('127.0.0.1:49153')
+		}
+
+		Get-ToolchainK3dPublishedApiPort -Name dev -ContainerEngine docker | Should -Be 49153
 	}
 }
 
@@ -241,7 +257,7 @@ Describe 'Toolchain cluster lifecycle' {
 			}
 			if ($FilePath -eq 'kind' -and $joined -eq 'get clusters') { return (New-TestClusterProcessResult -Output @('dev')) }
 			if ($FilePath -eq 'k3d' -and $joined -like 'kubeconfig get *') {
-				return (New-TestClusterProcessResult -Output @('apiVersion: v1', 'clusters: []'))
+				return (New-TestClusterProcessResult -Output @('apiVersion: v1', 'clusters:', '- cluster:', '    server: https://host.docker.internal:6443'))
 			}
 			if ($FilePath -eq 'k3d' -and $joined -eq 'cluster list --no-headers') {
 				return (New-TestClusterProcessResult -Output @('dev 1/1 1/1'))
@@ -294,9 +310,11 @@ Describe 'Toolchain cluster lifecycle' {
 		$create = $script:clusterCalls | Where-Object { $_.FilePath -eq 'k3d' -and ($_.Arguments -join ' ') -like 'cluster create*' } | Select-Object -First 1
 		$create.Arguments | Should -Contain '--kubeconfig-update-default=false'
 		$create.Arguments | Should -Contain '--kubeconfig-switch-context=false'
+		$create.Arguments | Should -Contain '--k3s-arg'
+		$create.Arguments | Should -Contain '--disable=traefik@server:*'
 		(Get-TestClusterArgumentValue -Arguments $create.Arguments -Name '--agents') | Should -Be '2'
 		(Get-TestClusterArgumentValue -Arguments $create.Arguments -Name '--api-port') | Should -Be '127.0.0.1:6550'
-		Get-Content -LiteralPath $result.Kubeconfig -Raw | Should -Match 'apiVersion: v1'
+		Get-Content -LiteralPath $result.Kubeconfig -Raw | Should -Match 'server: https://127\.0\.0\.1:49152'
 	}
 
 	It 'creates a single-node k0s cluster with localhost-only API access' {

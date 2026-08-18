@@ -19,11 +19,13 @@
 - Stage all release assets on a draft before publication and fail the release workflow unless GitHub confirms immutable-release enforcement.
 - Retain CI logs for an explicit 14-day period and document permanent release-evidence retention.
 - Verify official `allsagetech/toolchains` package digests with the protected GitHub Actions Cosign identity by default, while preserving explicit policy and diagnostic overrides.
+- Disable the bundled Traefik ingress controller in Toolchain-created K3s clusters so ingress remains an explicit operator choice.
 
 ### Fixed
 
 - Build and import the admission agent locally when initializing managed clusters, removing the dependency on an unpublished versioned agent image.
 - Automatically select a sole managed cluster, refresh K3s kubeconfigs before initialization, distinguish stopped K3s servers, and report actionable Kubernetes API preflight failures.
+- Reconcile managed K3s kubeconfigs with the container engine's live published API port and use IPv4 loopback, avoiding stale or unresolvable Docker Desktop endpoints.
 - Break the secure-verification bootstrap loop by checksum-verifying a pinned Sigstore Cosign verifier when no compatible application is installed, including Windows PowerShell hosts whose .NET runtime omits architecture data or whose caller uses strict error handling, and report legacy short-digest package caches with an actionable verified-pull recovery message.
 
 ## 2.4.0 - 2026-08-15

@@ -230,7 +230,7 @@ function Get-ToolchainHelpTopics {
 			'-Config PATH          kind or k3d configuration file.'
 		) `
 		-Examples @('tlc cluster create dev -Provider kind', 'tlc cluster create dev -Provider k3s -Workers 2', 'tlc cluster create dev -Provider k0s -Image docker.io/k0sproject/k0s:v1.32.4-k0s.0') `
-		-Notes @('k0s requires an explicitly versioned image and supports one combined controller/worker container.', '-Config cannot be combined with -Servers, -Workers, or -ApiPort.')
+		-Notes @('K3s clusters disable the bundled Traefik ingress controller and use the live container-engine API port.', 'k0s requires an explicitly versioned image and supports one combined controller/worker container.', '-Config cannot be combined with -Servers, -Workers, or -ApiPort.')
 	$topics.'cluster init' = New-ToolchainHelpTopic `
 		-Description 'Natively prepares a Kubernetes cluster with Toolchain registry, state, and image-mutation infrastructure.' `
 		-Usage @('tlc cluster init [NAME] -Confirm [-Kubeconfig PATH] [-Components git-server|none] [-AgentMutationPolicy all|labeled] [-StorageClass NAME] [-RegistryStorage SIZE] [-GitStorage SIZE] [-RegistryNodePort PORT] [-WaitSeconds SECONDS] [-PassThru]') `

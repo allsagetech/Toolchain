@@ -440,6 +440,41 @@ function Resolve-ToolchainCurrentClusterContext {
 	return $context
 }
 
+function Get-ToolchainK3dPublishedApiPort {
+	param(
+		[Parameter(Mandatory)][string]$Name,
+		[Parameter(Mandatory)][string]$ContainerEngine
+	)
+
+	$containers = @("k3d-$Name-serverlb", "k3d-$Name-server-0")
+	foreach ($container in $containers) {
+		$result = Invoke-ToolchainClusterProcess -FilePath $ContainerEngine -Arguments @('port', $container, '6443/tcp') -AllowFailure
+		if ($result.ExitCode -ne 0) { continue }
+		$ports = @(
+			foreach ($line in $result.Output) {
+				if ([string]$line -match ':(?<Port>\d+)\s*$') { [int]$Matches.Port }
+			}
+		) | Select-Object -Unique
+		if ($ports.Count -eq 1) { return [int]$ports[0] }
+		if ($ports.Count -gt 1) {
+			throw "multiple published Kubernetes API ports were found for k3d cluster '$Name': $($ports -join ', ')"
+		}
+	}
+	throw "could not determine the published Kubernetes API port for k3d cluster '$Name'; confirm its server load balancer is running and exposes 6443/tcp"
+}
+
+function Set-ToolchainK3dKubeconfigServer {
+	param(
+		[Parameter(Mandatory)][string]$Content,
+		[Parameter(Mandatory)][int]$Port
+	)
+
+	$match = [regex]::Match($Content, '(?m)^(\s*server:\s*)\S+\s*$')
+	if (-not $match.Success) { throw 'k3d kubeconfig did not contain a server entry' }
+	$replacement = $match.Groups[1].Value + "https://127.0.0.1:$Port"
+	return $Content.Substring(0, $match.Index) + $replacement + $Content.Substring($match.Index + $match.Length)
+}
+
 function Sync-ToolchainClusterKubeconfig {
 	param([Parameter(Mandatory)]$State)
 
@@ -449,6 +484,10 @@ function Sync-ToolchainClusterKubeconfig {
 	$result = Invoke-ToolchainClusterProcess -FilePath $k3d -Arguments @('kubeconfig', 'get', $name)
 	$content = ($result.Output -join "`n").Trim()
 	if (-not $content) { throw "k3d returned an empty kubeconfig for cluster '$name'" }
+	$engineName = if ($State.engine) { [string]$State.engine } else { 'docker' }
+	$engine = Resolve-ToolchainContainerEngine -Engine $engineName -Provider k3s
+	$port = Get-ToolchainK3dPublishedApiPort -Name $name -ContainerEngine $engine.Path
+	$content = Set-ToolchainK3dKubeconfigServer -Content $content -Port $port
 	$path = Get-ToolchainClusterKubeconfigPath -Name $name
 	Write-ToolchainClusterTextFile -Path $path -Content ($content + "`n")
 }
@@ -495,6 +534,7 @@ function New-ToolchainKindCluster {
 
 function New-ToolchainK3dCluster {
 	param(
+		[Parameter(Mandatory)][string]$ContainerEngine,
 		[Parameter(Mandatory)][string]$Name,
 		[Parameter(Mandatory)][string]$Kubeconfig,
 		[Parameter(Mandatory)][int]$Servers,
@@ -506,7 +546,11 @@ function New-ToolchainK3dCluster {
 	)
 
 	$k3d = Get-ToolchainClusterExecutable -Name 'k3d' -Package 'k3d' -InstallHint 'Install k3d and ensure its executable is available on PATH.'
-	$k3dArguments = @('cluster', 'create', $Name, '--wait', '--timeout', "${WaitSeconds}s", '--kubeconfig-update-default=false', '--kubeconfig-switch-context=false')
+	$k3dArguments = @(
+		'cluster', 'create', $Name, '--wait', '--timeout', "${WaitSeconds}s",
+		'--kubeconfig-update-default=false', '--kubeconfig-switch-context=false',
+		'--k3s-arg', '--disable=traefik@server:*'
+	)
 	if ($Config) {
 		$k3dArguments += @('--config', (Resolve-ToolchainClusterConfigPath -Path $Config))
 	} else {
@@ -522,6 +566,8 @@ function New-ToolchainK3dCluster {
 		$result = Invoke-ToolchainClusterProcess -FilePath $k3d -Arguments @('kubeconfig', 'get', $Name)
 		$content = ($result.Output -join "`n").Trim()
 		if (-not $content) { throw 'k3d returned an empty kubeconfig' }
+		$port = Get-ToolchainK3dPublishedApiPort -Name $Name -ContainerEngine $ContainerEngine
+		$content = Set-ToolchainK3dKubeconfigServer -Content $content -Port $port
 		Write-ToolchainClusterTextFile -Path $Kubeconfig -Content ($content + "`n")
 	} catch {
 		if ($created) {
@@ -786,7 +832,7 @@ function Invoke-ToolchainCluster {
 			try {
 				switch ($Provider) {
 					'kind' { New-ToolchainKindCluster -Name $Name -Kubeconfig $kubeconfig -Servers $Servers -Workers $Workers -ApiPort $ApiPort -WaitSeconds $WaitSeconds -Image $Image -Config $Config -Engine $containerEngine.Name }
-					'k3s' { New-ToolchainK3dCluster -Name $Name -Kubeconfig $kubeconfig -Servers $Servers -Workers $Workers -ApiPort $ApiPort -WaitSeconds $WaitSeconds -Image $Image -Config $Config }
+					'k3s' { New-ToolchainK3dCluster -ContainerEngine $containerEngine.Path -Name $Name -Kubeconfig $kubeconfig -Servers $Servers -Workers $Workers -ApiPort $ApiPort -WaitSeconds $WaitSeconds -Image $Image -Config $Config }
 					'k0s' { New-ToolchainK0sCluster -ContainerEngine $containerEngine.Path -Name $Name -Kubeconfig $kubeconfig -ApiPort $ApiPort -WaitSeconds $WaitSeconds -Image $Image }
 				}
 				$created = $true
