@@ -107,6 +107,11 @@ tlc cluster init dev -Confirm -Components none
 tlc cluster init dev -Confirm -Components git-server
 ```
 
+Cluster image mappings are opt-in by default: Toolchain-managed Pod templates
+must carry `toolchain.dev/agent: mutate`. Zarf and other unlabeled workloads
+are not rewritten; `-AgentMutationPolicy all` is reserved for explicit legacy
+compatibility.
+
 Launch K9s against the current kubecontext or a Toolchain-managed cluster:
 
 ```powershell

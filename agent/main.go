@@ -108,7 +108,11 @@ func main() {
 func runAdmission() {
 	a := &agent{
 		mappingsPath: getenv("TOOLCHAIN_MAPPINGS_PATH", "/etc/toolchain-agent/mappings.json"),
-		policy:       getenv("TOOLCHAIN_MUTATION_POLICY", "all"),
+		// Image mappings are intentionally opt-in. A package deployment must mark
+		// its Pod templates with toolchain.dev/agent: mutate before the admission
+		// agent can rewrite an image. The explicit "all" policy remains available
+		// for legacy clusters, but is never the implicit behavior.
+		policy:       getenv("TOOLCHAIN_MUTATION_POLICY", "labeled"),
 		pullSecret:   os.Getenv("TOOLCHAIN_PULL_SECRET"),
 	}
 	if a.policy != "all" && a.policy != "labeled" {

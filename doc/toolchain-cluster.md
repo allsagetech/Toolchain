@@ -167,10 +167,13 @@ a different free port with `-RegistryNodePort`.
 
 The admission agent rewrites only complete image references listed in the
 `toolchain-image-mappings` ConfigMap. It never performs prefix or heuristic
-rewrites. `-AgentMutationPolicy all` applies known mappings by default;
-`labeled` requires `toolchain.dev/agent: mutate` on a Pod. Label a namespace or
-Pod `toolchain.dev/agent: ignore` to exclude it. The webhook begins fail-open
-while establishing its generated TLS trust, then changes itself to fail-closed.
+rewrites. The default `-AgentMutationPolicy labeled` requires
+`toolchain.dev/agent: mutate` on each Toolchain-managed Pod, so Zarf and other
+third-party workloads are not affected. `-AgentMutationPolicy all` is an
+explicit legacy override that applies mappings to every non-excluded Pod.
+Label a namespace or Pod `toolchain.dev/agent: ignore` to exclude it. The
+webhook begins fail-open while establishing its generated TLS trust, then
+changes itself to fail-closed.
 
 Add the optional Git service interactively or explicitly:
 

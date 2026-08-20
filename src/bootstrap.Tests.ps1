@@ -151,6 +151,7 @@ Describe 'Toolchain native cluster initialization' {
 		@($script:kubectlCalls | Where-Object { $_.Arguments -contains '--raw=/readyz' }).Count | Should -Be 1
 		($script:kubectlCalls | Where-Object { $_.Arguments -contains 'apply' }).Arguments | Should -Contain '--server-side'
 		$script:appliedManifest | Should -Match ([regex]::Escape('docker.io/example:1'))
+		$script:appliedManifest | Should -Match "value: 'labeled'"
 		@($script:kubectlCalls | Where-Object { $_.Arguments -contains 'restart' }).Count | Should -Be 1
 		@($script:kubectlCalls | Where-Object { $_.Arguments -contains 'deployment/toolchain-agent' }).Count | Should -Be 2
 		@($script:kubectlCalls | Where-Object { $_.Arguments -contains 'deployment/toolchain-registry-gateway' }).Count | Should -Be 1

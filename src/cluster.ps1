@@ -761,7 +761,7 @@ function Invoke-ToolchainCluster {
 		[string]$Kubeconfig,
 		[switch]$Confirm,
 		[ValidateSet('git-server', 'none')][string[]]$Components,
-		[ValidateSet('all', 'labeled')][string]$AgentMutationPolicy = 'all',
+		[ValidateSet('all', 'labeled')][string]$AgentMutationPolicy = 'labeled',
 		[string]$AgentImage,
 		[string]$RegistryImage,
 		[string]$GitImage,

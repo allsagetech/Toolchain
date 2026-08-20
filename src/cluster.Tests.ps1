@@ -135,7 +135,7 @@ Describe 'Toolchain cluster validation' {
 		Invoke-ToolchainCluster -Command init -Confirm -Components none
 
 		Should -Invoke Invoke-ToolchainClusterInit -Times 1 -Exactly -ParameterFilter {
-			$Name -eq 'dev' -and -not $AgentImage -and $BuildLocalAgent
+			$Name -eq 'dev' -and -not $AgentImage -and $BuildLocalAgent -and $AgentMutationPolicy -eq 'labeled'
 		}
 	}
 

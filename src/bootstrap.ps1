@@ -781,7 +781,7 @@ function Invoke-ToolchainClusterInit {
 		[switch]$Confirm,
 		[ValidateSet('git-server', 'none')][string[]]$Components,
 		[switch]$PromptForComponents,
-		[ValidateSet('all', 'labeled')][string]$AgentMutationPolicy = 'all',
+		[ValidateSet('all', 'labeled')][string]$AgentMutationPolicy = 'labeled',
 		[string]$AgentImage = (Get-ToolchainBootstrapAgentImage),
 		[switch]$BuildLocalAgent,
 		[string]$RegistryImage = $script:ToolchainRegistryImage,

@@ -203,6 +203,12 @@ chart or manifest. A source-directory deployment performs the pull and
 conversion at deployment time. `-DryRun` reports planned images without pulling
 or publishing them.
 
+The cluster admission policy defaults to `labeled`. Toolchain-managed Pod
+templates must opt in with `toolchain.dev/agent: mutate` when they need these
+image mappings; unlabeled Zarf and other third-party workloads are left alone.
+Initialize with `-AgentMutationPolicy all` only for legacy clusters that
+intentionally need global image rewriting.
+
 ## Package variables
 
 Declare deployment-time values with top-level `variables`. Names use uppercase
