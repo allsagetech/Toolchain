@@ -46,8 +46,8 @@ This repo includes an installer that builds the module and copies it to your use
 
 ### Optional: load packages whenever PowerShell starts
 
-Create your current-user PowerShell profile with the execution-policy and
-green Toolchain startup header, without adding package loads:
+Create your current-user PowerShell profile with the execution-policy and no
+startup banner, without adding package loads:
 
 ```powershell
 toolchain profile init

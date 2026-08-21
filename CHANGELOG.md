@@ -22,6 +22,7 @@
 
 ### Changed
 
+- Keep generated PowerShell profiles quiet so Toolchain does not add startup output to Zarf or other command workflows.
 - Default cluster image-mapping admission to labeled Toolchain-managed Pods so Zarf and unrelated workloads are not rewritten; retain global mutation only as an explicit legacy policy.
 - Stage all release assets on a draft before publication and fail the release workflow unless GitHub confirms immutable-release enforcement.
 - Retain CI logs for an explicit 14-day period and document permanent release-evidence retention.

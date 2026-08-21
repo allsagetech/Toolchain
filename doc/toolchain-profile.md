@@ -11,9 +11,10 @@ Creates or manages Toolchain package loads in the current user's
 
 `profile init` creates the profile and its parent directory only when they are
 missing. On Windows, a new profile sets the current-user execution policy to
-`Unrestricted`; every platform prints a green `Toolchain by AllSageTech` heading
-when PowerShell starts. Linux and macOS omit the Windows-only execution-policy
-line. An existing profile is never overwritten by `profile init`.
+`Unrestricted`; profile initialization is otherwise quiet so Toolchain does not
+pollute output from commands such as Zarf. Linux and macOS omit the
+Windows-only execution-policy line. An existing profile is never overwritten by
+`profile init`.
 
 ## Usage
 
@@ -27,7 +28,7 @@ toolchain profile path
 
 ## Examples
 
-Create a profile with the Toolchain startup header:
+Create a quiet profile:
 
 ```powershell
 PS C:\example> toolchain profile init
@@ -51,7 +52,6 @@ The resulting managed section looks like this:
 
 ```powershell
 Set-ExecutionPolicy -Scope CurrentUser Unrestricted
-Write-Host "Toolchain by AllSageTech" -ForegroundColor Green
 
 # >>> Toolchain managed packages >>>
 toolchain load 'node' *> $null

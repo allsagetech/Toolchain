@@ -6,9 +6,9 @@ SPDX-License-Identifier: MPL-2.0
 
 $script:ToolchainProfileStartMarker = '# >>> Toolchain managed packages >>>'
 $script:ToolchainProfileEndMarker = '# <<< Toolchain managed packages <<<'
-$script:ToolchainProfileHeader = @('Write-Host "Toolchain by AllSageTech" -ForegroundColor Green')
+$script:ToolchainProfileHeader = @()
 if ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)) {
-	$script:ToolchainProfileHeader = @('Set-ExecutionPolicy -Scope CurrentUser Unrestricted') + $script:ToolchainProfileHeader
+	$script:ToolchainProfileHeader = @('Set-ExecutionPolicy -Scope CurrentUser Unrestricted')
 }
 
 function Get-ToolchainPowerShellProfilePath {
