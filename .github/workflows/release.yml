@@ -209,6 +209,40 @@ jobs:
           "$hash  $([IO.Path]::GetFileName($archive))" | Set-Content -LiteralPath dist\SHA256SUMS -Encoding ascii
           "archive=$archive" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
+      - name: Run built package creation smoke test
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $root = Join-Path $env:RUNNER_TEMP 'toolchain-release-smoke'
+          $null = New-Item -ItemType Directory -Path $root -Force
+          @'
+          apiVersion: toolchain.allsagetech.com/v1alpha1
+          kind: ToolchainPackageConfig
+          metadata:
+            name: release-smoke
+            version: 1.0.0
+          components:
+            - name: smoke
+              required: true
+              manifests:
+                - name: smoke
+                  files:
+                    - smoke.yaml
+          '@ | Set-Content -LiteralPath (Join-Path $root 'toolchain.yaml') -Encoding utf8
+          @'
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: release-smoke
+          data:
+            status: ready
+          '@ | Set-Content -LiteralPath (Join-Path $root 'smoke.yaml') -Encoding utf8
+          Import-Module (Join-Path $PWD 'build/Toolchain/Toolchain.psd1') -Force
+          $output = Join-Path $env:RUNNER_TEMP 'release-smoke.tlcpkg'
+          Invoke-Toolchain -Command package -ArgumentList @('create', $root, '-Output', $output)
+          if (-not (Test-Path -LiteralPath $output -PathType Leaf)) { throw 'Release package smoke test did not create an archive.' }
+          Invoke-Toolchain -Command help -ArgumentList @('cluster', 'doctor')
+
       - name: Export canonical package specification
         shell: pwsh
         run: |

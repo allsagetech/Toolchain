@@ -949,6 +949,59 @@ components:
 	}
 }
 
+Describe 'Toolchain deployment compatibility and ordering' {
+	It 'accepts Zarf-shaped component metadata and orders Helm dependencies' {
+		$source = Join-Path $TestDrive 'compatibility-source'
+		New-TestToolchainComponentSource -Root $source
+		[IO.File]::WriteAllText((Join-Path $source 'payload.txt'), 'payload')
+		$manifest = @'
+apiVersion: toolchain.allsagetech.com/v1alpha1
+kind: ToolchainPackageConfig
+metadata:
+  name: compatibility-demo
+  version: 1.0.0
+constants:
+  environment: dev
+build:
+  architecture: amd64
+components:
+  - name: app
+    required: true
+    files:
+      - payload.txt
+    healthChecks:
+      - url: https://example.invalid/health
+    charts:
+      - name: app
+        localPath: chart
+        releaseName: app
+        dependsOn:
+          - database
+      - name: database
+        localPath: chart
+        releaseName: database
+'@
+		[IO.File]::WriteAllText((Join-Path $source 'toolchain.yaml'), $manifest)
+		$definition = Read-ToolchainDeploymentDefinition -Root $source
+
+		$definition.Constants.environment | Should -BeExactly 'dev'
+		$definition.Components[0].CompatibilityFiles | Should -Contain 'payload.txt'
+		$definition.Components[0].HealthChecks.Count | Should -Be 1
+		$definition.Components[0].Only.Count | Should -Be 0
+		$definition.Build.architecture | Should -BeExactly 'amd64'
+		$order = @(Resolve-ToolchainDeploymentChartOrder -Charts $definition.Components[0].Charts)
+		$order.Release | Should -Be @('database', 'app')
+	}
+
+	It 'rejects missing and cyclic Helm dependencies' {
+		$first = [pscustomobject]@{ Release = 'first'; DependsOn = @('missing') }
+		{ Resolve-ToolchainDeploymentChartOrder -Charts @($first) } | Should -Throw '*not selected*'
+		$a = [pscustomobject]@{ Release = 'a'; DependsOn = @('b') }
+		$b = [pscustomobject]@{ Release = 'b'; DependsOn = @('a') }
+		{ Resolve-ToolchainDeploymentChartOrder -Charts @($a, $b) } | Should -Throw '*cycle*'
+	}
+}
+
 Describe 'Toolchain deployment package image publication' {
 	BeforeEach {
 		$script:imageKubectlCalls = [Collections.Generic.List[object]]::new()

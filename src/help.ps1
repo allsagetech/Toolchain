@@ -235,10 +235,11 @@ function Get-ToolchainHelpTopics {
 			'-Namespace NAME      Override the package default namespace.',
 			'-WaitSeconds VALUE   Override the Helm wait timeout from 1 through 3600.',
 			'-DryRun              Validate against Kubernetes and render Helm without persisting resources.',
+			'-NoRollback          Keep partial resources when deployment fails (advanced use only).',
 			'-PassThru            Return structured deployment details.'
 		) `
 		-Examples @('tlc package deploy .\dist\toolchain-package-demo-1.0.0.tlcpkg -Cluster dev -Set APP_NAME=demo -Confirm', 'tlc package deploy . -DryRun', 'tlc package deploy app.tlcpkg -Kubeconfig .\kubeconfig.yaml -Values .\production.yaml -Confirm') `
-		-Notes @('Required and default components deploy automatically; -Components accepts includes, wildcards, and -exclude selection.', 'Nested package.deploy configuration can provide default components, set variables, and additional Helm values; explicit command options take precedence.', 'Bundled images publish to the registry installed by cluster init and exact source references are mapped to digest-pinned targets before workloads are applied; Pod templates must opt in with toolchain.dev/agent: mutate under the default labeled admission policy.', 'Top-level variables use ###TOOLCHAIN_VAR_NAME### templates and can be supplied by -Set, toolchain-config.yaml, or TOOLCHAIN_VAR_NAME environment variables.', 'Selected onDeploy command and wait actions execute locally after -Confirm; action output variables can feed later package resources.', '-DryRun validates but does not execute deployment actions.', 'Each selected component applies its manifests before its charts, preserving component declaration order.', 'Helm uses upgrade --install so repeated deployments are upgrades.', 'Archive contents are size-bounded and SHA-256 verified before any cluster operation; only deploy packages from trusted publishers.')
+		-Notes @('Required and default components deploy automatically; -Components accepts includes, wildcards, and -exclude selection.', 'Nested package.deploy configuration can provide default components, set variables, additional Helm values, and rollback policy; explicit command options take precedence.', 'Bundled images publish to the registry installed by cluster init and exact source references are mapped to digest-pinned targets before workloads are applied; Pod templates must opt in with toolchain.dev/agent: mutate under the default labeled admission policy.', 'Top-level variables use ###TOOLCHAIN_VAR_NAME### templates and can be supplied by -Set, toolchain-config.yaml, or TOOLCHAIN_VAR_NAME environment variables.', 'Selected onDeploy command, health-check, and wait actions execute locally after -Confirm; action output variables can feed later package resources.', '-DryRun validates but does not execute deployment actions.', 'Each selected component applies its manifests before its charts; Helm charts support dependsOn/dependencies ordering and cycle detection.', 'Helm uses upgrade --install so repeated deployments are upgrades. Failed deployments automatically remove resources already applied unless rollback: false or -NoRollback is specified.', 'Archive contents are size-bounded and SHA-256 verified before any cluster operation; only deploy packages from trusted publishers.')
 	$topics.'package remove' = New-ToolchainHelpTopic `
 		-Description 'Removes selected package manifests and Helm releases from a Kubernetes cluster, running declared onRemove actions.' `
 		-Usage @('tlc package remove PACKAGE -Confirm [-Components NAMES] [-Set NAME=value] [-Cluster NAME | -Kubeconfig PATH] [-Config PATH] [-Namespace NAME] [-WaitSeconds SECONDS] [-PassThru]', 'tlc package remove PACKAGE -DryRun [OPTIONS]') `
@@ -266,6 +267,8 @@ function Get-ToolchainHelpTopics {
 			'init          Bootstrap Toolchain-owned registry and admission infrastructure.',
 			'deinit        Remove Toolchain bootstrap resources while preserving the cluster.',
 			'reset         Deinitialize and immediately re-initialize Toolchain infrastructure.',
+			'restore       Restore Toolchain bootstrap resources from a deinit backup.',
+			'doctor        Diagnose provider, API, storage, agent, and webhook health.',
 			'list          List managed clusters.',
 			'status        Show one managed cluster and its runtime status.',
 			'kubeconfig    Return a managed kubeconfig path or contents.',
@@ -343,6 +346,17 @@ function Get-ToolchainHelpTopics {
 		) `
 		-Examples @('tlc cluster reset dev -Confirm', 'tlc cluster reset dev -Confirm -KeepStorage -BackupPath .\backup\dev.zip', 'tlc cluster reset dev -Confirm -DryRun') `
 		-Notes @('Reset runs deinit first and then init; if initialization fails, the cluster remains available but its Toolchain foundation is deinitialized.', 'Use -KeepStorage to retain registry/Git data and -BackupPath to export Kubernetes resources plus running registry/Git volume contents before removal.', 'Application namespaces, workloads, and the provider cluster are preserved.')
+	$topics.'cluster restore' = New-ToolchainHelpTopic `
+		-Description 'Restores Toolchain bootstrap resources and exported registry/Git data from a cluster deinit backup.' `
+		-Usage @('tlc cluster restore NAME BACKUP_PATH -Confirm [-DryRun] [-PassThru]', 'tlc cluster restore -Kubeconfig PATH BACKUP_PATH -Confirm [OPTIONS]') `
+		-Options @('NAME                         Restore a managed cluster.', 'BACKUP_PATH                Backup directory or .zip archive created by cluster deinit.', '-Kubeconfig PATH             Restore an external cluster through an explicit kubeconfig.', '-Confirm                     Required acknowledgement of cluster changes.', '-DryRun                      Validate and preview restore operations.', '-PassThru                    Return structured restore details.') `
+		-Examples @('tlc cluster restore dev .\backup\dev.zip -Confirm', 'tlc cluster restore dev .\backup\dev -Confirm -DryRun') `
+		-Notes @('Restore applies namespace and Toolchain resources before copying registry and Git data into running Toolchain pods.', 'Backups contain Toolchain resources only; application workloads are never restored.')
+	$topics.'cluster doctor' = New-ToolchainHelpTopic `
+		-Description 'Diagnoses provider runtime, kubeconfig, Kubernetes API, Toolchain namespace, registry, Git, agent, and webhook health.' `
+		-Usage @('tlc cluster doctor [NAME] [-Kubeconfig PATH] [-Raw] [-Force] [-PassThru]') `
+		-Options @('-Kubeconfig PATH  Diagnose an external cluster through an explicit kubeconfig.', '-Raw               Emit JSON diagnostics.', '-Force             Fail when any check is unhealthy or unknown.', '-PassThru          Return the structured diagnostic object.') `
+		-Examples @('tlc cluster doctor dev', 'tlc cluster doctor dev -Raw', 'tlc cluster doctor dev -Force')
 	$topics.'cluster list' = New-ToolchainHelpTopic `
 		-Description 'Lists clusters managed by Toolchain.' `
 		-Usage @('tlc cluster list [-Provider kind|k0s|k3s]') `

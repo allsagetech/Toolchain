@@ -5,6 +5,8 @@ SPDX-License-Identifier: MPL-2.0
 #>
 
 BeforeAll {
+	function Resolve-ToolchainFileSystemPath { param([Parameter(Mandatory)][string]$Path) [IO.Path]::GetFullPath($Path) }
+	function Resolve-ToolchainChildPath { param([Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][string]$RelativePath, [switch]$RejectReparsePoints, [switch]$RejectRootReparsePoint) [IO.Path]::GetFullPath((Join-Path $Root ($RelativePath -replace '/', [IO.Path]::DirectorySeparatorChar))) }
 	function Assert-ToolchainClusterImage { param($Image) if (-not $Image -or $Image -match '\s') { throw 'invalid image' } }
 	function Read-ToolchainClusterState { }
 	function Get-ToolchainClusterRuntimeStatus { }
@@ -105,6 +107,27 @@ Describe 'Toolchain cluster component selection' {
 		Mock Read-Host { throw 'non-interactive host' }
 
 		{ Select-ToolchainClusterInitComponents } | Should -Throw '*-Components git-server*Components none*'
+	}
+}
+
+Describe 'Toolchain cluster backup restore helpers' {
+	It 'safely expands directory and zip backups' {
+		$backup = Join-Path $TestDrive 'backup'
+		New-Item -ItemType Directory -Path $backup -Force | Out-Null
+		[IO.File]::WriteAllText((Join-Path $backup 'namespace.yaml'), 'apiVersion: v1')
+		$expandedDirectory = Expand-ToolchainClusterBootstrapBackup -Path $backup
+		$expandedDirectory.Temporary | Should -BeFalse
+		Test-Path -LiteralPath (Join-Path $expandedDirectory.Root 'namespace.yaml') -PathType Leaf | Should -BeTrue
+
+		$archive = Join-Path $TestDrive 'backup.zip'
+		Compress-Archive -Path (Join-Path $backup '*') -DestinationPath $archive
+		$expandedArchive = Expand-ToolchainClusterBootstrapBackup -Path $archive
+		try {
+			$expandedArchive.Temporary | Should -BeTrue
+			Test-Path -LiteralPath (Join-Path $expandedArchive.Root 'namespace.yaml') -PathType Leaf | Should -BeTrue
+		} finally {
+			if (Test-Path -LiteralPath $expandedArchive.Root -PathType Container) { Remove-Item -LiteralPath $expandedArchive.Root -Recurse -Force }
+		}
 	}
 }
 

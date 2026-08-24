@@ -42,11 +42,11 @@ Describe 'Toolchain nested argument completion' {
 		@(Get-ToolchainNestedCompletionValues -Subcommand cluster -Elements @('toolchain','cluster','cr') -WordToComplete 'cr') |
 			Should -Be @('create')
 		@(Get-ToolchainNestedCompletionValues -Subcommand cluster -Elements @('toolchain','cluster','d') -WordToComplete 'd') |
-			Should -Be @('deinit','delete')
+			Should -Be @('deinit','doctor','delete')
 		@(Get-ToolchainNestedCompletionValues -Subcommand cluster -Elements @('toolchain','cluster','deinit','-W') -WordToComplete '-W') |
 			Should -Be @('-WaitSeconds')
 		@(Get-ToolchainNestedCompletionValues -Subcommand cluster -Elements @('toolchain','cluster','re') -WordToComplete 're') |
-			Should -Be @('reset')
+			Should -Be @('reset','restore')
 		@(Get-ToolchainNestedCompletionValues -Subcommand cluster -Elements @('toolchain','cluster','create') -WordToComplete '') |
 			Should -Contain '-Provider'
 		@(Get-ToolchainNestedCompletionValues -Subcommand cluster -Elements @('toolchain','cluster','init') -WordToComplete '') |

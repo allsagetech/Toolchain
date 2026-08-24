@@ -59,4 +59,10 @@ Describe 'GitHub Actions test workflow' {
 		$releaseWorkflow | Should -Match 'packages:\s*write'
 		$releaseWorkflow | Should -Match 'Immutable agent tag already exists'
 	}
+
+	It 'smoke-tests the built package surface before publishing' {
+		$releaseWorkflow | Should -Match 'Run built package creation smoke test'
+		$releaseWorkflow | Should -Match "Invoke-Toolchain -Command package -ArgumentList"
+		$releaseWorkflow | Should -Match "Invoke-Toolchain -Command help -ArgumentList @\('cluster', 'doctor'\)"
+	}
 }

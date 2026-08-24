@@ -934,6 +934,91 @@ function Export-ToolchainClusterBootstrapBackup {
 	}
 }
 
+function Expand-ToolchainClusterBootstrapBackup {
+	[CmdletBinding()]
+	param([Parameter(Mandatory)][string]$Path)
+	$source = Resolve-ToolchainFileSystemPath -Path $Path
+	if (-not (Test-Path -LiteralPath $source -PathType Leaf) -and -not (Test-Path -LiteralPath $source -PathType Container)) {
+		throw "Toolchain cluster backup was not found: $source"
+	}
+	if (Test-Path -LiteralPath $source -PathType Container) { return [pscustomobject]@{ Root = $source; Temporary = $false } }
+	if ([IO.Path]::GetExtension($source) -ine '.zip') { throw "Toolchain cluster backup must be a directory or .zip archive: $source" }
+	$root = Join-Path ([IO.Path]::GetTempPath()) "toolchain-cluster-restore-$([guid]::NewGuid().ToString('n'))"
+	[void][IO.Directory]::CreateDirectory($root)
+	$stream = $null
+	$archive = $null
+	try {
+		$stream = [IO.File]::OpenRead($source)
+		$archive = [IO.Compression.ZipArchive]::new($stream, [IO.Compression.ZipArchiveMode]::Read, $false)
+		foreach ($entry in $archive.Entries) {
+			if ([string]::IsNullOrWhiteSpace($entry.FullName) -or $entry.FullName.Contains('\') -or $entry.FullName.EndsWith('/')) { continue }
+			$destination = Resolve-ToolchainChildPath -Root $root -RelativePath $entry.FullName -RejectReparsePoints -RejectRootReparsePoint
+			$parent = Split-Path -Parent $destination
+			[void][IO.Directory]::CreateDirectory($parent)
+			$entryInput = $entry.Open()
+			$output = [IO.File]::Open($destination, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+			try { $entryInput.CopyTo($output) } finally { $output.Dispose(); $entryInput.Dispose() }
+		}
+		$archive.Dispose(); $archive = $null
+		$stream.Dispose(); $stream = $null
+		return [pscustomobject]@{ Root = $root; Temporary = $true }
+	} catch {
+		if ($archive) { $archive.Dispose() }
+		if ($stream) { $stream.Dispose() }
+		if (Test-Path -LiteralPath $root -PathType Container) { Remove-Item -LiteralPath $root -Recurse -Force }
+		throw "invalid Toolchain cluster backup '$source': $($_.Exception.Message)"
+	}
+}
+
+function Invoke-ToolchainClusterRestore {
+	[CmdletBinding()]
+	param(
+		[string]$Name,
+		[string]$Kubeconfig,
+		[Parameter(Mandatory)][string]$Path,
+		[switch]$Confirm,
+		[switch]$DryRun,
+		[ValidateRange(10, 1800)][int]$WaitSeconds = 120,
+		[switch]$PassThru
+	)
+	if (-not $Confirm) { throw "cluster restore changes Kubernetes cluster state; rerun with -Confirm after reviewing 'tlc cluster restore help'" }
+	$kubeconfigPath = Resolve-ToolchainBootstrapKubeconfig -Name $Name -Kubeconfig $Kubeconfig
+	$kubectl = Get-ToolchainClusterExecutable -Name kubectl -Package kubectl -InstallHint 'Install kubectl and ensure its executable is available on PATH.'
+	$apiServer = Get-ToolchainBootstrapApiServer -Kubeconfig $kubeconfigPath
+	try { $null = Invoke-ToolchainBootstrapKubectl -Kubectl $kubectl -Kubeconfig $kubeconfigPath -Arguments @('get', '--request-timeout=10s', '--raw=/readyz') }
+	catch { throw "Kubernetes API preflight failed for cluster restore at $apiServer. kubectl reported: $($_.Exception.Message)" }
+	$expanded = Expand-ToolchainClusterBootstrapBackup -Path $Path
+	$root = $expanded.Root
+	$applied = [Collections.ArrayList]::new()
+	try {
+		foreach ($file in @('namespace.yaml', 'cluster-resources.yaml', 'resources.yaml')) {
+			$source = Join-Path $root $file
+			if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { continue }
+			$applyArgs = @('apply', '--server-side', '--field-manager=toolchain-restore', '-f', $source)
+			if ($DryRun) { $applyArgs += '--dry-run=server' }
+			$null = Invoke-ToolchainBootstrapKubectl -Kubectl $kubectl -Kubeconfig $kubeconfigPath -Arguments $applyArgs
+			[void]$applied.Add($file)
+		}
+		foreach ($component in @(
+			[pscustomobject]@{ Name = 'registry'; Selector = 'app.kubernetes.io/name=toolchain-registry'; RemotePath = '/var/lib/registry' },
+			[pscustomobject]@{ Name = 'git'; Selector = 'app.kubernetes.io/name=toolchain-git'; RemotePath = '/var/lib/gitea' }
+		)) {
+			$source = Join-Path $root $component.Name
+			if (-not (Test-Path -LiteralPath $source -PathType Container) -or $DryRun) { continue }
+			$pod = Invoke-ToolchainBootstrapKubectl -Kubectl $kubectl -Kubeconfig $kubeconfigPath -Arguments @('get', 'pods', '-n', 'toolchain-system', '-l', $component.Selector, '--field-selector=status.phase=Running', '-o', 'jsonpath={.items[0].metadata.name}')
+			$podName = ($pod.Output -join '').Trim()
+			if (-not $podName) { throw "cannot restore Toolchain $($component.Name) data because its pod is not running" }
+			$null = Invoke-ToolchainBootstrapKubectl -Kubectl $kubectl -Kubeconfig $kubeconfigPath -Arguments @('cp', $source, "toolchain-system/$podName`:$($component.RemotePath)")
+			[void]$applied.Add("$($component.Name) data")
+		}
+		$result = [pscustomobject]@{ PSTypeName = 'Toolchain.ClusterRestore'; Cluster = if ($Name) { $Name } else { 'current-context' }; Kubeconfig = $kubeconfigPath; BackupPath = (Resolve-ToolchainFileSystemPath -Path $Path); Applied = @($applied.ToArray()); DryRun = [bool]$DryRun }
+		Write-ToolchainInfo "Restored Toolchain bootstrap data to $($result.Cluster)$(if ($DryRun) { ' (dry run)' }) ."
+		if ($PassThru) { return $result }
+	} finally {
+		if ($expanded.Temporary -and (Test-Path -LiteralPath $root -PathType Container)) { Remove-Item -LiteralPath $root -Recurse -Force }
+	}
+}
+
 function Invoke-ToolchainClusterDeinit {
 	[CmdletBinding()]
 	param(

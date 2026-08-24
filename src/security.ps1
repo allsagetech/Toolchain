@@ -239,7 +239,10 @@ function Install-ToolchainCosignBootstrap {
 function Resolve-ToolchainCosignApplication {
 	$command = Find-ToolchainCosignApplication
 	if ($command) { return $command }
-	return Install-ToolchainCosignBootstrap
+	try { return Install-ToolchainCosignBootstrap }
+	catch {
+		throw "Cosign verification is required, but no Cosign executable was found and automatic bootstrap failed. Install Cosign on PATH or set TOOLCHAIN_COSIGN_VERIFY=false only when policy permits. Details: $($_.Exception.Message)"
+	}
 }
 
 function Invoke-ToolchainCosignVerify {

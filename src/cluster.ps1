@@ -704,6 +704,62 @@ function Get-ToolchainClusterToolchainStatus {
 	}
 }
 
+function Invoke-ToolchainClusterDoctor {
+	[CmdletBinding()]
+	param(
+		[string]$Name,
+		[string]$Kubeconfig,
+		[switch]$Json,
+		[switch]$Strict,
+		[switch]$PassThru
+	)
+	if (-not $Name -and -not $Kubeconfig) {
+		$current = Resolve-ToolchainCurrentClusterContext -SelectSingle
+		if ($current) { $Name = [string]$current.Name }
+	}
+	$state = if ($Name) { Read-ToolchainClusterState -Name $Name } else { $null }
+	if ($Name -and -not $state) { throw "Toolchain cluster not found: $Name" }
+	$runtime = if ($state) { Get-ToolchainClusterRuntimeStatus -State $state } else { 'Unknown' }
+	$resolvedKubeconfig = if ($state -and -not $Kubeconfig) { Get-ToolchainClusterKubeconfigPath -Name ([string]$state.Name) } else { $Kubeconfig }
+	$checks = [ordered]@{
+		Provider = [pscustomobject]@{ State = if ($runtime -eq 'Running') { 'ok' } else { 'error' }; Detail = $runtime }
+		Kubeconfig = [pscustomobject]@{ State = if ($resolvedKubeconfig -and (Test-Path -LiteralPath $resolvedKubeconfig -PathType Leaf)) { 'ok' } else { 'error' }; Detail = $resolvedKubeconfig }
+		Api = [pscustomobject]@{ State = 'unknown'; Detail = $null }
+		ToolchainNamespace = [pscustomobject]@{ State = 'unknown'; Detail = $null }
+		Registry = [pscustomobject]@{ State = 'unknown'; Detail = $null }
+		Git = [pscustomobject]@{ State = 'unknown'; Detail = $null }
+		Agent = [pscustomobject]@{ State = 'unknown'; Detail = $null }
+		Webhook = [pscustomobject]@{ State = 'unknown'; Detail = $null }
+	}
+	$kubectl = Get-Command -Name kubectl -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+	if ($kubectl -and $checks.Kubeconfig.State -eq 'ok') {
+		$kubectlPath = [string]$kubectl.Source
+		$ready = Invoke-ToolchainClusterProcess -FilePath $kubectlPath -Arguments (@('--kubeconfig', $resolvedKubeconfig, 'get', '--request-timeout=10s', '--raw=/readyz')) -AllowFailure
+		$checks.Api = [pscustomobject]@{ State = if ($ready.ExitCode -eq 0) { 'ok' } else { 'error' }; Detail = (($ready.Output -join ' ').Trim()) }
+		$namespace = Invoke-ToolchainClusterProcess -FilePath $kubectlPath -Arguments @('--kubeconfig', $resolvedKubeconfig, 'get', 'namespace/toolchain-system', '--ignore-not-found=true', '-o', 'jsonpath={.metadata.labels.app\.kubernetes\.io/managed-by}') -AllowFailure
+		$owned = (($namespace.Output -join '').Trim() -ceq 'toolchain')
+		$checks.ToolchainNamespace = [pscustomobject]@{ State = if ($owned) { 'ok' } elseif ($namespace.ExitCode -eq 0) { 'error' } else { 'unknown' }; Detail = if ($owned) { 'managed by Toolchain' } else { (($namespace.Output -join '').Trim()) } }
+		foreach ($check in @(
+			[pscustomobject]@{ Key = 'Registry'; Resource = 'deployment/toolchain-registry' },
+			[pscustomobject]@{ Key = 'Git'; Resource = 'deployment/toolchain-git' },
+			[pscustomobject]@{ Key = 'Agent'; Resource = 'deployment/toolchain-agent' },
+			[pscustomobject]@{ Key = 'Webhook'; Resource = 'mutatingwebhookconfiguration/toolchain-agent' }
+		)) {
+			$checkArgs = @('--kubeconfig', $resolvedKubeconfig, 'get', $check.Resource, '--ignore-not-found=true', '-o', 'name')
+			if ($check.Key -in @('Registry', 'Git', 'Agent')) { $checkArgs = @('--kubeconfig', $resolvedKubeconfig, 'get', $check.Resource, '-n', 'toolchain-system', '--ignore-not-found=true', '-o', 'name') }
+			$result = Invoke-ToolchainClusterProcess -FilePath $kubectlPath -Arguments $checkArgs -AllowFailure
+			$exists = -not [string]::IsNullOrWhiteSpace(($result.Output -join '').Trim())
+			$checks[$check.Key] = [pscustomobject]@{ State = if ($result.ExitCode -eq 0 -and $exists) { 'ok' } elseif ($result.ExitCode -eq 0) { 'error' } else { 'unknown' }; Detail = (($result.Output -join ' ').Trim()) }
+		}
+	}
+	$errors = @($checks.GetEnumerator() | Where-Object { $_.Value.State -eq 'error' })
+	$result = [pscustomobject]@{ PSTypeName = 'Toolchain.ClusterDoctor'; Cluster = if ($Name) { $Name } else { 'current-context' }; Kubeconfig = $resolvedKubeconfig; Checks = [pscustomobject]$checks; Healthy = $errors.Count -eq 0 -and @($checks.GetEnumerator() | Where-Object { $_.Value.State -eq 'unknown' }).Count -eq 0 }
+	if ($Json) { return ($result | ConvertTo-Json -Depth 10) }
+	if ($Strict -and -not $result.Healthy) { throw "cluster doctor found unhealthy or unknown checks for $($result.Cluster)" }
+	if ($PassThru) { return $result }
+	return $result
+}
+
 function ConvertTo-ToolchainClusterObject {
 	param(
 		[Parameter(Mandatory)]$State,
@@ -763,10 +819,12 @@ function Invoke-ToolchainCluster {
 	[CmdletBinding()]
 	param(
 		[Parameter(Mandatory, Position = 0)]
-		[ValidateSet('create', 'init', 'deinit', 'reset', 'list', 'status', 'kubeconfig', 'use', 'current', 'delete')]
+		[ValidateSet('create', 'init', 'deinit', 'reset', 'restore', 'doctor', 'list', 'status', 'kubeconfig', 'use', 'current', 'delete')]
 		[string]$Command,
 		[Parameter(Position = 1)]
 		[string]$Name,
+		[Parameter(Position = 2)]
+		[string]$Path,
 		[ValidateSet('kind', 'k0s', 'k3s')]
 		[string]$Provider = 'kind',
 		[ValidateRange(1, 9)]
@@ -891,6 +949,23 @@ function Invoke-ToolchainCluster {
 			try { $initResult = Invoke-ToolchainClusterInit @initParams }
 			catch { throw "cluster reset deinitialized the Toolchain foundation but re-initialization failed: $($_.Exception.Message)" }
 			if ($PassThru) { return [pscustomobject]@{ PSTypeName = 'Toolchain.ClusterResetResult'; Deinitialization = $deinitResult; Initialization = $initResult; DryRun = $false } }
+		}
+		'restore' {
+			$restoreName = $Name
+			$restorePath = if ($Path) { $Path } else { $BackupPath }
+			# With an explicit external kubeconfig, allow `cluster restore -Kubeconfig
+			# config BACKUP_PATH` without requiring a placeholder NAME argument.
+			if (-not $restorePath -and $Kubeconfig -and $Name -and (Test-Path -LiteralPath $Name)) {
+				$restorePath = $Name
+				$restoreName = $null
+			}
+			if (-not $restorePath) { throw 'cluster restore requires a backup path argument' }
+			if (-not $Confirm) { throw "cluster restore changes Kubernetes cluster state; rerun with -Confirm after reviewing 'tlc cluster restore help'" }
+			$params = @{ Name = $restoreName; Kubeconfig = $Kubeconfig; Path = $restorePath; Confirm = $Confirm; DryRun = $DryRun; WaitSeconds = $WaitSeconds; PassThru = $PassThru }
+			return (Invoke-ToolchainClusterRestore @params)
+		}
+		'doctor' {
+			return (Invoke-ToolchainClusterDoctor -Name $Name -Kubeconfig $Kubeconfig -Json:$Raw -Strict:$Force -PassThru:$PassThru)
 		}
 		'create' {
 			if (-not $Name) { throw 'cluster create requires a name' }

@@ -461,4 +461,25 @@ Describe 'Toolchain cluster lifecycle' {
 		[IO.File]::WriteAllText($path, ($state | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
 		{ Invoke-ToolchainCluster -Command status -Name dev } | Should -Throw '*invalid cluster state identity*'
 	}
+
+	It 'reports a healthy initialized cluster from doctor checks' {
+		$kubeconfig = Join-Path $TestDrive 'doctor-kubeconfig.yaml'
+		[IO.File]::WriteAllText($kubeconfig, 'apiVersion: v1')
+		Mock Read-ToolchainClusterState { [pscustomobject]@{ name = 'dev'; provider = 'kind' } }
+		Mock Get-ToolchainClusterRuntimeStatus { 'Running' }
+		Mock Get-ToolchainClusterKubeconfigPath { $kubeconfig }
+		Mock Get-Command { [pscustomobject]@{ Source = 'kubectl' } } -ParameterFilter { $Name -eq 'kubectl' }
+		Mock Invoke-ToolchainClusterProcess {
+			$joined = $Arguments -join ' '
+			if ($joined -match '/readyz') { return (New-TestClusterProcessResult -Output @('ok')) }
+			if ($joined -match 'namespace/toolchain-system') { return (New-TestClusterProcessResult -Output @('toolchain')) }
+			New-TestClusterProcessResult -Output @('resource')
+		}
+
+		$result = Invoke-ToolchainClusterDoctor -Name dev -Kubeconfig $kubeconfig -PassThru
+
+		$result.Healthy | Should -BeTrue
+		$result.Checks.Api.State | Should -BeExactly 'ok'
+		$result.Checks.Webhook.State | Should -BeExactly 'ok'
+	}
 }

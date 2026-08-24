@@ -229,6 +229,30 @@ foundation later.
 or `Unknown`) and `ToolchainInitialized` so automation can distinguish a
 running provider from an initialized Toolchain foundation.
 
+## Diagnose and restore
+
+Run the doctor before troubleshooting a failed bootstrap or deployment:
+
+```powershell
+tlc cluster doctor dev
+tlc cluster doctor dev -Raw
+tlc cluster doctor dev -Force
+```
+
+The report checks the provider runtime, kubeconfig, Kubernetes API readiness,
+Toolchain ownership, registry, Git server, admission agent, and webhook. `-Raw`
+returns JSON for automation and `-Force` makes an unhealthy or unknown result fail.
+
+To restore resources and persistent registry/Git data from a deinit backup:
+
+```powershell
+tlc cluster restore dev .\backup\dev -Confirm
+tlc cluster restore dev .\backup\dev.zip -Confirm -DryRun
+```
+
+Restore accepts the directory produced by `-BackupPath` or its zip archive and
+requires `-Confirm` because it changes cluster state.
+
 ## Reset
 
 Rebuild the Toolchain foundation without deleting the provider cluster:

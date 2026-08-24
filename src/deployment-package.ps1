@@ -137,13 +137,14 @@ function ConvertTo-ToolchainDeploymentChart {
 	$url = $null
 	$repoName = $null
 	$gitPath = $null
+	$dependsOn = @()
 	$remote = $false
 	$variableMappings = @()
 	if ($Value -is [string]) {
 		$path = [string]$Value
 	} elseif ($Value -is [Collections.IDictionary]) {
 		foreach ($key in $Value.Keys) {
-			if ([string]$key -notin @('path', 'release', 'namespace', 'values', 'name', 'version', 'url', 'repoName', 'gitPath', 'localPath', 'releaseName', 'noWait', 'valuesFiles', 'variables', 'schemaValidation', 'serverSideApply')) {
+			if ([string]$key -notin @('path', 'release', 'namespace', 'values', 'name', 'version', 'url', 'repoName', 'gitPath', 'localPath', 'releaseName', 'noWait', 'valuesFiles', 'variables', 'schemaValidation', 'serverSideApply', 'dependsOn', 'dependencies')) {
 				throw "deployment chart $Index contains unsupported key '$key'"
 			}
 		}
@@ -155,6 +156,8 @@ function ConvertTo-ToolchainDeploymentChart {
 		$url = [string]$Value['url']
 		$repoName = [string]$Value['repoName']
 		$gitPath = [string]$Value['gitPath']
+		if ($null -ne $Value['dependsOn']) { $dependsOn = @($Value['dependsOn']) }
+		if ($null -ne $Value['dependencies']) { $dependsOn += @($Value['dependencies']) }
 		if ($null -ne $Value['values']) { $values += @($Value['values']) }
 		if ($null -ne $Value['valuesFiles']) { $values += @($Value['valuesFiles']) }
 		if ($url) {
@@ -197,6 +200,9 @@ function ConvertTo-ToolchainDeploymentChart {
 			if ($Value['schemaValidation'] -isnot [bool]) { throw "deployment chart $Index requires schemaValidation to be true or false" }
 			$schemaValidation = [bool]$Value['schemaValidation']
 		}
+		foreach ($dependency in $dependsOn) {
+			if ($dependency -isnot [string] -or [string]::IsNullOrWhiteSpace([string]$dependency)) { throw "deployment chart $Index dependsOn entries must be release names" }
+		}
 	} else {
 		throw "deployment chart $Index must be a path string or mapping"
 	}
@@ -229,6 +235,7 @@ function ConvertTo-ToolchainDeploymentChart {
 		SchemaValidation = $schemaValidation
 		Component = $ComponentName
 		VariableMappings = [object[]]$variableMappings
+		DependsOn = [string[]]@($dependsOn | ForEach-Object { [string]$_ } | Select-Object -Unique)
 	}
 }
 
@@ -455,11 +462,16 @@ function ConvertTo-ToolchainDeploymentComponent {
 	foreach ($booleanKey in @('default', 'required')) {
 		if ($null -ne $Value[$booleanKey] -and $Value[$booleanKey] -isnot [bool]) { throw "deployment component '$name' requires $booleanKey to be true or false" }
 	}
-	foreach ($unsupported in @('only', 'group', 'import', 'imageArchives', 'repos', 'files', 'dataInjections', 'scripts', 'healthChecks')) {
-		$valueForKey = $Value[$unsupported]
-		$hasValue = if ($valueForKey -is [Collections.IDictionary]) { $valueForKey.Count -gt 0 } else { @($valueForKey).Count -gt 0 -and $null -ne $valueForKey }
-		if ($hasValue) { throw "Toolchain component '$name' uses '$unsupported', which Toolchain packages do not yet support" }
+	$compatibilityFiles = [Collections.ArrayList]::new()
+	foreach ($compatibilityKey in @('files', 'repos', 'dataInjections', 'scripts', 'imageArchives', 'import')) {
+		if ($null -eq $Value[$compatibilityKey]) { continue }
+		foreach ($path in @($Value[$compatibilityKey] | ForEach-Object { if ($_ -is [string]) { $_ } elseif ($_ -is [Collections.IDictionary]) { if ($_.path) { [string]$_.path } elseif ($_.source) { [string]$_.source } elseif ($_.file) { [string]$_.file } else { throw "deployment component '$name' $compatibilityKey mapping requires path, source, or file" } } else { throw "deployment component '$name' $compatibilityKey entries must be paths or mappings" } })) {
+			if ($path) { [void]$compatibilityFiles.Add([string]$path) }
+		}
 	}
+	$healthChecks = if ($null -ne $Value['healthChecks']) { @($Value['healthChecks']) } else { @() }
+	$only = @($Value['only'] | ForEach-Object { [string]$_ } | Where-Object { $_ })
+	$group = [string]$Value['group']
 
 	$chartValues = @()
 	if ($null -ne $Value['charts']) { $chartValues = @($Value['charts']) }
@@ -484,7 +496,7 @@ function ConvertTo-ToolchainDeploymentComponent {
 	}
 	$actions = ConvertTo-ToolchainDeploymentActions -Value $Value['actions'] -ComponentName $name
 	$actionCount = @($actions.OnCreate.before + $actions.OnCreate.after + $actions.OnCreate.onSuccess + $actions.OnCreate.onFailure + $actions.OnDeploy.before + $actions.OnDeploy.after + $actions.OnDeploy.onSuccess + $actions.OnDeploy.onFailure + $actions.OnRemove.before + $actions.OnRemove.after + $actions.OnRemove.onSuccess + $actions.OnRemove.onFailure).Count
-	if ($charts.Count -eq 0 -and $manifestSets.Count -eq 0 -and $images.Count -eq 0 -and $actionCount -eq 0) { throw "deployment component '$name' must declare at least one chart, manifest, image, or action" }
+	if ($charts.Count -eq 0 -and $manifestSets.Count -eq 0 -and $images.Count -eq 0 -and $actionCount -eq 0 -and $compatibilityFiles.Count -eq 0 -and $healthChecks.Count -eq 0) { throw "deployment component '$name' must declare at least one chart, manifest, image, file, health check, or action" }
 	return [pscustomobject]@{
 		Name = $name
 		Description = [string]$Value['description']
@@ -494,6 +506,10 @@ function ConvertTo-ToolchainDeploymentComponent {
 		ManifestSets = [object[]]$manifestSets
 		Images = [object[]]$images
 		Actions = $actions
+		CompatibilityFiles = [string[]]$compatibilityFiles.ToArray()
+		HealthChecks = [object[]]$healthChecks
+		Only = [string[]]$only
+		Group = $group
 	}
 }
 
@@ -527,11 +543,8 @@ function Read-ToolchainDeploymentDefinition {
 	if ($null -ne $manifest['schemaVersion'] -and [int]$manifest['schemaVersion'] -ne 1) { throw "$manifestPath requires schemaVersion: 1" }
 	if ($manifest['kind'] -and [string]$manifest['kind'] -ne 'ToolchainPackageConfig') { throw "$manifestPath supports only kind: ToolchainPackageConfig" }
 	if ($manifest['apiVersion'] -and [string]$manifest['apiVersion'] -ne 'toolchain.allsagetech.com/v1alpha1') { throw "$manifestPath supports only apiVersion: toolchain.allsagetech.com/v1alpha1" }
-	foreach ($unsupportedTopLevel in @('constants', 'build')) {
-		if ($null -ne $manifest[$unsupportedTopLevel] -and @($manifest[$unsupportedTopLevel]).Count -gt 0) {
-			throw "Toolchain top-level field '$unsupportedTopLevel' is not yet supported by Toolchain packages"
-		}
-	}
+	$build = $manifest['build']
+	if ($null -ne $build -and $build -isnot [Collections.IDictionary]) { throw "$manifestPath build must be a mapping when specified" }
 
 	$deployment = $manifest['deployment']
 	$metadata = $manifest['metadata']
@@ -566,6 +579,14 @@ function Read-ToolchainDeploymentDefinition {
 	$variableNames = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 	$variableValues = @()
 	if ($null -ne $manifest['variables']) { $variableValues = @($manifest['variables']) }
+	if ($manifest['constants']) {
+		if ($manifest['constants'] -isnot [Collections.IDictionary]) { throw "$manifestPath constants must be a mapping" }
+		foreach ($constantName in $manifest['constants'].Keys) {
+			$constant = $manifest['constants'][$constantName]
+			$constantValue = if ($constant -is [Collections.IDictionary] -and $constant.Contains('value')) { $constant['value'] } else { $constant }
+			$variableValues += @{ name = ([string]$constantName).ToUpperInvariant(); default = $constantValue; prompt = $false }
+		}
+	}
 	for ($variableIndex = 0; $variableIndex -lt $variableValues.Count; $variableIndex++) {
 		if ($variableValues[$variableIndex] -isnot [Collections.IDictionary]) { throw "deployment variable $($variableIndex + 1) must be a mapping" }
 		$variable = ConvertTo-ToolchainDeploymentVariable -Value $variableValues[$variableIndex] -Index ($variableIndex + 1)
@@ -651,6 +672,7 @@ function Read-ToolchainDeploymentDefinition {
 	$allManifestSets = @($components | ForEach-Object { $_.ManifestSets })
 	$allManifests = @($allManifestSets | ForEach-Object { $_.Files })
 	$allImages = @($components | ForEach-Object { $_.Images })
+	foreach ($component in $components) { $packageFiles += @($component.CompatibilityFiles) }
 	return [pscustomobject]@{
 		Root = $rootPath
 		ManifestPath = $manifestPath
@@ -672,6 +694,8 @@ function Read-ToolchainDeploymentDefinition {
 		GlobalValues = [string[]]$globalValues
 		Documentation = [string[]]$documentation
 		PackageFiles = [string[]]$packageFiles
+		Build = $build
+		Constants = $manifest['constants']
 		Compatibility = if ($manifest['components'] -or $manifest['kind']) { 'toolchain-components-v1alpha1' } else { 'toolchain' }
 	}
 }
@@ -699,7 +723,7 @@ function Read-ToolchainDeploymentConfig {
 	if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) { throw "Toolchain deployment config is not a file: $fullPath" }
 	$config = ConvertFrom-ToolchainYaml -Text (Get-Content -LiteralPath $fullPath -Raw) -Context $fullPath
 	foreach ($key in $config.Keys) {
-		if ([string]$key -notin @('schemaVersion', 'namespace', 'wait', 'waitSeconds', 'createNamespace', 'variables', 'package', 'log_level', 'log_format', 'logLevel', 'logFormat')) {
+		if ([string]$key -notin @('schemaVersion', 'namespace', 'wait', 'waitSeconds', 'createNamespace', 'rollback', 'variables', 'package', 'log_level', 'log_format', 'logLevel', 'logFormat')) {
 			throw "$fullPath contains unsupported deployment config key '$key'"
 		}
 	}
@@ -731,7 +755,7 @@ function Read-ToolchainDeploymentConfig {
 	if ($null -ne $deployConfig -and $deployConfig -isnot [Collections.IDictionary]) { throw "$fullPath package.deploy must be a mapping" }
 	if ($deployConfig) {
 		foreach ($key in $deployConfig.Keys) {
-			if ([string]$key -notin @('components', 'set', 'values', 'namespace', 'wait', 'waitSeconds', 'wait_seconds', 'createNamespace', 'create_namespace', 'retries', 'timeout')) {
+			if ([string]$key -notin @('components', 'set', 'values', 'namespace', 'wait', 'waitSeconds', 'wait_seconds', 'createNamespace', 'create_namespace', 'retries', 'timeout', 'rollback')) {
 				throw "$fullPath package.deploy contains unsupported key '$key'"
 			}
 		}
@@ -742,6 +766,7 @@ function Read-ToolchainDeploymentConfig {
 	$waitSeconds = if ($deployConfig -and $deployConfig.Contains('timeout')) { ConvertFrom-ToolchainDeploymentTimeout -Value $deployConfig['timeout'] -Context "$fullPath package.deploy.timeout" } elseif ($deployConfig -and $deployConfig.Contains('waitSeconds')) { $deployConfig['waitSeconds'] } elseif ($deployConfig -and $deployConfig.Contains('wait_seconds')) { $deployConfig['wait_seconds'] } else { $config['waitSeconds'] }
 	$createNamespace = if ($deployConfig -and $deployConfig.Contains('createNamespace')) { $deployConfig['createNamespace'] } elseif ($deployConfig -and $deployConfig.Contains('create_namespace')) { $deployConfig['create_namespace'] } else { $config['createNamespace'] }
 	$retries = if ($deployConfig -and $deployConfig.Contains('retries')) { $deployConfig['retries'] } else { $null }
+	$rollback = if ($deployConfig -and $deployConfig.Contains('rollback')) { $deployConfig['rollback'] } else { $config['rollback'] }
 	if ($namespace) { Assert-ToolchainDeploymentIdentifier -Value ([string]$namespace) -Kind 'namespace' }
 	foreach ($booleanKey in @('wait', 'createNamespace')) {
 		$booleanValue = if ($booleanKey -eq 'wait') { $wait } else { $createNamespace }
@@ -761,6 +786,7 @@ function Read-ToolchainDeploymentConfig {
 		}
 		$retries = $retryCount
 	}
+	if ($null -ne $rollback -and $rollback -isnot [bool]) { throw "$fullPath rollback must be true or false" }
 
 	function ConvertConfigVariables {
 		param([object]$Value, [Parameter(Mandatory)][string]$Context)
@@ -805,6 +831,7 @@ function Read-ToolchainDeploymentConfig {
 		wait = $wait
 		waitSeconds = $waitSeconds
 		retries = $retries
+		rollback = if ($null -eq $rollback) { $true } else { [bool]$rollback }
 		createNamespace = $createNamespace
 		variables = $variables
 		createVariables = $createVariables
@@ -1781,7 +1808,7 @@ function Merge-ToolchainDeploymentConfig {
 		[Parameter(Mandatory)][string]$Path
 	)
 	$config = Read-ToolchainDeploymentConfig -Path $Path
-	foreach ($key in @('namespace', 'wait', 'waitSeconds', 'createNamespace', 'retries')) {
+	foreach ($key in @('namespace', 'wait', 'waitSeconds', 'createNamespace', 'retries', 'rollback')) {
 		if ($null -ne $config[$key]) { $Settings[$key] = $config[$key] }
 	}
 	if ($config.variables) {
@@ -1847,9 +1874,34 @@ function Resolve-ToolchainDeploymentComponentSelection {
 			}
 		}
 	}
-	$resolved = @($Definition.Components | Where-Object { $selected.Contains([string]$_.Name) })
+	$platform = if ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)) { 'windows' } elseif ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Linux)) { 'linux' } else { 'darwin' }
+	$resolved = @($Definition.Components | Where-Object { $selected.Contains([string]$_.Name) -and ((@($_.Only).Count -eq 0) -or (@($_.Only) -contains $platform) -or (@($_.Only) -contains 'all')) })
 	if ($resolved.Count -eq 0) { throw 'no required, default, or explicitly selected package components remain' }
 	return $resolved
+}
+
+function Resolve-ToolchainDeploymentChartOrder {
+	param([Parameter(Mandatory)][object[]]$Charts)
+	$byName = @{}
+	foreach ($chart in $Charts) {
+		$key = [string]$chart.Release
+		if ($byName.ContainsKey($key)) { throw "duplicate Helm release '$key' cannot be dependency ordered" }
+		$byName[$key] = $chart
+	}
+	$ordered = [Collections.ArrayList]::new()
+	$visiting = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+	$visited = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+	function VisitChart([string]$Name) {
+		if ($visited.Contains($Name)) { return }
+		if (-not $byName.ContainsKey($Name)) { throw "Helm release dependency '$Name' is not selected" }
+		if (-not $visiting.Add($Name)) { throw "Helm release dependency cycle detected at '$Name'" }
+		foreach ($dependency in @($byName[$Name].DependsOn)) { VisitChart -Name ([string]$dependency) }
+		$null = $visiting.Remove($Name)
+		$null = $visited.Add($Name)
+		[void]$ordered.Add($byName[$Name])
+	}
+	foreach ($chart in $Charts) { VisitChart -Name ([string]$chart.Release) }
+	return @($ordered.ToArray())
 }
 
 function ConvertTo-ToolchainDeploymentNativeArgument {
@@ -2084,6 +2136,28 @@ function Invoke-ToolchainDeploymentActionPhase {
 				Invoke-ToolchainDeploymentCommandAction -Action $action -Root $Root -Definition $Definition -Component $component -Variables $Variables -Kubeconfig $Kubeconfig -Context $context
 			} else { Invoke-ToolchainDeploymentWaitAction -Action $action -Kubectl $Kubectl -Kubeconfig $Kubeconfig -Context $context }
 			[void]$results.Add([pscustomobject]@{ Component = $component.Name; Lifecycle = $Lifecycle; Phase = $Phase; Description = $label; State = $outcome.State; Attempts = $outcome.Attempts })
+		}
+	}
+	return @($results.ToArray())
+}
+
+function Invoke-ToolchainDeploymentHealthChecks {
+	param([Parameter(Mandatory)][object[]]$Components, [string]$Kubectl, [string]$Kubeconfig, [int]$DefaultSeconds = 300)
+	$results = [Collections.ArrayList]::new()
+	foreach ($component in $Components) {
+		if ($null -eq $component.HealthChecks) { continue }
+		$checks = @($component.HealthChecks)
+		for ($index = 0; $index -lt $checks.Count; $index++) {
+			$check = $checks[$index]
+			if ($null -eq $check) { continue }
+			if ($check -is [string]) { $check = @{ url = [string]$check } }
+			if ($check -isnot [Collections.IDictionary]) { throw "component '$($component.Name)' health check $($index + 1) must be a mapping or URL" }
+			$action = [pscustomobject]@{ MaxTotalSeconds = $DefaultSeconds; Wait = $null }
+			if ($check['cluster'] -is [Collections.IDictionary]) { $cluster = $check['cluster']; $action.Wait = [pscustomobject]@{ Type = 'cluster'; Kind = [string]$cluster['kind']; Name = [string]$cluster['name']; Namespace = [string]$cluster['namespace']; Condition = if ($cluster['condition']) { [string]$cluster['condition'] } else { 'exist' } } }
+			elseif ($check['kind'] -and $check['name']) { $action.Wait = [pscustomobject]@{ Type = 'cluster'; Kind = [string]$check['kind']; Name = [string]$check['name']; Namespace = [string]$check['namespace']; Condition = if ($check['condition']) { [string]$check['condition'] } else { 'exist' } } }
+			else { $address = if ($check['url']) { [string]$check['url'] } else { [string]$check['address'] }; if (-not $address) { throw "component '$($component.Name)' health check $($index + 1) requires cluster kind/name or url/address" }; $uri = [Uri]$address; $action.Wait = [pscustomobject]@{ Type = 'network'; Protocol = $uri.Scheme; Address = $uri.Authority + $uri.PathAndQuery; Code = if ($check['code']) { [int]$check['code'] } else { 200 } } }
+			$outcome = Invoke-ToolchainDeploymentWaitAction -Action $action -Kubectl $Kubectl -Kubeconfig $Kubeconfig -Context "component '$($component.Name)' health check $($index + 1)"
+			[void]$results.Add([pscustomobject]@{ Component = $component.Name; State = $outcome.State; Attempts = $outcome.Attempts })
 		}
 	}
 	return @($results.ToArray())
@@ -2350,6 +2424,7 @@ function Invoke-ToolchainDeploymentBundle {
 		[int]$WaitSeconds,
 		[switch]$OverrideWaitSeconds,
 		[switch]$DryRun,
+		[switch]$NoRollback,
 		[switch]$PassThru
 	)
 	$definition = Read-ToolchainDeploymentDefinition -Root $Root
@@ -2359,6 +2434,7 @@ function Invoke-ToolchainDeploymentBundle {
 		waitSeconds = 300
 		retries = 3
 		createNamespace = $true
+		rollback = $true
 		logLevel = 'info'
 		logFormat = 'console'
 	}
@@ -2367,6 +2443,7 @@ function Invoke-ToolchainDeploymentBundle {
 	$internalConfig = Join-Path $Root 'toolchain-config.yaml'
 	if (Test-Path -LiteralPath $internalConfig -PathType Leaf) { Merge-ToolchainDeploymentConfig -Settings $settings -Variables $configuredVariables -PackageOptions $packageOptions -Path $internalConfig }
 	if ($Config) { Merge-ToolchainDeploymentConfig -Settings $settings -Variables $configuredVariables -PackageOptions $packageOptions -Path (Resolve-ToolchainFileSystemPath -Path $Config) }
+	if (-not [bool]$settings.rollback) { $NoRollback = $true }
 	if ($Namespace) { Assert-ToolchainDeploymentIdentifier -Value $Namespace -Kind 'namespace'; $settings.namespace = $Namespace }
 	if ($OverrideWaitSeconds) { $settings.waitSeconds = $WaitSeconds }
 	$effectiveComponents = if ($Components.Count -gt 0) { [string[]]$Components } elseif ($packageOptions.HasComponents) { [string[]]$packageOptions.Components } else { [string[]]@() }
@@ -2430,7 +2507,8 @@ function Invoke-ToolchainDeploymentBundle {
 		if ($component.Charts.Count -gt 0 -and -not $helm) {
 			$helm = Get-ToolchainClusterExecutable -Name helm -Package helm -InstallHint 'Install Helm and ensure its executable is available on PATH.'
 		}
-		foreach ($chart in $component.Charts) {
+		$chartsForComponent = if ($component.Charts.Count -gt 1) { @(Resolve-ToolchainDeploymentChartOrder -Charts @($component.Charts)) } else { @($component.Charts) }
+		foreach ($chart in $chartsForComponent) {
 			$sourceChartPath = Get-ToolchainDeploymentChartSourcePath -Definition $definition -Chart $chart
 			$chartPath = Get-ToolchainDeploymentRenderedChart -Path $sourceChartPath -Variables $resolvedVariables -RenderRoot $renderRoot -Context "chart $($chart.Release)"
 			$releaseNamespace = if ($Namespace) { [string]$settings.namespace } elseif ($chart.Namespace) { $chart.Namespace } else { [string]$settings.namespace }
@@ -2454,6 +2532,7 @@ function Invoke-ToolchainDeploymentBundle {
 		}
 	}
 	if (-not $DryRun) {
+		foreach ($healthResult in @(Invoke-ToolchainDeploymentHealthChecks -Components $selectedComponents -Kubectl $kubectl -Kubeconfig $kubeconfigPath -DefaultSeconds ([int]$settings.waitSeconds))) { [void]$deployActionResults.Add($healthResult) }
 		foreach ($actionResult in @(Invoke-ToolchainDeploymentActionPhase -Components $selectedComponents -Lifecycle OnDeploy -Phase after -Root $Root -Definition $definition -Variables $resolvedVariables -Kubectl $kubectl -Kubeconfig $kubeconfigPath)) { [void]$deployActionResults.Add($actionResult) }
 		foreach ($actionResult in @(Invoke-ToolchainDeploymentActionPhase -Components $selectedComponents -Lifecycle OnDeploy -Phase onSuccess -Root $Root -Definition $definition -Variables $resolvedVariables -Kubectl $kubectl -Kubeconfig $kubeconfigPath)) { [void]$deployActionResults.Add($actionResult) }
 	}
@@ -2481,6 +2560,27 @@ function Invoke-ToolchainDeploymentBundle {
 	if ($PassThru) { return $result }
 	} catch {
 		$originalError = $_
+		if (-not $DryRun -and -not $NoRollback) {
+			try {
+				$rollbackReleases = if ($releases -and $releases.Count -gt 0) { @($releases.ToArray()) } else { @() }
+				if ($rollbackReleases.Count -gt 1) { [Array]::Reverse($rollbackReleases) }
+				foreach ($release in $rollbackReleases) {
+					$rollbackHelm = if ($helm) { $helm } else { Get-ToolchainClusterExecutable -Name helm -Package helm -InstallHint 'Install Helm to roll back a failed package deployment.' }
+					$rollbackArgs = @('uninstall', [string]$release.Name, '--namespace', [string]$release.Namespace, '--no-hooks')
+					if ($kubeconfigPath) { $rollbackArgs += @('--kubeconfig', $kubeconfigPath) }
+					$null = Invoke-ToolchainClusterProcess -FilePath $rollbackHelm -Arguments $rollbackArgs -AllowFailure
+				}
+				$rollbackManifests = if ($appliedManifests -and $appliedManifests.Count -gt 0) { @($appliedManifests.ToArray()) } else { @() }
+				if ($rollbackManifests.Count -gt 1) { [Array]::Reverse($rollbackManifests) }
+				foreach ($manifest in $rollbackManifests) {
+					$rollbackManifest = Get-ToolchainDeploymentRenderedFile -Path (Resolve-ToolchainChildPath -Root $Root -RelativePath $manifest.Path -RejectReparsePoints -RejectRootReparsePoint) -Variables $resolvedVariables -RenderRoot $renderRoot -Context "rollback manifest $($manifest.Name)"
+					$rollbackArgs = @('delete', '--ignore-not-found=true', '-f', $rollbackManifest)
+					if ($manifest.Namespace) { $rollbackArgs += @('--namespace', $manifest.Namespace) }
+					$null = Invoke-ToolchainBootstrapKubectl -Kubectl $kubectl -Kubeconfig $kubeconfigPath -Arguments $rollbackArgs -AllowFailure
+				}
+				Write-Warning 'Package deployment failed; previously applied Helm releases and manifests were rolled back.'
+			} catch { Write-Warning "Package rollback also failed: $($_.Exception.Message)" }
+		}
 		if ($deployActionsStarted -and -not $DryRun) {
 			try { $null = Invoke-ToolchainDeploymentActionPhase -Components $selectedComponents -Lifecycle OnDeploy -Phase onFailure -Root $Root -Definition $definition -Variables $resolvedVariables -Kubectl $kubectl -Kubeconfig $kubeconfigPath }
 			catch { Write-Warning "Package onDeploy failure action also failed: $($_.Exception.Message)" }
@@ -2506,6 +2606,7 @@ function Invoke-ToolchainDeploymentPackageRemove {
 		[int]$WaitSeconds = 300,
 		[switch]$OverrideWaitSeconds,
 		[switch]$DryRun,
+		[switch]$NoRollback,
 		[switch]$PassThru
 	)
 	$definition = Read-ToolchainDeploymentDefinition -Root $Root
@@ -2572,8 +2673,9 @@ function Invoke-ToolchainDeploymentPackageRemove {
 				}
 			}
 			if ($component.Charts.Count -gt 0 -and -not $helm) { $helm = Get-ToolchainClusterExecutable -Name helm -Package helm -InstallHint 'Install Helm and ensure its executable is available on PATH.' }
-		for ($chartIndex = $component.Charts.Count - 1; $chartIndex -ge 0; $chartIndex--) {
-				$chart = $component.Charts[$chartIndex]
+			$chartsForComponent = if ($component.Charts.Count -gt 1) { @(Resolve-ToolchainDeploymentChartOrder -Charts @($component.Charts)) } else { @($component.Charts) }
+			for ($chartIndex = $chartsForComponent.Count - 1; $chartIndex -ge 0; $chartIndex--) {
+				$chart = $chartsForComponent[$chartIndex]
 				$releaseNamespace = if ($Namespace) { [string]$settings.namespace } elseif ($chart.Namespace) { [string]$chart.Namespace } else { [string]$settings.namespace }
 				$arguments = @('uninstall', $chart.Release, '--namespace', $releaseNamespace)
 				if ($DryRun) { $arguments += '--dry-run' }
@@ -2637,6 +2739,7 @@ function Invoke-ToolchainDeploymentPackage {
 		[switch]$Confirm,
 		[switch]$Force,
 		[switch]$DryRun,
+		[switch]$NoRollback,
 		[switch]$PassThru
 	)
 	if ($Command -eq 'create') {
@@ -2670,6 +2773,7 @@ function Invoke-ToolchainDeploymentPackage {
 				Set = $Set
 				Config = $Config
 				DryRun = $DryRun
+				NoRollback = $NoRollback
 				PassThru = $PassThru
 			}
 			if ($PSBoundParameters.ContainsKey('Namespace')) { $params.Namespace = $Namespace }
@@ -2686,6 +2790,7 @@ function Invoke-ToolchainDeploymentPackage {
 			Values = $Values
 			Config = $Config
 			DryRun = $DryRun
+			NoRollback = $NoRollback
 			PassThru = $PassThru
 		}
 		if ($PSBoundParameters.ContainsKey('Namespace')) { $params.Namespace = $Namespace }

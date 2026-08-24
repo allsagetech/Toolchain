@@ -364,6 +364,11 @@ components in declaration order. Within each component it server-side applies
 declared manifests and then runs `helm upgrade --install` for each chart.
 Repeated deployments therefore upgrade existing releases. Use `-DryRun`
 without `-Confirm` to validate and render without persisting resources.
+Helm charts may declare `dependsOn` (or `dependencies`) and are installed in
+dependency order; missing dependencies and cycles are rejected. If a deployment
+fails, Toolchain removes resources already applied and uninstalls releases by
+default. Set `rollback: false` in `toolchain-config.yaml` or pass `-NoRollback`
+when preserving partial state is intentional.
 
 Archive hashing detects accidental or malicious modification after creation;
 it does not establish publisher identity. Distribute packages through a trusted

@@ -261,7 +261,7 @@ not supplied by configuration or environment variables.
 | `audit` | Report project/lock drift, installed and remote digest state, updates, health, signatures, and policy findings; safely remediate lock/restore drift with `-Fix` | `doc/toolchain-audit.md` |
 | `profile init` / `add` / `remove` / `list` / `path` | Manage startup package loads in your PowerShell profile | `doc/toolchain-profile.md` |
 | `package create` / `deploy` / `remove` | Create, deploy, and remove verified Kubernetes bundles with images, Helm charts, and YAML manifests | `doc/toolchain-package.md` |
-| `cluster create` / `init` / `deinit` / `list` / `status` / `kubeconfig` / `use` / `current` / `delete` | Manage, select, bootstrap, and deinitialize local Toolchain clusters | `doc/toolchain-cluster.md` |
+| `cluster create` / `init` / `deinit` / `restore` / `doctor` / `list` / `status` / `kubeconfig` / `use` / `current` / `delete` | Manage, select, bootstrap, diagnose, restore, and deinitialize local Toolchain clusters | `doc/toolchain-cluster.md` |
 | `k9s` | Launch K9s against the current context or a selected kubeconfig | `doc/toolchain-k9s.md` |
 | `doctor` | Print diagnostics for your Toolchain setup | `doc/toolchain-doctor.md` |
 | `help` | Show CLI help | `doc/toolchain-help.md` |
