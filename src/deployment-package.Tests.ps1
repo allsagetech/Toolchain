@@ -1002,6 +1002,36 @@ components:
 	}
 }
 
+Describe 'Toolchain deployment action helpers' {
+	It 'normalizes supported action shell declarations and rejects invalid values' {
+		$defaultShell = ConvertTo-ToolchainDeploymentActionShell -Value $null -Context 'test action'
+		$defaultShell.Windows | Should -BeNullOrEmpty
+		$defaultShell.Linux | Should -BeNullOrEmpty
+		$defaultShell.Darwin | Should -BeNullOrEmpty
+
+		$sharedShell = ConvertTo-ToolchainDeploymentActionShell -Value 'pwsh' -Context 'test action'
+		$sharedShell.Windows | Should -BeExactly 'pwsh'
+		$sharedShell.Linux | Should -BeExactly 'pwsh'
+		$sharedShell.Darwin | Should -BeExactly 'pwsh'
+
+		$platformShell = ConvertTo-ToolchainDeploymentActionShell -Value @{ windows = 'powershell'; linux = 'bash'; darwin = 'sh' } -Context 'test action'
+		$platformShell.Windows | Should -BeExactly 'powershell'
+		$platformShell.Linux | Should -BeExactly 'bash'
+		$platformShell.Darwin | Should -BeExactly 'sh'
+
+		{ ConvertTo-ToolchainDeploymentActionShell -Value 'fish' -Context 'test action' } | Should -Throw '*unsupported shell*'
+		{ ConvertTo-ToolchainDeploymentActionShell -Value @{ freebsd = 'sh' } -Context 'test action' } | Should -Throw '*unsupported key*'
+		{ ConvertTo-ToolchainDeploymentActionShell -Value 42 -Context 'test action' } | Should -Throw '*string or operating-system mapping*'
+	}
+
+	It 'quotes native action arguments with spaces, quotes, and trailing slashes' {
+		ConvertTo-ToolchainDeploymentNativeArgument -Value 'plain' | Should -BeExactly 'plain'
+		ConvertTo-ToolchainDeploymentNativeArgument -Value 'two words' | Should -BeExactly '"two words"'
+		ConvertTo-ToolchainDeploymentNativeArgument -Value 'say "hello"' | Should -BeExactly '"say \"hello\""'
+		ConvertTo-ToolchainDeploymentNativeArgument -Value 'C:\Program Files\' | Should -BeExactly '"C:\Program Files\\"'
+	}
+}
+
 Describe 'Toolchain deployment package image publication' {
 	BeforeEach {
 		$script:imageKubectlCalls = [Collections.Generic.List[object]]::new()

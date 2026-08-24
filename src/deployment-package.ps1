@@ -2504,10 +2504,16 @@ function Invoke-ToolchainDeploymentBundle {
 				}
 			}
 		}
-		if ($component.Charts.Count -gt 0 -and -not $helm) {
+		# Keep the chart collection as an array. Windows PowerShell 5.1 unwraps a
+		# single object returned from an if expression, losing collection semantics.
+		$componentCharts = @($component.Charts)
+		if ($componentCharts.Count -gt 0 -and -not $helm) {
 			$helm = Get-ToolchainClusterExecutable -Name helm -Package helm -InstallHint 'Install Helm and ensure its executable is available on PATH.'
 		}
-		$chartsForComponent = if ($component.Charts.Count -gt 1) { @(Resolve-ToolchainDeploymentChartOrder -Charts @($component.Charts)) } else { @($component.Charts) }
+		$chartsForComponent = @(
+			if ($componentCharts.Count -gt 1) { Resolve-ToolchainDeploymentChartOrder -Charts $componentCharts }
+			else { $componentCharts }
+		)
 		foreach ($chart in $chartsForComponent) {
 			$sourceChartPath = Get-ToolchainDeploymentChartSourcePath -Definition $definition -Chart $chart
 			$chartPath = Get-ToolchainDeploymentRenderedChart -Path $sourceChartPath -Variables $resolvedVariables -RenderRoot $renderRoot -Context "chart $($chart.Release)"
@@ -2672,8 +2678,14 @@ function Invoke-ToolchainDeploymentPackageRemove {
 					}
 				}
 			}
-			if ($component.Charts.Count -gt 0 -and -not $helm) { $helm = Get-ToolchainClusterExecutable -Name helm -Package helm -InstallHint 'Install Helm and ensure its executable is available on PATH.' }
-			$chartsForComponent = if ($component.Charts.Count -gt 1) { @(Resolve-ToolchainDeploymentChartOrder -Charts @($component.Charts)) } else { @($component.Charts) }
+			# Windows PowerShell 5.1 unwraps a single value from an if expression.
+			# Preserve an array here because removals iterate charts in reverse order.
+			$componentCharts = @($component.Charts)
+			if ($componentCharts.Count -gt 0 -and -not $helm) { $helm = Get-ToolchainClusterExecutable -Name helm -Package helm -InstallHint 'Install Helm and ensure its executable is available on PATH.' }
+			$chartsForComponent = @(
+				if ($componentCharts.Count -gt 1) { Resolve-ToolchainDeploymentChartOrder -Charts $componentCharts }
+				else { $componentCharts }
+			)
 			for ($chartIndex = $chartsForComponent.Count - 1; $chartIndex -ge 0; $chartIndex--) {
 				$chart = $chartsForComponent[$chartIndex]
 				$releaseNamespace = if ($Namespace) { [string]$settings.namespace } elseif ($chart.Namespace) { [string]$chart.Namespace } else { [string]$settings.namespace }
