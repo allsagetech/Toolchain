@@ -129,6 +129,31 @@ Describe 'Toolchain cluster backup restore helpers' {
 			if (Test-Path -LiteralPath $expandedArchive.Root -PathType Container) { Remove-Item -LiteralPath $expandedArchive.Root -Recurse -Force }
 		}
 	}
+
+	It 'applies a confirmed backup through the Kubernetes API' {
+		$backup = Join-Path $TestDrive 'restore-backup'
+		New-Item -ItemType Directory -Path $backup -Force | Out-Null
+		foreach ($file in @('namespace.yaml', 'cluster-resources.yaml', 'resources.yaml')) {
+			[IO.File]::WriteAllText((Join-Path $backup $file), "apiVersion: v1`nkind: ConfigMap`nmetadata:`n  name: restore-test`n")
+		}
+		$kubeconfig = Join-Path $TestDrive 'restore-kubeconfig.yaml'
+		[IO.File]::WriteAllText($kubeconfig, 'apiVersion: v1')
+		$script:restoreKubectlCalls = [Collections.Generic.List[object]]::new()
+		Mock Resolve-ToolchainBootstrapKubeconfig { $kubeconfig }
+		Mock Get-ToolchainClusterExecutable { 'kubectl.exe' }
+		Mock Get-ToolchainBootstrapApiServer { 'https://127.0.0.1:6443' }
+		Mock Invoke-ToolchainBootstrapKubectl {
+			$script:restoreKubectlCalls.Add([pscustomobject]@{ Arguments = [string[]]$Arguments })
+			if ($Arguments -contains '--raw=/readyz') { return [pscustomobject]@{ ExitCode = 0; Output = @('ok') } }
+			[pscustomobject]@{ ExitCode = 0; Output = @() }
+		}
+
+		$result = Invoke-ToolchainClusterRestore -Name dev -Path $backup -Confirm -PassThru
+
+		$result.PSObject.TypeNames[0] | Should -BeExactly 'Toolchain.ClusterRestore'
+		$result.Applied | Should -Be @('namespace.yaml', 'cluster-resources.yaml', 'resources.yaml')
+		@($script:restoreKubectlCalls | Where-Object { $_.Arguments[0] -eq 'apply' }).Count | Should -Be 3
+	}
 }
 
 Describe 'Toolchain native cluster initialization' {
