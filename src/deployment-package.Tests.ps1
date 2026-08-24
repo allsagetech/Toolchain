@@ -677,7 +677,7 @@ Describe 'Toolchain deployment package deployment' {
 		New-TestToolchainComponentSource -Root $source
 		$manifestPath = Join-Path $source 'toolchain.yaml'
 		$manifest = Get-Content -LiteralPath $manifestPath -Raw
-		$manifest = $manifest.Replace("components:`n", "variables:`n  - name: APP_NAME`n    default: default-app`ncomponents:`n")
+		$manifest = [regex]::Replace($manifest, 'components:\r?\n', "variables:`n  - name: APP_NAME`n    default: default-app`ncomponents:`n", 1)
 		[IO.File]::WriteAllText($manifestPath, $manifest)
 		[IO.File]::WriteAllText((Join-Path $source 'manifests/configmap.yaml'), "apiVersion: v1`nkind: ConfigMap`nmetadata:`n  name: ###TOOLCHAIN_VAR_APP_NAME###`n")
 		[IO.File]::WriteAllText((Join-Path $source 'deploy-values.yaml'), "configured: true`n")

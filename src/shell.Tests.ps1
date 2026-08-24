@@ -50,7 +50,9 @@ Describe 'ExecuteScript' {
 			Remove-Item 'env:foo' -Force -ErrorAction SilentlyContinue
 		}
 		It 'Configures' {
-			$SysPath = "$env:SYSTEMROOT;$env:SYSTEMROOT\System32;$PSHOME"
+			$pathSeparator = [string][IO.Path]::PathSeparator
+			$systemRoot = if ($env:SYSTEMROOT) { $env:SYSTEMROOT } else { $PSHOME }
+			$SysPath = @($systemRoot, (Join-Path $systemRoot 'System32'), $PSHOME) -join $pathSeparator
 			$originalPath = Get-ToolchainPathValue
 			try {
 				Set-ToolchainPathValue $SysPath
@@ -67,7 +69,7 @@ Describe 'ExecuteScript' {
 					$yyy | Should -Not -BeNullOrEmpty
 					$script:xxx = '987'
 					$script:xxx | Should -Not -BeNullOrEmpty
-					Get-ToolchainPathValue | Should -Be "zzz;$ExpectedBasePath"
+					Get-ToolchainPathValue | Should -Be ("zzz{0}{1}" -f $pathSeparator, $ExpectedBasePath)
 					$env:var1 | Should -Be 'val'
 				}
 				Should -Invoke SomeFn -Times 1 -Exactly
@@ -80,7 +82,9 @@ Describe 'ExecuteScript' {
 			}
 		}
 		It 'Nests' {
-			$SysPath = "$env:SYSTEMROOT;$env:SYSTEMROOT\System32;$PSHOME"
+			$pathSeparator = [string][IO.Path]::PathSeparator
+			$systemRoot = if ($env:SYSTEMROOT) { $env:SYSTEMROOT } else { $PSHOME }
+			$SysPath = @($systemRoot, (Join-Path $systemRoot 'System32'), $PSHOME) -join $pathSeparator
 			$originalPath = Get-ToolchainPathValue
 			try {
 				Set-ToolchainPathValue $SysPath
@@ -96,10 +100,10 @@ Describe 'ExecuteScript' {
 						Config = 'default'
 					} -ScriptBlock {
 						SomeFn
-						Get-ToolchainPathValue | Should -Be "fizz;$ExpectedBasePath"
+						Get-ToolchainPathValue | Should -Be ("fizz{0}{1}" -f $pathSeparator, $ExpectedBasePath)
 						$env:foo | Should -Be 'bar'
 					}
-					Get-ToolchainPathValue | Should -Be "zzz;$ExpectedBasePath"
+					Get-ToolchainPathValue | Should -Be ("zzz{0}{1}" -f $pathSeparator, $ExpectedBasePath)
 				}
 				Should -Invoke SomeFn -Times 1 -Exactly
 			} finally {
@@ -124,6 +128,7 @@ Describe 'ConfigurePackage' {
 		Set-ToolchainPathValue $_Path
 	}
 	It 'Appends' {
+		$pathSeparator = [string][IO.Path]::PathSeparator
 		Set-ToolchainPathValue 'PATH'
 		$pkg = @{
 			Config = 'default'
@@ -132,9 +137,10 @@ Describe 'ConfigurePackage' {
 			Digest = 'sha256'
 		}
 		$pkg | ConfigurePackage
-		Get-ToolchainPathValue | Should -Be 'zzz;PATH'
+		Get-ToolchainPathValue | Should -Be ("zzz{0}PATH" -f $pathSeparator)
 	}
 	It 'Prepends' {
+		$pathSeparator = [string][IO.Path]::PathSeparator
 		Set-ToolchainPathValue 'PATH'
 		$pkg = @{
 			Config = 'default'
@@ -143,6 +149,6 @@ Describe 'ConfigurePackage' {
 			Digest = 'sha256'
 		}
 		$pkg | ConfigurePackage -AppendPath
-		Get-ToolchainPathValue | Should -Be 'PATH;zzz'
+		Get-ToolchainPathValue | Should -Be ("PATH{0}zzz" -f $pathSeparator)
 	}
 }

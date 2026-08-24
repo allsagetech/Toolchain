@@ -16,6 +16,10 @@ function Get-ToolchainRegistryAuthFiles {
 	foreach ($explicit in @($env:TOOLCHAIN_AUTH_FILE, $env:REGISTRY_AUTH_FILE)) {
 		if ($explicit) { [void]$paths.Add([IO.Path]::GetFullPath($explicit)) }
 	}
+	# An explicitly selected auth file is authoritative. This also makes it
+	# possible to intentionally test or use anonymous access without leaking
+	# credentials from a user's default Docker configuration.
+	if ($paths.Count -gt 0) { return @($paths | Select-Object -Unique) }
 	if ($env:DOCKER_CONFIG) { [void]$paths.Add((Join-Path ([IO.Path]::GetFullPath($env:DOCKER_CONFIG)) 'config.json')) }
 	$homePath = if ($HOME) { [string]$HOME } elseif ($env:USERPROFILE) { [string]$env:USERPROFILE } else { $null }
 	if ($homePath) {

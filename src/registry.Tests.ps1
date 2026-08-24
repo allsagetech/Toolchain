@@ -81,8 +81,9 @@ Describe "Registry config defaults" {
 		(GetRegistryIndexUrl) | Should -Be 'https://registry-1.docker.io'
 	}
 	It "Defaults to Windows/amd64 platform" {
-		(GetRegistryPlatformOs) | Should -Be 'windows'
-		(GetRegistryPlatformArch) | Should -Be 'amd64'
+		$expectedOs = if ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Windows)) { 'windows' } elseif ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Linux)) { 'linux' } else { 'darwin' }
+		(GetRegistryPlatformOs) | Should -Be $expectedOs
+		(GetRegistryPlatformArch) | Should -Be (Get-ToolchainRuntimeArchitecture)
 	}
 }
 
@@ -182,8 +183,14 @@ Describe "Docker Hub pre-auth" {
 
 Describe "Platform resolution prefers Windows manifest" {
 	BeforeAll {
-		$env:TOOLCHAIN_OS = $null
-		$env:TOOLCHAIN_ARCH = $null
+		$script:oldPlatformOs = $env:TOOLCHAIN_OS
+		$script:oldPlatformArch = $env:TOOLCHAIN_ARCH
+		$env:TOOLCHAIN_OS = 'windows'
+		$env:TOOLCHAIN_ARCH = 'amd64'
+	}
+	AfterAll {
+		if ($null -eq $script:oldPlatformOs) { Remove-Item Env:TOOLCHAIN_OS -ErrorAction Ignore } else { $env:TOOLCHAIN_OS = $script:oldPlatformOs }
+		if ($null -eq $script:oldPlatformArch) { Remove-Item Env:TOOLCHAIN_ARCH -ErrorAction Ignore } else { $env:TOOLCHAIN_ARCH = $script:oldPlatformArch }
 	}
 
 	It "Selects windows/amd64 from manifest list" {

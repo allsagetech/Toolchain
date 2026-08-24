@@ -204,8 +204,10 @@ jobs:
           TOOLCHAIN_CATALOG_CACHE_TTL: 00:00:00
           TOOLCHAIN_USERNAME: integration
           TOOLCHAIN_PASSWORD: integration-password
+          TOOLCHAIN_AUTH_FILE: .registry-auth/empty-config.json
         run: |
           $ErrorActionPreference = 'Stop'
+          [IO.File]::WriteAllText('.registry-auth/empty-config.json', '{"auths":{}}')
           . .\src\registry.ps1
           $username = $env:TOOLCHAIN_USERNAME
           $password = $env:TOOLCHAIN_PASSWORD

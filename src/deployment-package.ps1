@@ -652,6 +652,9 @@ function Read-ToolchainDeploymentDefinition {
 	return [pscustomobject]@{
 		Root = $rootPath
 		ManifestPath = $manifestPath
+		# Keep the parsed/expanded manifest text so package creation archives the
+		# exact definition that was validated (including create-time templates).
+		ManifestText = $manifestText
 		Name = $name
 		Version = $version
 		Description = $description
@@ -1555,6 +1558,7 @@ function New-ToolchainDeploymentPackage {
 	$previousLogConfiguration = Set-ToolchainLogConfiguration -Level ([string]$config.logLevel) -Format ([string]$config.logFormat)
 	$chartTemporaryRoot = $null
 	$imageTemporaryRoot = $null
+	$manifestSnapshot = $null
 	$createActionsStarted = $false
 	$createActionResults = [Collections.ArrayList]::new()
 	$createVariables = Get-ToolchainDeploymentBuildVariables -Definition $definition
@@ -1564,6 +1568,11 @@ function New-ToolchainDeploymentPackage {
 	$chartTemporaryRoot = Initialize-ToolchainDeploymentRemoteCharts -Definition $definition
 	Test-ToolchainDeploymentCharts -Definition $definition
 	$files = Get-ToolchainDeploymentBundleFiles -Definition $definition
+	if ($definition.ManifestText) {
+		$manifestSnapshot = Join-Path ([IO.Path]::GetTempPath()) "toolchain-manifest-$([guid]::NewGuid().ToString('n')).yaml"
+		[IO.File]::WriteAllText($manifestSnapshot, [string]$definition.ManifestText, [Text.UTF8Encoding]::new($false))
+		$files['toolchain.yaml'] = $manifestSnapshot
+	}
 	$imageArtifacts = @()
 	if ($definition.Images.Count -gt 0) {
 		$imageTemporaryRoot = New-ToolchainDeploymentImageTemporaryRoot
@@ -1653,6 +1662,7 @@ function New-ToolchainDeploymentPackage {
 	} finally {
 		if ($imageTemporaryRoot) { Remove-ToolchainDeploymentImageTemporaryRoot -Path $imageTemporaryRoot }
 		if ($chartTemporaryRoot) { Remove-ToolchainDeploymentChartTemporaryRoot -Path $chartTemporaryRoot }
+		if ($manifestSnapshot -and (Test-Path -LiteralPath $manifestSnapshot -PathType Leaf)) { [IO.File]::Delete($manifestSnapshot) }
 		Reset-ToolchainLogConfiguration -Configuration $previousLogConfiguration
 	}
 }
