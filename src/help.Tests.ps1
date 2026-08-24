@@ -17,7 +17,7 @@ Describe 'Toolchain command help catalog' {
 			'lock','restore','sync','activate','deactivate','verify','audit',
 			'profile','profile init','profile add','profile remove','profile list','profile path',
 			'package','package create','package deploy','package remove',
-			'cluster','cluster create','cluster init','cluster list','cluster status','cluster kubeconfig','cluster use','cluster current','cluster delete',
+			'cluster','cluster create','cluster init','cluster deinit','cluster list','cluster status','cluster kubeconfig','cluster use','cluster current','cluster delete',
 			'k9s','doctor','help'
 		)
 		$topics = Get-ToolchainHelpTopics

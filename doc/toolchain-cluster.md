@@ -205,6 +205,21 @@ node before running init or override their references with `-RegistryImage` and
 arbitrary external cluster runtime, preload all required images or override
 their references with `-AgentImage`, `-RegistryImage`, and `-GitImage`.
 
+## Deinitialize
+
+Remove only the Toolchain deployment foundation while preserving the Kubernetes
+cluster and its application workloads:
+
+```powershell
+tlc cluster deinit dev -Confirm
+```
+
+Deinitialization removes the Toolchain admission webhook and agent RBAC objects,
+then deletes the `toolchain-system` namespace and its registry, credentials,
+image mappings, persistent volumes, and optional Git server. It does not delete
+the provider cluster, application namespaces, or package-managed workloads.
+Use `tlc cluster init dev -Confirm` to restore the Toolchain foundation later.
+
 ## Delete
 
 ```powershell

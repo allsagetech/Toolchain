@@ -873,3 +873,46 @@ function Invoke-ToolchainClusterInit {
 	if ('git-server' -in $componentsNormalized) { Write-ToolchainInfo "Git administrator credentials are stored in secret/toolchain-git-admin in namespace toolchain-system." }
 	if ($PassThru) { return $result }
 }
+
+function Invoke-ToolchainClusterDeinit {
+	[CmdletBinding()]
+	param(
+		[string]$Name,
+		[string]$Kubeconfig,
+		[switch]$Confirm,
+		[ValidateRange(10, 1800)][int]$WaitSeconds = 120,
+		[switch]$PassThru
+	)
+	if (-not $Confirm) { throw "cluster deinit changes Kubernetes cluster state; rerun with -Confirm after reviewing 'tlc cluster deinit help'" }
+	$kubeconfigPath = Resolve-ToolchainBootstrapKubeconfig -Name $Name -Kubeconfig $Kubeconfig
+	$kubectl = Get-ToolchainClusterExecutable -Name kubectl -Package kubectl -InstallHint 'Install kubectl and ensure its executable is available on PATH.'
+	$apiServer = Get-ToolchainBootstrapApiServer -Kubeconfig $kubeconfigPath
+	$target = if ($Name) { "Toolchain cluster '$Name'" } else { 'the selected Kubernetes context' }
+	try {
+		$null = Invoke-ToolchainBootstrapKubectl -Kubectl $kubectl -Kubeconfig $kubeconfigPath -Arguments @('get', '--request-timeout=10s', '--raw=/readyz')
+	} catch {
+		throw "Kubernetes API preflight failed for cluster deinit at $apiServer. Confirm the provider is running and the endpoint is reachable. kubectl reported: $($_.Exception.Message)"
+	}
+
+	$removed = [Collections.ArrayList]::new()
+	# Remove cluster-scoped admission/RBAC objects first so the webhook cannot
+	# observe cleanup of the Toolchain namespace or any finalizers it owns.
+	foreach ($resource in @('mutatingwebhookconfiguration/toolchain-agent', 'clusterrolebinding/toolchain-agent', 'clusterrole/toolchain-agent')) {
+		$null = Invoke-ToolchainBootstrapKubectl -Kubectl $kubectl -Kubeconfig $kubeconfigPath -Arguments @('delete', $resource, '--ignore-not-found=true')
+		[void]$removed.Add($resource)
+	}
+	$timeout = "${WaitSeconds}s"
+	$null = Invoke-ToolchainBootstrapKubectl -Kubectl $kubectl -Kubeconfig $kubeconfigPath -Arguments @('delete', 'namespace/toolchain-system', '--ignore-not-found=true', '--wait=true', "--timeout=$timeout")
+	[void]$removed.Add('namespace/toolchain-system')
+
+	$result = [pscustomobject]@{
+		PSTypeName = 'Toolchain.ClusterDeinitialization'
+		Cluster = if ($Name) { $Name } else { 'current-context' }
+		Kubeconfig = $kubeconfigPath
+		Namespace = 'toolchain-system'
+		Removed = @($removed.ToArray())
+		WaitSeconds = $WaitSeconds
+	}
+	Write-ToolchainInfo "Removed Toolchain bootstrap resources from $($result.Cluster); the Kubernetes cluster was preserved."
+	if ($PassThru) { return $result }
+}

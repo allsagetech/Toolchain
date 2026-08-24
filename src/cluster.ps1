@@ -739,7 +739,7 @@ function Invoke-ToolchainCluster {
 	[CmdletBinding()]
 	param(
 		[Parameter(Mandatory, Position = 0)]
-		[ValidateSet('create', 'init', 'list', 'status', 'kubeconfig', 'use', 'current', 'delete')]
+		[ValidateSet('create', 'init', 'deinit', 'list', 'status', 'kubeconfig', 'use', 'current', 'delete')]
 		[string]$Command,
 		[Parameter(Position = 1)]
 		[string]$Name,
@@ -801,6 +801,21 @@ function Invoke-ToolchainCluster {
 			if ($RegistryImage) { $params.RegistryImage = $RegistryImage }
 			if ($GitImage) { $params.GitImage = $GitImage }
 			return (Invoke-ToolchainClusterInit @params)
+		}
+		'deinit' {
+			if (-not $Confirm) { throw "cluster deinit changes Kubernetes cluster state; rerun with -Confirm after reviewing 'tlc cluster deinit help'" }
+			if (-not $Name -and -not $Kubeconfig) {
+				$currentContext = Resolve-ToolchainCurrentClusterContext -SelectSingle
+				if ($currentContext) { $Name = $currentContext.Name }
+			}
+			$params = @{
+				Name = $Name
+				Kubeconfig = $Kubeconfig
+				Confirm = $Confirm
+				WaitSeconds = $WaitSeconds
+				PassThru = $PassThru
+			}
+			return (Invoke-ToolchainClusterDeinit @params)
 		}
 		'create' {
 			if (-not $Name) { throw 'cluster create requires a name' }

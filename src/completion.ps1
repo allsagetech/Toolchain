@@ -56,11 +56,12 @@ function Get-ToolchainNestedCompletionValues {
 			if ($previous -eq '-AgentMutationPolicy') { return @('all','labeled') | Where-Object { $_ -like "$WordToComplete*" } }
 			if ($previous -eq '-Components') { return @('git-server','none') | Where-Object { $_ -like "$WordToComplete*" } }
 			if ($Elements.Count -le 2 -or ($Elements.Count -eq 3 -and $WordToComplete)) {
-				return @('create','init','list','status','kubeconfig','use','current','delete') + $helpValues | Where-Object { $_ -like "$WordToComplete*" }
+				return @('create','init','deinit','list','status','kubeconfig','use','current','delete') + $helpValues | Where-Object { $_ -like "$WordToComplete*" }
 			}
 			$options = switch ($Elements[2]) {
 				'create' { @('-Provider','-Engine','-Servers','-Workers','-ApiPort','-WaitSeconds','-Image','-Config') }
 				'init' { @('-Kubeconfig','-Confirm','-Components','-AgentMutationPolicy','-StorageClass','-RegistryStorage','-GitStorage','-RegistryNodePort','-WaitSeconds','-PassThru') }
+				'deinit' { @('-Kubeconfig','-Confirm','-WaitSeconds','-PassThru') }
 				'list' { @('-Provider') }
 				'kubeconfig' { @('-Raw') }
 				'use' { @('-PassThru') }

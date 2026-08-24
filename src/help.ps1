@@ -264,6 +264,7 @@ function Get-ToolchainHelpTopics {
 		-Commands @(
 			'create        Create a kind, k0s, or K3s-on-k3d cluster.',
 			'init          Bootstrap Toolchain-owned registry and admission infrastructure.',
+			'deinit        Remove Toolchain bootstrap resources while preserving the cluster.',
 			'list          List managed clusters.',
 			'status        Show one managed cluster and its runtime status.',
 			'kubeconfig    Return a managed kubeconfig path or contents.',
@@ -309,6 +310,18 @@ function Get-ToolchainHelpTopics {
 		) `
 		-Examples @('tlc cluster init -Confirm', 'tlc cluster init dev -Confirm', 'tlc cluster init dev -Confirm -Components none', 'tlc cluster init -Kubeconfig .\kubeconfig.yaml -Confirm -Components git-server') `
 		-Notes @("When -Components is omitted, Toolchain asks whether to install the optional Git server; the default answer is no.", 'The admission policy defaults to labeled, so only Pods labeled toolchain.dev/agent: mutate use Toolchain image mappings; use all only as an explicit legacy override.', 'Managed clusters build the admission agent locally and import it into their node runtime; -AgentImage overrides that behavior.', 'This is a Toolchain-native implementation and does not install or invoke third-party bootstrap tooling.', 'Only exact image references present in the Toolchain mapping ConfigMap are mutated.', 'Registry pulls are anonymous through the node-local gateway; writes require the generated Kubernetes Secret.', 'Repeated runs preserve credentials and mappings, then use server-side apply as an upgrade.')
+	$topics.'cluster deinit' = New-ToolchainHelpTopic `
+		-Description 'Removes Toolchain-owned registry, admission, RBAC, and optional Git bootstrap resources while preserving the Kubernetes cluster.' `
+		-Usage @('tlc cluster deinit NAME -Confirm [-WaitSeconds SECONDS] [-PassThru]', 'tlc cluster deinit -Kubeconfig PATH -Confirm [-WaitSeconds SECONDS] [-PassThru]') `
+		-Options @(
+			'NAME                         Deinitialize a Toolchain-managed cluster.',
+			'-Kubeconfig PATH             Deinitialize an external cluster through an explicit kubeconfig.',
+			'-Confirm                     Required acknowledgement of cluster changes.',
+			'-WaitSeconds SECONDS         Namespace deletion timeout from 10 through 1800. Default: 120.',
+			'-PassThru                   Return structured deinitialization details.'
+		) `
+		-Examples @('tlc cluster deinit dev -Confirm', 'tlc cluster deinit -Kubeconfig .\kubeconfig.yaml -Confirm -PassThru') `
+		-Notes @('Only Toolchain bootstrap resources are targeted: the toolchain-system namespace, Toolchain admission webhook, and Toolchain agent RBAC objects.', 'Application namespaces, workloads, package resources, and the Kubernetes provider cluster are preserved.', 'Run tlc cluster init again to restore Toolchain infrastructure.')
 	$topics.'cluster list' = New-ToolchainHelpTopic `
 		-Description 'Lists clusters managed by Toolchain.' `
 		-Usage @('tlc cluster list [-Provider kind|k0s|k3s]') `

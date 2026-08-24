@@ -243,4 +243,24 @@ Describe 'Toolchain native cluster initialization' {
 		Mock Get-ToolchainClusterRuntimeStatus { 'Missing' }
 		{ Resolve-ToolchainBootstrapKubeconfig -Name dev } | Should -Throw '*not running*'
 	}
+
+	It 'removes Toolchain bootstrap resources without deleting the cluster' {
+		$script:managedKubeconfig = Join-Path $TestDrive 'deinit-kubeconfig.yaml'
+		[IO.File]::WriteAllText($script:managedKubeconfig, "apiVersion: v1`nserver: https://127.0.0.1:6443`n")
+		Mock Read-ToolchainClusterState { [pscustomobject]@{ name='dev'; provider='kind' } }
+		Mock Get-ToolchainClusterRuntimeStatus { 'Running' }
+		Mock Get-ToolchainClusterKubeconfigPath { $script:managedKubeconfig }
+
+		$result = Invoke-ToolchainClusterDeinit -Name dev -Confirm -PassThru
+
+		$result.PSObject.TypeNames[0] | Should -BeExactly 'Toolchain.ClusterDeinitialization'
+		$result.Cluster | Should -BeExactly 'dev'
+		$result.Namespace | Should -BeExactly 'toolchain-system'
+		$result.Removed | Should -Contain 'mutatingwebhookconfiguration/toolchain-agent'
+		$result.Removed | Should -Contain 'namespace/toolchain-system'
+		@($script:kubectlCalls).Count | Should -Be 5
+		($script:kubectlCalls[1].Arguments -join ' ') | Should -Match 'delete mutatingwebhookconfiguration/toolchain-agent'
+		($script:kubectlCalls[4].Arguments -join ' ') | Should -Match 'delete namespace/toolchain-system'
+		Test-Path -LiteralPath $script:managedKubeconfig | Should -BeTrue
+	}
 }
