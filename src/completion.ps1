@@ -40,11 +40,12 @@ function Get-ToolchainNestedCompletionValues {
 		}
 		'package' {
 			if ($Elements.Count -le 2 -or ($Elements.Count -eq 3 -and $WordToComplete)) {
-				return @('create','deploy') + $helpValues | Where-Object { $_ -like "$WordToComplete*" }
+				return @('create','deploy','remove') + $helpValues | Where-Object { $_ -like "$WordToComplete*" }
 			}
 			$options = switch ($Elements[2]) {
 				'create' { @('-Output','-Force') }
 				'deploy' { @('-Components','-Set','-Cluster','-Kubeconfig','-Values','-Config','-Namespace','-WaitSeconds','-Confirm','-DryRun','-PassThru') }
+				'remove' { @('-Components','-Set','-Cluster','-Kubeconfig','-Config','-Namespace','-WaitSeconds','-Confirm','-DryRun','-PassThru') }
 				default { @() }
 			}
 			return @($options) + $helpValues | Where-Object { $_ -like "$WordToComplete*" }

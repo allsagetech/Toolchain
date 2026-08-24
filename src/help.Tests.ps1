@@ -16,7 +16,7 @@ Describe 'Toolchain command help catalog' {
 			'pull','load','exec','run','update','prune','remove','save','init',
 			'lock','restore','sync','activate','deactivate','verify','audit',
 			'profile','profile init','profile add','profile remove','profile list','profile path',
-			'package','package create','package deploy',
+			'package','package create','package deploy','package remove',
 			'cluster','cluster create','cluster init','cluster list','cluster status','cluster kubeconfig','cluster use','cluster current','cluster delete',
 			'k9s','doctor','help'
 		)
@@ -44,6 +44,7 @@ Describe 'Toolchain command help catalog' {
 		$text | Should -Match 'activate'
 		(Invoke-ToolchainHelp -CommandPath @('package','deploy')) | Should -Match '-Components NAMES'
 		(Invoke-ToolchainHelp -CommandPath @('package','deploy')) | Should -Match '-Set NAME=value'
+		(Invoke-ToolchainHelp -CommandPath @('package','remove')) | Should -Match '-Confirm'
 	}
 
 	It 'normalizes command aliases in help paths' {

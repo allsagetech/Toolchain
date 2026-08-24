@@ -213,6 +213,7 @@ deployment:
 ```powershell
 tlc package create .
 tlc package deploy .\dist\toolchain-package-demo-1.0.0.tlcpkg -Cluster dev -Confirm
+tlc package remove .\dist\toolchain-package-demo-1.0.0.tlcpkg -Cluster dev -Confirm
 ```
 
 Toolchain lints charts, bundles declared container images, creates an
@@ -259,7 +260,7 @@ not supplied by configuration or environment variables.
 | `verify` | Verify package and platform-index signatures | `doc/toolchain-verify.md` |
 | `audit` | Report project/lock drift, installed and remote digest state, updates, health, signatures, and policy findings; safely remediate lock/restore drift with `-Fix` | `doc/toolchain-audit.md` |
 | `profile init` / `add` / `remove` / `list` / `path` | Manage startup package loads in your PowerShell profile | `doc/toolchain-profile.md` |
-| `package create` / `deploy` | Create and deploy verified Kubernetes bundles with images, Helm charts, and YAML manifests | `doc/toolchain-package.md` |
+| `package create` / `deploy` / `remove` | Create, deploy, and remove verified Kubernetes bundles with images, Helm charts, and YAML manifests | `doc/toolchain-package.md` |
 | `cluster create` / `init` / `list` / `status` / `kubeconfig` / `use` / `current` / `delete` | Manage, select, and natively bootstrap local Toolchain clusters | `doc/toolchain-cluster.md` |
 | `k9s` | Launch K9s against the current context or a selected kubeconfig | `doc/toolchain-k9s.md` |
 | `doctor` | Print diagnostics for your Toolchain setup | `doc/toolchain-doctor.md` |

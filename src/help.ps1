@@ -201,13 +201,14 @@ function Get-ToolchainHelpTopics {
 		-Usage @('tlc profile path') `
 		-Examples @('tlc profile path')
 	$topics.package = New-ToolchainHelpTopic `
-		-Description 'Creates and deploys integrity-checked Kubernetes application bundles with images, Helm charts, and YAML manifests.' `
+		-Description 'Creates, deploys, and removes integrity-checked Kubernetes application bundles with images, Helm charts, and YAML manifests.' `
 		-Usage @('tlc package COMMAND [PATH] [OPTIONS]', 'tlc package COMMAND help') `
 		-Commands @(
 			'create    Build a .tlcpkg bundle from toolchain.yaml.',
-			'deploy    Verify and deploy a bundle or source directory.'
+			'deploy    Verify and deploy a bundle or source directory.',
+			'remove    Remove a bundle''s manifests and Helm releases from a cluster.'
 		) `
-		-Examples @('tlc package create .', 'tlc package deploy .\dist\toolchain-package-demo-1.0.0.tlcpkg -Cluster dev -Confirm')
+		-Examples @('tlc package create .', 'tlc package deploy .\dist\toolchain-package-demo-1.0.0.tlcpkg -Cluster dev -Confirm', 'tlc package remove .\dist\toolchain-package-demo-1.0.0.tlcpkg -Cluster dev -Confirm')
 	$topics.'package create' = New-ToolchainHelpTopic `
 		-Description 'Bundles container images and local or remote Helm charts into a hash-indexed Toolchain deployment package.' `
 		-Usage @('tlc package create [DIRECTORY] [-Output PATH] [-Force] [-Confirm]') `
@@ -238,6 +239,24 @@ function Get-ToolchainHelpTopics {
 		) `
 		-Examples @('tlc package deploy .\dist\toolchain-package-demo-1.0.0.tlcpkg -Cluster dev -Set APP_NAME=demo -Confirm', 'tlc package deploy . -DryRun', 'tlc package deploy app.tlcpkg -Kubeconfig .\kubeconfig.yaml -Values .\production.yaml -Confirm') `
 		-Notes @('Required and default components deploy automatically; -Components accepts includes, wildcards, and -exclude selection.', 'Nested package.deploy configuration can provide default components, set variables, and additional Helm values; explicit command options take precedence.', 'Bundled images publish to the registry installed by cluster init and exact source references are mapped to digest-pinned targets before workloads are applied; Pod templates must opt in with toolchain.dev/agent: mutate under the default labeled admission policy.', 'Top-level variables use ###TOOLCHAIN_VAR_NAME### templates and can be supplied by -Set, toolchain-config.yaml, or TOOLCHAIN_VAR_NAME environment variables.', 'Selected onDeploy command and wait actions execute locally after -Confirm; action output variables can feed later package resources.', '-DryRun validates but does not execute deployment actions.', 'Each selected component applies its manifests before its charts, preserving component declaration order.', 'Helm uses upgrade --install so repeated deployments are upgrades.', 'Archive contents are size-bounded and SHA-256 verified before any cluster operation; only deploy packages from trusted publishers.')
+	$topics.'package remove' = New-ToolchainHelpTopic `
+		-Description 'Removes selected package manifests and Helm releases from a Kubernetes cluster, running declared onRemove actions.' `
+		-Usage @('tlc package remove PACKAGE -Confirm [-Components NAMES] [-Set NAME=value] [-Cluster NAME | -Kubeconfig PATH] [-Config PATH] [-Namespace NAME] [-WaitSeconds SECONDS] [-PassThru]', 'tlc package remove PACKAGE -DryRun [OPTIONS]') `
+		-Options @(
+			'PACKAGE             A .tlcpkg file or unpackaged source directory.',
+			'-Confirm             Required acknowledgement before changing a cluster.',
+			'-Cluster NAME        Remove from a Toolchain-managed cluster.',
+			'-Kubeconfig PATH     Remove through an explicit kubeconfig.',
+			'-Components NAMES    Comma-separated optional component names or wildcards; prefix with - to deselect defaults.',
+			'-Set NAME=value       Set declared package variables used by manifests and onRemove actions.',
+			'-Config PATH         Overlay an external toolchain-config.yaml.',
+			'-Namespace NAME      Override the package default namespace.',
+			'-WaitSeconds VALUE   Override Helm uninstall wait timeout from 1 through 3600.',
+			'-DryRun              Validate against Kubernetes without deleting resources or running actions.',
+			'-PassThru            Return structured removal details.'
+		) `
+		-Examples @('tlc package remove .\dist\toolchain-package-demo-1.0.0.tlcpkg -Cluster dev -Confirm', 'tlc package remove . -Components optional-addon -DryRun', 'tlc package remove app.tlcpkg -Kubeconfig .\kubeconfig.yaml -Confirm') `
+		-Notes @('Manifests and Helm releases are removed in reverse component declaration order.', 'Required and default components are selected automatically; use -Components to include or exclude components.', 'Declared onRemove actions run before and after removal, with onSuccess or onFailure lifecycle handling.', 'Package archives are verified before any cluster operation; -DryRun performs Kubernetes server-side and Helm dry-run validation without mutations.')
 
 	$topics.cluster = New-ToolchainHelpTopic `
 		-Description 'Creates and manages local container-engine-backed Kubernetes development clusters.' `
@@ -444,7 +463,7 @@ function Invoke-ToolchainHelp {
 			'verify         Verify package signatures.',
 			'audit          Audit project reproducibility and supply-chain status.',
 			'profile        Manage PowerShell profile package loads.',
-			'package        Create and deploy Kubernetes application bundles.',
+			'package        Create, deploy, and remove Kubernetes application bundles.',
 			'cluster        Manage local Docker-backed Kubernetes clusters.',
 			'k9s            Launch a terminal UI for a Kubernetes cluster.',
 			'doctor         Check Toolchain storage and registry configuration.',

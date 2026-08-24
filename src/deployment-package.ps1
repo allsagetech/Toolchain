@@ -595,16 +595,18 @@ function Read-ToolchainDeploymentDefinition {
 	if (@($componentNames | Sort-Object -Unique).Count -ne $componentNames.Count) { throw "$manifestPath contains duplicate component names" }
 	$actionVariablesByName = [Collections.Generic.Dictionary[string,object]]::new([StringComparer]::OrdinalIgnoreCase)
 	foreach ($component in $components) {
-		foreach ($phase in @('before', 'after', 'onSuccess', 'onFailure')) {
-			foreach ($action in @($component.Actions.OnDeploy.$phase)) {
-				foreach ($actionVariable in $action.SetVariables) {
-					if ($actionVariablesByName.ContainsKey([string]$actionVariable.Name)) {
-						$existing = $actionVariablesByName[[string]$actionVariable.Name]
-						if ($existing.Sensitive -ne $actionVariable.Sensitive -or $existing.AutoIndent -ne $actionVariable.AutoIndent -or $existing.Pattern -ne $actionVariable.Pattern -or $existing.Type -ne $actionVariable.Type) {
-							throw "$manifestPath declares conflicting action output variable '$($actionVariable.Name)'"
-						}
-					} else { $actionVariablesByName.Add([string]$actionVariable.Name, $actionVariable) }
-					[void]$variableNames.Add([string]$actionVariable.Name)
+		foreach ($lifecycle in @('OnDeploy', 'OnRemove')) {
+			foreach ($phase in @('before', 'after', 'onSuccess', 'onFailure')) {
+				foreach ($action in @($component.Actions.$lifecycle.$phase)) {
+					foreach ($actionVariable in $action.SetVariables) {
+						if ($actionVariablesByName.ContainsKey([string]$actionVariable.Name)) {
+							$existing = $actionVariablesByName[[string]$actionVariable.Name]
+							if ($existing.Sensitive -ne $actionVariable.Sensitive -or $existing.AutoIndent -ne $actionVariable.AutoIndent -or $existing.Pattern -ne $actionVariable.Pattern -or $existing.Type -ne $actionVariable.Type) {
+								throw "$manifestPath declares conflicting action output variable '$($actionVariable.Name)'"
+							}
+						} else { $actionVariablesByName.Add([string]$actionVariable.Name, $actionVariable) }
+						[void]$variableNames.Add([string]$actionVariable.Name)
+					}
 				}
 			}
 		}
@@ -2491,10 +2493,137 @@ function Invoke-ToolchainDeploymentBundle {
 	}
 }
 
+function Invoke-ToolchainDeploymentPackageRemove {
+	[CmdletBinding()]
+	param(
+		[Parameter(Mandatory)][string]$Root,
+		[string]$Cluster,
+		[string]$Kubeconfig,
+		[string[]]$Components,
+		[string[]]$Set,
+		[string]$Config,
+		[string]$Namespace,
+		[int]$WaitSeconds = 300,
+		[switch]$OverrideWaitSeconds,
+		[switch]$DryRun,
+		[switch]$PassThru
+	)
+	$definition = Read-ToolchainDeploymentDefinition -Root $Root
+	$settings = @{
+		namespace = if ($definition.Namespace) { $definition.Namespace } else { 'default' }
+		wait = $true
+		waitSeconds = 300
+		retries = 3
+		createNamespace = $true
+		logLevel = 'info'
+		logFormat = 'console'
+	}
+	$configuredVariables = @{}
+	$packageOptions = @{ Components = [string[]]@(); Values = [string[]]@(); HasComponents = $false; HasValues = $false }
+	$internalConfig = Join-Path $Root 'toolchain-config.yaml'
+	if (Test-Path -LiteralPath $internalConfig -PathType Leaf) { Merge-ToolchainDeploymentConfig -Settings $settings -Variables $configuredVariables -PackageOptions $packageOptions -Path $internalConfig }
+	if ($Config) { Merge-ToolchainDeploymentConfig -Settings $settings -Variables $configuredVariables -PackageOptions $packageOptions -Path (Resolve-ToolchainFileSystemPath -Path $Config) }
+	if ($Namespace) { Assert-ToolchainDeploymentIdentifier -Value $Namespace -Kind 'namespace'; $settings.namespace = $Namespace }
+	if ($OverrideWaitSeconds) { $settings.waitSeconds = $WaitSeconds }
+	$effectiveComponents = if ($Components.Count -gt 0) { [string[]]$Components } elseif ($packageOptions.HasComponents) { [string[]]$packageOptions.Components } else { [string[]]@() }
+	$selectedComponents = @(Resolve-ToolchainDeploymentComponentSelection -Definition $definition -Components $effectiveComponents)
+	$overrides = ConvertFrom-ToolchainDeploymentSet -Set $Set
+	$resolvedVariables = Resolve-ToolchainDeploymentVariables -Definition $definition -Root $Root -Configured $configuredVariables -Overrides $overrides
+	$renderRoot = New-ToolchainDeploymentRenderRoot
+	$previousLogConfiguration = Set-ToolchainLogConfiguration -Level ([string]$settings.logLevel) -Format ([string]$settings.logFormat)
+	$removeActionsStarted = $false
+	$removeActionResults = [Collections.ArrayList]::new()
+	$kubeconfigPath = $null
+	try {
+		$kubeconfigPath = Resolve-ToolchainDeploymentKubeconfig -Cluster $Cluster -Kubeconfig $Kubeconfig
+		$kubectl = Get-ToolchainClusterExecutable -Name kubectl -Package kubectl -InstallHint 'Install kubectl and ensure its executable is available on PATH.'
+		$apiServer = Get-ToolchainBootstrapApiServer -Kubeconfig $kubeconfigPath
+		try { $null = Invoke-ToolchainDeploymentOperation -Retries ([int]$settings.retries) -Context 'Kubernetes API preflight' -Operation { Invoke-ToolchainBootstrapKubectl -Kubectl $kubectl -Kubeconfig $kubeconfigPath -Arguments @('get', '--request-timeout=10s', '--raw=/readyz') } }
+		catch { throw "Kubernetes API preflight failed for package removal at $apiServer. kubectl reported: $($_.Exception.Message)" }
+		if (-not $DryRun) {
+			$removeActionsStarted = $true
+			foreach ($actionResult in @(Invoke-ToolchainDeploymentActionPhase -Components $selectedComponents -Lifecycle OnRemove -Phase before -Root $Root -Definition $definition -Variables $resolvedVariables -Kubectl $kubectl -Kubeconfig $kubeconfigPath)) { [void]$removeActionResults.Add($actionResult) }
+		}
+
+		$removedManifests = [Collections.ArrayList]::new()
+		$removedReleases = [Collections.ArrayList]::new()
+		$helm = $null
+		for ($componentIndex = $selectedComponents.Count - 1; $componentIndex -ge 0; $componentIndex--) {
+			$component = $selectedComponents[$componentIndex]
+			for ($manifestIndex = $component.ManifestSets.Count - 1; $manifestIndex -ge 0; $manifestIndex--) {
+				$manifestSet = $component.ManifestSets[$manifestIndex]
+				for ($fileIndex = $manifestSet.Files.Count - 1; $fileIndex -ge 0; $fileIndex--) {
+					$manifestPath = $manifestSet.Files[$fileIndex]
+					foreach ($file in @(Get-ToolchainDeploymentSourceFiles -Root $Root -RelativePath $manifestPath -YamlOnly)) {
+						$renderedManifestPath = Get-ToolchainDeploymentRenderedFile -Path $file.FullName -Variables $resolvedVariables -RenderRoot $renderRoot -Context "manifest $($manifestSet.Name)"
+						$arguments = @('delete', '--ignore-not-found=true')
+						if ($DryRun) { $arguments += '--dry-run=server' }
+						$manifestNamespace = if ($Namespace) { [string]$settings.namespace } else { [string]$manifestSet.Namespace }
+						if ($manifestNamespace) { $arguments += @('--namespace', $manifestNamespace) }
+						$arguments += @('-f', $renderedManifestPath)
+						$null = Invoke-ToolchainDeploymentOperation -Retries ([int]$settings.retries) -Context "Manifest removal $($manifestSet.Name)" -Operation { Invoke-ToolchainBootstrapKubectl -Kubectl $kubectl -Kubeconfig $kubeconfigPath -Arguments $arguments }
+						[void]$removedManifests.Add([pscustomobject]@{
+							Component = $component.Name
+							Name = $manifestSet.Name
+							Path = Get-ToolchainDeploymentRelativePath -Root $Root -Path $file.FullName
+							Namespace = $manifestNamespace
+						})
+					}
+				}
+			}
+			if ($component.Charts.Count -gt 0 -and -not $helm) { $helm = Get-ToolchainClusterExecutable -Name helm -Package helm -InstallHint 'Install Helm and ensure its executable is available on PATH.' }
+		for ($chartIndex = $component.Charts.Count - 1; $chartIndex -ge 0; $chartIndex--) {
+				$chart = $component.Charts[$chartIndex]
+				$releaseNamespace = if ($Namespace) { [string]$settings.namespace } elseif ($chart.Namespace) { [string]$chart.Namespace } else { [string]$settings.namespace }
+				$arguments = @('uninstall', $chart.Release, '--namespace', $releaseNamespace)
+				if ($DryRun) { $arguments += '--dry-run' }
+				elseif ([bool]$settings.wait) { $arguments += @('--wait', '--timeout', "$($settings.waitSeconds)s") }
+				if ($kubeconfigPath) { $arguments += @('--kubeconfig', $kubeconfigPath) }
+				$null = Invoke-ToolchainDeploymentOperation -Retries ([int]$settings.retries) -Context "Helm release removal $($chart.Release)" -Operation { Invoke-ToolchainClusterProcess -FilePath $helm -Arguments $arguments }
+				[void]$removedReleases.Add([pscustomobject]@{ Component = $component.Name; Name = $chart.Release; Namespace = $releaseNamespace; Chart = $chart.Path })
+			}
+		}
+		if (-not $DryRun) {
+			foreach ($actionResult in @(Invoke-ToolchainDeploymentActionPhase -Components $selectedComponents -Lifecycle OnRemove -Phase after -Root $Root -Definition $definition -Variables $resolvedVariables -Kubectl $kubectl -Kubeconfig $kubeconfigPath)) { [void]$removeActionResults.Add($actionResult) }
+			foreach ($actionResult in @(Invoke-ToolchainDeploymentActionPhase -Components $selectedComponents -Lifecycle OnRemove -Phase onSuccess -Root $Root -Definition $definition -Variables $resolvedVariables -Kubectl $kubectl -Kubeconfig $kubeconfigPath)) { [void]$removeActionResults.Add($actionResult) }
+		}
+		$result = [pscustomobject]@{
+			PSTypeName = 'Toolchain.DeploymentRemoveResult'
+			Name = $definition.Name
+			Version = $definition.Version
+			Cluster = if ($Cluster) { $Cluster } else { 'current-context' }
+			Kubeconfig = $kubeconfigPath
+			Namespace = [string]$settings.namespace
+			Retries = [int]$settings.retries
+			TimeoutSeconds = [int]$settings.waitSeconds
+			DryRun = [bool]$DryRun
+			Components = @($selectedComponents | ForEach-Object { $_.Name })
+			Variables = @($resolvedVariables.Keys | Sort-Object)
+			Actions = @($removeActionResults.ToArray())
+			Releases = @($removedReleases.ToArray())
+			Manifests = @($removedManifests.ToArray() | ForEach-Object { $_.Path })
+			ManifestDetails = @($removedManifests.ToArray())
+		}
+		$suffix = if ($DryRun) { ' (dry run)' } else { '' }
+		Write-ToolchainInfo "Removed Toolchain package '$($result.Name):$($result.Version)' from $($result.Cluster)$suffix."
+		if ($PassThru) { return $result }
+	} catch {
+		$originalError = $_
+		if ($removeActionsStarted -and -not $DryRun) {
+			try { $null = Invoke-ToolchainDeploymentActionPhase -Components $selectedComponents -Lifecycle OnRemove -Phase onFailure -Root $Root -Definition $definition -Variables $resolvedVariables -Kubectl $kubectl -Kubeconfig $kubeconfigPath }
+			catch { Write-Warning "Package onRemove failure action also failed: $($_.Exception.Message)" }
+		}
+		throw $originalError
+	} finally {
+		Remove-ToolchainDeploymentRenderRoot -Path $renderRoot
+		Reset-ToolchainLogConfiguration -Configuration $previousLogConfiguration
+	}
+}
+
 function Invoke-ToolchainDeploymentPackage {
 	[CmdletBinding()]
 	param(
-		[Parameter(Mandatory, Position = 0)][ValidateSet('create', 'deploy')][string]$Command,
+		[Parameter(Mandatory, Position = 0)][ValidateSet('create', 'deploy', 'remove')][string]$Command,
 		[Parameter(Position = 1)][string]$Path,
 		[string]$Output,
 		[string]$Cluster,
@@ -2515,9 +2644,10 @@ function Invoke-ToolchainDeploymentPackage {
 		$source = if ($Path) { $Path } else { (Get-Location).Path }
 		return (New-ToolchainDeploymentPackage -Path $source -Output $Output -Force:$Force -Confirm:$Confirm)
 	}
-	if (-not $Path) { throw 'package deploy requires a .tlcpkg file or source directory' }
-	if ($Output -or $Force) { throw 'package deploy does not accept -Output or -Force' }
-	if (-not $Confirm -and -not $DryRun) { throw "package deploy changes Kubernetes cluster state; rerun with -Confirm after reviewing 'tlc package deploy help'" }
+	if (-not $Path) { throw "package $Command requires a .tlcpkg file or source directory" }
+	if ($Output -or $Force) { throw "package $Command does not accept -Output or -Force" }
+	if ($Command -eq 'remove' -and $Values) { throw 'package remove does not accept -Values; release values are not needed when uninstalling resources' }
+	if (-not $Confirm -and -not $DryRun) { throw "package $Command changes Kubernetes cluster state; rerun with -Confirm after reviewing 'tlc package $Command help'" }
 	$root = $null
 	$temporaryRoot = $null
 	$packageIndex = $null
@@ -2530,6 +2660,21 @@ function Invoke-ToolchainDeploymentPackage {
 			$root = $expanded.Root
 			$temporaryRoot = $expanded.Root
 			$packageIndex = $expanded.Index
+		}
+		if ($Command -eq 'remove') {
+			$params = @{
+				Root = $root
+				Cluster = $Cluster
+				Kubeconfig = $Kubeconfig
+				Components = $Components
+				Set = $Set
+				Config = $Config
+				DryRun = $DryRun
+				PassThru = $PassThru
+			}
+			if ($PSBoundParameters.ContainsKey('Namespace')) { $params.Namespace = $Namespace }
+			if ($PSBoundParameters.ContainsKey('WaitSeconds')) { $params.WaitSeconds = $WaitSeconds; $params.OverrideWaitSeconds = $true }
+			return (Invoke-ToolchainDeploymentPackageRemove @params)
 		}
 		$params = @{
 			Root = $root

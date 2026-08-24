@@ -932,6 +932,21 @@ components:
 		{ Invoke-ToolchainDeploymentPackage -Command deploy -Path $source -Set 'MISSING=value' -Confirm } | Should -Throw '*not declared*'
 		$script:kubectlCalls.Count | Should -Be 0
 	}
+
+	It 'removes selected manifests and Helm releases in reverse declaration order' {
+		$source = Join-Path $TestDrive 'remove-source'
+		New-TestToolchainComponentSource -Root $source
+
+		$result = Invoke-ToolchainDeploymentPackage -Command remove -Path $source -Cluster dev -Confirm -PassThru
+
+		$result.PSObject.TypeNames[0] | Should -BeExactly 'Toolchain.DeploymentRemoveResult'
+		$result.Components | Should -Be @('prerequisites', 'application')
+		$result.Releases[0].Name | Should -BeExactly 'component-app'
+		$result.Manifests[0] | Should -BeExactly 'manifests/configmap.yaml'
+		($script:kubectlCalls[1].Arguments -join ' ') | Should -Match '^delete .* -f '
+		($script:helmCalls[0].Arguments -join ' ') | Should -Match '^uninstall component-app '
+		$script:helmCalls[0].Arguments | Should -Contain '--wait'
+	}
 }
 
 Describe 'Toolchain deployment package image publication' {

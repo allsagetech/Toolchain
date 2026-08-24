@@ -139,8 +139,8 @@ before:
 Reference that output as `###TOOLCHAIN_VAR_GENERATED_NAME###`. Output variables
 also support `sensitive`, `autoIndent`, and `type: file`. Deployment actions run
 only after `-Confirm`; `-DryRun` validates them but does not execute them.
-`onRemove` definitions are retained for package compatibility, but Toolchain
-does not execute them until a package-removal command exists.
+`onRemove` definitions execute during `tlc package remove`, which runs the
+selected components' removal actions around manifest and Helm cleanup.
 
 Actions execute local commands with the current user's permissions. Only create
 or deploy package source you trust; archive integrity verification detects
@@ -368,3 +368,23 @@ without `-Confirm` to validate and render without persisting resources.
 Archive hashing detects accidental or malicious modification after creation;
 it does not establish publisher identity. Distribute packages through a trusted
 channel until signed deployment packages are added.
+
+## Remove
+
+Remove the selected package components from a cluster. Toolchain deletes
+declared manifests and uninstalls Helm releases in reverse component order,
+then runs the declared `onRemove` lifecycle actions:
+
+```powershell
+tlc package remove .\dist\toolchain-package-demo-1.0.0.tlcpkg `
+  -Cluster dev -Confirm
+```
+
+Use `-Components` to select optional components, `-Set` to provide variables
+used by manifest templates or removal actions, and `-DryRun` to validate the
+Kubernetes and Helm operations without changing the cluster:
+
+```powershell
+tlc package remove .\dist\toolchain-package-demo-1.0.0.tlcpkg `
+  -Components 'application,observability*,-example-data' -DryRun
+```
