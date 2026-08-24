@@ -13,6 +13,10 @@ BeforeAll {
 	function Invoke-ToolchainClusterInit {
 		param($Name,$Kubeconfig,[switch]$Confirm,$Components,[switch]$PromptForComponents,$AgentMutationPolicy,$AgentImage,[switch]$BuildLocalAgent,$RegistryImage,$GitImage,$StorageClass,$RegistryStorage,$GitStorage,$RegistryNodePort,$WaitSeconds,[switch]$PassThru)
 	}
+	function Invoke-ToolchainClusterDeinit {
+		param($Name,$Kubeconfig,[switch]$Confirm,$WaitSeconds,[switch]$KeepStorage,[switch]$Force,[switch]$DryRun,$BackupPath,[switch]$PassThru)
+		[pscustomobject]@{ PSTypeName = 'Toolchain.ClusterDeinitialization'; Cluster = $Name; DryRun = $DryRun }
+	}
 
 	function New-TestClusterProcessResult {
 		param([int]$ExitCode = 0, [string[]]$Output = @())
@@ -168,6 +172,18 @@ Describe 'Toolchain cluster validation' {
 
 		Invoke-ToolchainCluster -Command init -Name dev -Confirm -Components none
 		$script:clusterInitShouldPrompt | Should -BeFalse
+	}
+
+	It 'resets Toolchain infrastructure without deleting the provider cluster' {
+		Mock Invoke-ToolchainClusterDeinit { [pscustomobject]@{ PSTypeName = 'Toolchain.ClusterDeinitialization'; Cluster = $Name; DryRun = $DryRun } }
+		Mock Invoke-ToolchainClusterInit { [pscustomobject]@{ PSTypeName = 'Toolchain.ClusterInitialization'; Cluster = $Name } }
+
+		$result = Invoke-ToolchainCluster -Command reset -Name dev -Confirm -Components none -PassThru
+
+		$result.PSObject.TypeNames[0] | Should -BeExactly 'Toolchain.ClusterResetResult'
+		$result.Initialization.Cluster | Should -BeExactly 'dev'
+		Should -Invoke Invoke-ToolchainClusterDeinit -Times 1 -Exactly -ParameterFilter { $Name -eq 'dev' -and $Confirm -and -not $DryRun }
+		Should -Invoke Invoke-ToolchainClusterInit -Times 1 -Exactly -ParameterFilter { $Name -eq 'dev' -and $Confirm -and $Components -contains 'none' }
 	}
 }
 

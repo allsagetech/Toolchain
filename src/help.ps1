@@ -265,6 +265,7 @@ function Get-ToolchainHelpTopics {
 			'create        Create a kind, k0s, or K3s-on-k3d cluster.',
 			'init          Bootstrap Toolchain-owned registry and admission infrastructure.',
 			'deinit        Remove Toolchain bootstrap resources while preserving the cluster.',
+			'reset         Deinitialize and immediately re-initialize Toolchain infrastructure.',
 			'list          List managed clusters.',
 			'status        Show one managed cluster and its runtime status.',
 			'kubeconfig    Return a managed kubeconfig path or contents.',
@@ -312,16 +313,36 @@ function Get-ToolchainHelpTopics {
 		-Notes @("When -Components is omitted, Toolchain asks whether to install the optional Git server; the default answer is no.", 'The admission policy defaults to labeled, so only Pods labeled toolchain.dev/agent: mutate use Toolchain image mappings; use all only as an explicit legacy override.', 'Managed clusters build the admission agent locally and import it into their node runtime; -AgentImage overrides that behavior.', 'This is a Toolchain-native implementation and does not install or invoke third-party bootstrap tooling.', 'Only exact image references present in the Toolchain mapping ConfigMap are mutated.', 'Registry pulls are anonymous through the node-local gateway; writes require the generated Kubernetes Secret.', 'Repeated runs preserve credentials and mappings, then use server-side apply as an upgrade.')
 	$topics.'cluster deinit' = New-ToolchainHelpTopic `
 		-Description 'Removes Toolchain-owned registry, admission, RBAC, and optional Git bootstrap resources while preserving the Kubernetes cluster.' `
-		-Usage @('tlc cluster deinit NAME -Confirm [-WaitSeconds SECONDS] [-PassThru]', 'tlc cluster deinit -Kubeconfig PATH -Confirm [-WaitSeconds SECONDS] [-PassThru]') `
+		-Usage @('tlc cluster deinit NAME -Confirm [-KeepStorage] [-BackupPath PATH] [-Force] [-DryRun] [-WaitSeconds SECONDS] [-PassThru]', 'tlc cluster deinit -Kubeconfig PATH -Confirm [OPTIONS]') `
 		-Options @(
 			'NAME                         Deinitialize a Toolchain-managed cluster.',
 			'-Kubeconfig PATH             Deinitialize an external cluster through an explicit kubeconfig.',
 			'-Confirm                     Required acknowledgement of cluster changes.',
+			'-KeepStorage                Preserve registry and Git PVCs while removing Toolchain workloads.',
+			'-BackupPath PATH             Export bootstrap resources and running registry/Git data before removal; use a directory or .zip path.',
+			'-Force                      Clear stuck namespace finalizers after a deletion timeout.',
+			'-DryRun                    Preview deletion without changing the cluster.',
 			'-WaitSeconds SECONDS         Namespace deletion timeout from 10 through 1800. Default: 120.',
 			'-PassThru                   Return structured deinitialization details.'
 		) `
 		-Examples @('tlc cluster deinit dev -Confirm', 'tlc cluster deinit -Kubeconfig .\kubeconfig.yaml -Confirm -PassThru') `
 		-Notes @('Only Toolchain bootstrap resources are targeted: the toolchain-system namespace, Toolchain admission webhook, and Toolchain agent RBAC objects.', 'Application namespaces, workloads, package resources, and the Kubernetes provider cluster are preserved.', 'Run tlc cluster init again to restore Toolchain infrastructure.')
+	$topics.'cluster reset' = New-ToolchainHelpTopic `
+		-Description 'Rebuilds Toolchain bootstrap infrastructure on an existing Kubernetes cluster without deleting the cluster or application workloads.' `
+		-Usage @('tlc cluster reset NAME -Confirm [OPTIONS]', 'tlc cluster reset -Kubeconfig PATH -Confirm [OPTIONS]') `
+		-Options @(
+			'NAME                         Reset a Toolchain-managed cluster.',
+			'-Kubeconfig PATH             Reset an external cluster through an explicit kubeconfig.',
+			'-Confirm                     Required acknowledgement of cluster changes.',
+			'-Components VALUE            Skip the Git prompt: git-server or none.',
+			'-KeepStorage                Preserve registry and Git PVCs during the reset.',
+			'-BackupPath PATH             Export bootstrap resources and data before reset; use a directory or .zip path.',
+			'-Force                      Clear stuck namespace finalizers during deinit.',
+			'-DryRun                    Preview deinitialization without changing the cluster or re-initializing it.',
+			'-PassThru                   Return structured reset details.'
+		) `
+		-Examples @('tlc cluster reset dev -Confirm', 'tlc cluster reset dev -Confirm -KeepStorage -BackupPath .\backup\dev.zip', 'tlc cluster reset dev -Confirm -DryRun') `
+		-Notes @('Reset runs deinit first and then init; if initialization fails, the cluster remains available but its Toolchain foundation is deinitialized.', 'Use -KeepStorage to retain registry/Git data and -BackupPath to export Kubernetes resources plus running registry/Git volume contents before removal.', 'Application namespaces, workloads, and the provider cluster are preserved.')
 	$topics.'cluster list' = New-ToolchainHelpTopic `
 		-Description 'Lists clusters managed by Toolchain.' `
 		-Usage @('tlc cluster list [-Provider kind|k0s|k3s]') `

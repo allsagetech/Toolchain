@@ -116,6 +116,12 @@ Describe 'Toolchain native cluster initialization' {
 		Mock Invoke-ToolchainClusterProcess {
 			param($FilePath, $Arguments, [switch]$AllowFailure)
 			$script:kubectlCalls.Add([pscustomobject]@{ FilePath=$FilePath; Arguments=[string[]]$Arguments; AllowFailure=[bool]$AllowFailure })
+			if ($Arguments -contains 'namespace/toolchain-system' -and $Arguments -contains 'jsonpath={.metadata.labels.app\.kubernetes\.io/managed-by}') {
+				return [pscustomobject]@{ ExitCode=0; Output=@('toolchain') }
+			}
+			if ($Arguments -contains 'namespace/toolchain-system' -and $Arguments -contains '-o' -and $Arguments -contains 'name') {
+				return [pscustomobject]@{ ExitCode=0; Output=@('namespace/toolchain-system') }
+			}
 			if ($Arguments -contains 'configmap/toolchain-image-mappings') {
 				return [pscustomobject]@{ ExitCode=0; Output=@('{"docker.io/example:1":"registry.local/example:1"}') }
 			}
@@ -258,9 +264,23 @@ Describe 'Toolchain native cluster initialization' {
 		$result.Namespace | Should -BeExactly 'toolchain-system'
 		$result.Removed | Should -Contain 'mutatingwebhookconfiguration/toolchain-agent'
 		$result.Removed | Should -Contain 'namespace/toolchain-system'
-		@($script:kubectlCalls).Count | Should -Be 5
-		($script:kubectlCalls[1].Arguments -join ' ') | Should -Match 'delete mutatingwebhookconfiguration/toolchain-agent'
-		($script:kubectlCalls[4].Arguments -join ' ') | Should -Match 'delete namespace/toolchain-system'
+		@($script:kubectlCalls).Count | Should -Be 7
+		($script:kubectlCalls[3].Arguments -join ' ') | Should -Match 'delete mutatingwebhookconfiguration/toolchain-agent'
+		($script:kubectlCalls[6].Arguments -join ' ') | Should -Match 'delete namespace/toolchain-system'
 		Test-Path -LiteralPath $script:managedKubeconfig | Should -BeTrue
+	}
+
+	It 'supports dry-run deinitialization while preserving storage' {
+		$script:managedKubeconfig = Join-Path $TestDrive 'deinit-dry-run-kubeconfig.yaml'
+		[IO.File]::WriteAllText($script:managedKubeconfig, "apiVersion: v1`nserver: https://127.0.0.1:6443`n")
+		Mock Read-ToolchainClusterState { [pscustomobject]@{ name='dev'; provider='kind' } }
+		Mock Get-ToolchainClusterRuntimeStatus { 'Running' }
+		Mock Get-ToolchainClusterKubeconfigPath { $script:managedKubeconfig }
+
+		$result = Invoke-ToolchainClusterDeinit -Name dev -Confirm -KeepStorage -DryRun -PassThru
+
+		$result.DryRun | Should -BeTrue
+		$result.KeepStorage | Should -BeTrue
+		@($script:kubectlCalls | Where-Object { $_.Arguments -contains 'delete' -and $_.Arguments -notcontains '--dry-run=server' }).Count | Should -Be 0
 	}
 }

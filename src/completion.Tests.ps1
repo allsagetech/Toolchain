@@ -45,6 +45,8 @@ Describe 'Toolchain nested argument completion' {
 			Should -Be @('deinit','delete')
 		@(Get-ToolchainNestedCompletionValues -Subcommand cluster -Elements @('toolchain','cluster','deinit','-W') -WordToComplete '-W') |
 			Should -Be @('-WaitSeconds')
+		@(Get-ToolchainNestedCompletionValues -Subcommand cluster -Elements @('toolchain','cluster','re') -WordToComplete 're') |
+			Should -Be @('reset')
 		@(Get-ToolchainNestedCompletionValues -Subcommand cluster -Elements @('toolchain','cluster','create') -WordToComplete '') |
 			Should -Contain '-Provider'
 		@(Get-ToolchainNestedCompletionValues -Subcommand cluster -Elements @('toolchain','cluster','init') -WordToComplete '') |

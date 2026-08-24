@@ -683,17 +683,41 @@ function Get-ToolchainClusterRuntimeStatus {
 	}
 }
 
+function Get-ToolchainClusterToolchainStatus {
+	param([Parameter(Mandatory)]$State)
+	try {
+		$kubeconfig = Get-ToolchainClusterKubeconfigPath -Name ([string]$State.name)
+		if (-not (Test-Path -LiteralPath $kubeconfig -PathType Leaf)) { return 'Unknown' }
+		$command = Get-Command -Name kubectl -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+		if (-not $command) { return 'Unknown' }
+		$kubectl = [string]$command.Source
+		$namespace = Invoke-ToolchainClusterProcess -FilePath $kubectl -Arguments @('--kubeconfig', $kubeconfig, 'get', 'namespace/toolchain-system', '--ignore-not-found=true', '-o', 'jsonpath={.metadata.labels.app\.kubernetes\.io/managed-by}') -AllowFailure
+		if ($namespace.ExitCode -ne 0) { return 'Unknown' }
+		if (($namespace.Output -join '').Trim() -cne 'toolchain') { return 'NotInitialized' }
+		$agent = Invoke-ToolchainClusterProcess -FilePath $kubectl -Arguments @('--kubeconfig', $kubeconfig, 'get', 'deployment/toolchain-agent', '-n', 'toolchain-system', '--ignore-not-found=true', '-o', 'name') -AllowFailure
+		$webhook = Invoke-ToolchainClusterProcess -FilePath $kubectl -Arguments @('--kubeconfig', $kubeconfig, 'get', 'mutatingwebhookconfiguration/toolchain-agent', '--ignore-not-found=true', '-o', 'name') -AllowFailure
+		if ($agent.ExitCode -ne 0 -or $webhook.ExitCode -ne 0) { return 'Unknown' }
+		if ([string]::IsNullOrWhiteSpace(($agent.Output -join '').Trim()) -or [string]::IsNullOrWhiteSpace(($webhook.Output -join '').Trim())) { return 'NotInitialized' }
+		return 'Initialized'
+	} catch {
+		return 'Unknown'
+	}
+}
+
 function ConvertTo-ToolchainClusterObject {
 	param(
 		[Parameter(Mandatory)]$State,
 		[string]$Status
 	)
 	if (-not $Status) { $Status = Get-ToolchainClusterRuntimeStatus -State $State }
+	$toolchainStatus = Get-ToolchainClusterToolchainStatus -State $State
 	return [pscustomobject]@{
 		PSTypeName = 'Toolchain.Cluster'
 		Name = [string]$State.name
 		Provider = [string]$State.provider
 		Status = $Status
+		ToolchainStatus = $toolchainStatus
+		ToolchainInitialized = $toolchainStatus -eq 'Initialized'
 		Servers = [int]$State.servers
 		Workers = [int]$State.workers
 		Image = [string]$State.image
@@ -739,7 +763,7 @@ function Invoke-ToolchainCluster {
 	[CmdletBinding()]
 	param(
 		[Parameter(Mandatory, Position = 0)]
-		[ValidateSet('create', 'init', 'deinit', 'list', 'status', 'kubeconfig', 'use', 'current', 'delete')]
+		[ValidateSet('create', 'init', 'deinit', 'reset', 'list', 'status', 'kubeconfig', 'use', 'current', 'delete')]
 		[string]$Command,
 		[Parameter(Position = 1)]
 		[string]$Name,
@@ -760,6 +784,10 @@ function Invoke-ToolchainCluster {
 		[switch]$Raw,
 		[string]$Kubeconfig,
 		[switch]$Confirm,
+		[switch]$Force,
+		[switch]$DryRun,
+		[switch]$KeepStorage,
+		[string]$BackupPath,
 		[ValidateSet('git-server', 'none')][string[]]$Components,
 		[ValidateSet('all', 'labeled')][string]$AgentMutationPolicy = 'labeled',
 		[string]$AgentImage,
@@ -813,9 +841,56 @@ function Invoke-ToolchainCluster {
 				Kubeconfig = $Kubeconfig
 				Confirm = $Confirm
 				WaitSeconds = $WaitSeconds
+				Force = $Force
+				DryRun = $DryRun
+				KeepStorage = $KeepStorage
+				BackupPath = $BackupPath
 				PassThru = $PassThru
 			}
 			return (Invoke-ToolchainClusterDeinit @params)
+		}
+		'reset' {
+			if (-not $Confirm) { throw "cluster reset changes Kubernetes cluster state; rerun with -Confirm after reviewing 'tlc cluster reset help'" }
+			if (-not $Name -and -not $Kubeconfig) {
+				$currentContext = Resolve-ToolchainCurrentClusterContext -SelectSingle
+				if ($currentContext) { $Name = $currentContext.Name }
+			}
+			$deinitParams = @{
+				Name = $Name
+				Kubeconfig = $Kubeconfig
+				Confirm = $Confirm
+				WaitSeconds = $WaitSeconds
+				KeepStorage = $KeepStorage
+				Force = $Force
+				DryRun = $DryRun
+				BackupPath = $BackupPath
+				PassThru = $true
+			}
+			$deinitResult = Invoke-ToolchainClusterDeinit @deinitParams
+			if ($DryRun) {
+				if ($PassThru) { return [pscustomobject]@{ PSTypeName = 'Toolchain.ClusterResetResult'; Deinitialization = $deinitResult; Initialization = $null; DryRun = $true } }
+				return
+			}
+			$initParams = @{
+				Name = $Name
+				Kubeconfig = $Kubeconfig
+				Confirm = $Confirm
+				PromptForComponents = -not $PSBoundParameters.ContainsKey('Components')
+				AgentMutationPolicy = $AgentMutationPolicy
+				StorageClass = $StorageClass
+				RegistryStorage = $RegistryStorage
+				GitStorage = $GitStorage
+				RegistryNodePort = $RegistryNodePort
+				WaitSeconds = $WaitSeconds
+				PassThru = $true
+			}
+			if ($PSBoundParameters.ContainsKey('Components')) { $initParams.Components = $Components }
+			if ($PSBoundParameters.ContainsKey('AgentImage')) { $initParams.AgentImage = $AgentImage } elseif ($Name) { $initParams.BuildLocalAgent = $true }
+			if ($RegistryImage) { $initParams.RegistryImage = $RegistryImage }
+			if ($GitImage) { $initParams.GitImage = $GitImage }
+			try { $initResult = Invoke-ToolchainClusterInit @initParams }
+			catch { throw "cluster reset deinitialized the Toolchain foundation but re-initialization failed: $($_.Exception.Message)" }
+			if ($PassThru) { return [pscustomobject]@{ PSTypeName = 'Toolchain.ClusterResetResult'; Deinitialization = $deinitResult; Initialization = $initResult; DryRun = $false } }
 		}
 		'create' {
 			if (-not $Name) { throw 'cluster create requires a name' }

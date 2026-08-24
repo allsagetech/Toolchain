@@ -218,7 +218,29 @@ Deinitialization removes the Toolchain admission webhook and agent RBAC objects,
 then deletes the `toolchain-system` namespace and its registry, credentials,
 image mappings, persistent volumes, and optional Git server. It does not delete
 the provider cluster, application namespaces, or package-managed workloads.
-Use `tlc cluster init dev -Confirm` to restore the Toolchain foundation later.
+Use `-KeepStorage` to remove the workloads while preserving registry and Git
+PVCs. Use `-BackupPath` with a new directory or `.zip` path to export the
+Kubernetes resources and copy running registry/Git volume data before removal.
+Use `-DryRun` to preview deletion, and `-Force` only when a namespace is stuck
+on finalizers. Run `tlc cluster init dev -Confirm` to restore the Toolchain
+foundation later.
+
+`cluster status` includes `ToolchainStatus` (`Initialized`, `NotInitialized`,
+or `Unknown`) and `ToolchainInitialized` so automation can distinguish a
+running provider from an initialized Toolchain foundation.
+
+## Reset
+
+Rebuild the Toolchain foundation without deleting the provider cluster:
+
+```powershell
+tlc cluster reset dev -Confirm
+```
+
+Reset runs deinit followed by init. It supports `-KeepStorage`, `-BackupPath`,
+and `-Components`; `-DryRun` previews only the deinitialization phase. If init
+fails, the cluster remains available but the Toolchain foundation stays
+deinitialized.
 
 ## Delete
 

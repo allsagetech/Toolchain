@@ -67,7 +67,11 @@ function Get-ToolchainBootstrapApiServer {
 	param([string]$Kubeconfig)
 
 	if (-not $Kubeconfig -or -not (Test-Path -LiteralPath $Kubeconfig -PathType Leaf)) { return 'the current Kubernetes context' }
-	foreach ($line in [IO.File]::ReadLines($Kubeconfig)) {
+	# Read the complete file so the underlying stream is closed before callers
+	# continue.  The lazy ReadLines enumerator can keep kubeconfig files locked
+	# on Windows until garbage collection, which interferes with cleanup and
+	# subsequent cluster lifecycle operations.
+	foreach ($line in [IO.File]::ReadAllLines($Kubeconfig)) {
 		if ($line -match '^\s*server:\s*(?<Server>\S+)\s*$') {
 			return $Matches.Server.Trim('''', '"')
 		}
@@ -874,6 +878,62 @@ function Invoke-ToolchainClusterInit {
 	if ($PassThru) { return $result }
 }
 
+function Export-ToolchainClusterBootstrapBackup {
+	[CmdletBinding()]
+	param(
+		[Parameter(Mandatory)][string]$Kubectl,
+		[string]$Kubeconfig,
+		[Parameter(Mandatory)][string]$Path
+	)
+	$destination = Resolve-ToolchainFileSystemPath -Path $Path
+	$isArchive = [IO.Path]::GetExtension($destination) -ieq '.zip'
+	if ($isArchive) {
+		$parent = Split-Path -Parent $destination
+		if ($parent -and -not (Test-Path -LiteralPath $parent -PathType Container)) { [void][IO.Directory]::CreateDirectory($parent) }
+		if (Test-Path -LiteralPath $destination) { throw "Toolchain deinit backup already exists: $destination" }
+	} else {
+		if (Test-Path -LiteralPath $destination) {
+			if (-not (Test-Path -LiteralPath $destination -PathType Container)) { throw "Toolchain deinit backup path is not a directory: $destination" }
+			if (@(Get-ChildItem -LiteralPath $destination -Force).Count -gt 0) { throw "Toolchain deinit backup directory is not empty: $destination" }
+		} else { [void][IO.Directory]::CreateDirectory($destination) }
+	}
+	$stage = Join-Path ([IO.Path]::GetTempPath()) "toolchain-deinit-backup-$([guid]::NewGuid().ToString('n'))"
+	[void][IO.Directory]::CreateDirectory($stage)
+	try {
+		$namespaceResult = Invoke-ToolchainBootstrapKubectl -Kubectl $Kubectl -Kubeconfig $Kubeconfig -Arguments @('get', 'namespace/toolchain-system', '--ignore-not-found=true', '-o', 'yaml')
+		Write-ToolchainClusterTextFile -Path (Join-Path $stage 'namespace.yaml') -Content (($namespaceResult.Output -join "`n") + "`n")
+		$resourcesResult = Invoke-ToolchainBootstrapKubectl -Kubectl $Kubectl -Kubeconfig $Kubeconfig -Arguments @('get', 'all,configmap,secret,pvc,serviceaccount,networkpolicy', '-n', 'toolchain-system', '--ignore-not-found=true', '-o', 'yaml')
+		Write-ToolchainClusterTextFile -Path (Join-Path $stage 'resources.yaml') -Content (($resourcesResult.Output -join "`n") + "`n")
+		$clusterResources = [Collections.ArrayList]::new()
+		foreach ($resource in @('mutatingwebhookconfiguration/toolchain-agent', 'clusterrolebinding/toolchain-agent', 'clusterrole/toolchain-agent')) {
+			$result = Invoke-ToolchainBootstrapKubectl -Kubectl $Kubectl -Kubeconfig $Kubeconfig -Arguments @('get', $resource, '--ignore-not-found=true', '-o', 'yaml')
+			[void]$clusterResources.Add((($result.Output -join "`n") + "`n"))
+		}
+		Write-ToolchainClusterTextFile -Path (Join-Path $stage 'cluster-resources.yaml') -Content ($clusterResources -join "---`n")
+		foreach ($component in @(
+			[pscustomobject]@{ Name = 'registry'; Selector = 'app.kubernetes.io/name=toolchain-registry'; RemotePath = '/var/lib/registry' },
+			[pscustomobject]@{ Name = 'git'; Selector = 'app.kubernetes.io/name=toolchain-git'; RemotePath = '/var/lib/gitea' }
+		)) {
+			$deployment = Invoke-ToolchainBootstrapKubectl -Kubectl $Kubectl -Kubeconfig $Kubeconfig -Arguments @('get', "deployment/toolchain-$($component.Name)", '-n', 'toolchain-system', '--ignore-not-found=true', '-o', 'name')
+			if ([string]::IsNullOrWhiteSpace(($deployment.Output -join '').Trim())) { continue }
+			$pod = Invoke-ToolchainBootstrapKubectl -Kubectl $Kubectl -Kubeconfig $Kubeconfig -Arguments @('get', 'pods', '-n', 'toolchain-system', '-l', $component.Selector, '--field-selector=status.phase=Running', '-o', 'jsonpath={.items[0].metadata.name}')
+			$podName = ($pod.Output -join '').Trim()
+			if (-not $podName) { throw "cannot back up Toolchain $($component.Name) data because its pod is not running" }
+			$componentDestination = Join-Path $stage $component.Name
+			[void][IO.Directory]::CreateDirectory($componentDestination)
+			$null = Invoke-ToolchainBootstrapKubectl -Kubectl $Kubectl -Kubeconfig $Kubeconfig -Arguments @('cp', "toolchain-system/$podName`:$($component.RemotePath)", $componentDestination)
+		}
+		if ($isArchive) {
+			Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $destination -CompressionLevel Optimal
+		} else {
+			foreach ($item in @(Get-ChildItem -LiteralPath $stage -Force)) { Copy-Item -LiteralPath $item.FullName -Destination $destination -Recurse -Force }
+		}
+		return $destination
+	} finally {
+		if (Test-Path -LiteralPath $stage -PathType Container) { Remove-Item -LiteralPath $stage -Recurse -Force }
+	}
+}
+
 function Invoke-ToolchainClusterDeinit {
 	[CmdletBinding()]
 	param(
@@ -881,9 +941,15 @@ function Invoke-ToolchainClusterDeinit {
 		[string]$Kubeconfig,
 		[switch]$Confirm,
 		[ValidateRange(10, 1800)][int]$WaitSeconds = 120,
+		[switch]$KeepStorage,
+		[switch]$Force,
+		[switch]$DryRun,
+		[string]$BackupPath,
 		[switch]$PassThru
 	)
 	if (-not $Confirm) { throw "cluster deinit changes Kubernetes cluster state; rerun with -Confirm after reviewing 'tlc cluster deinit help'" }
+	if ($DryRun -and $BackupPath) { throw 'cluster deinit cannot create a backup during -DryRun' }
+	if ($KeepStorage -and $Force) { throw 'cluster deinit cannot combine -KeepStorage and -Force' }
 	$kubeconfigPath = Resolve-ToolchainBootstrapKubeconfig -Name $Name -Kubeconfig $Kubeconfig
 	$kubectl = Get-ToolchainClusterExecutable -Name kubectl -Package kubectl -InstallHint 'Install kubectl and ensure its executable is available on PATH.'
 	$apiServer = Get-ToolchainBootstrapApiServer -Kubeconfig $kubeconfigPath
@@ -893,17 +959,47 @@ function Invoke-ToolchainClusterDeinit {
 	} catch {
 		throw "Kubernetes API preflight failed for cluster deinit at $apiServer. Confirm the provider is running and the endpoint is reachable. kubectl reported: $($_.Exception.Message)"
 	}
+	$namespaceLookup = Invoke-ToolchainBootstrapKubectl -Kubectl $kubectl -Kubeconfig $kubeconfigPath -Arguments @('get', 'namespace/toolchain-system', '--ignore-not-found=true', '-o', 'name')
+	if (-not [string]::IsNullOrWhiteSpace(($namespaceLookup.Output -join '').Trim())) {
+		$ownership = Invoke-ToolchainBootstrapKubectl -Kubectl $kubectl -Kubeconfig $kubeconfigPath -Arguments @('get', 'namespace/toolchain-system', '-o', 'jsonpath={.metadata.labels.app\.kubernetes\.io/managed-by}')
+		if (($ownership.Output -join '').Trim() -cne 'toolchain') { throw "refusing to deinitialize namespace 'toolchain-system' because it is not labeled app.kubernetes.io/managed-by=toolchain" }
+	}
+	$backup = $null
+	if ($BackupPath) { $backup = Export-ToolchainClusterBootstrapBackup -Kubectl $kubectl -Kubeconfig $kubeconfigPath -Path $BackupPath }
 
 	$removed = [Collections.ArrayList]::new()
+	$dryRunArguments = if ($DryRun) { @('--dry-run=server') } else { @() }
 	# Remove cluster-scoped admission/RBAC objects first so the webhook cannot
 	# observe cleanup of the Toolchain namespace or any finalizers it owns.
 	foreach ($resource in @('mutatingwebhookconfiguration/toolchain-agent', 'clusterrolebinding/toolchain-agent', 'clusterrole/toolchain-agent')) {
-		$null = Invoke-ToolchainBootstrapKubectl -Kubectl $kubectl -Kubeconfig $kubeconfigPath -Arguments @('delete', $resource, '--ignore-not-found=true')
+		$null = Invoke-ToolchainBootstrapKubectl -Kubectl $kubectl -Kubeconfig $kubeconfigPath -Arguments (@('delete', $resource, '--ignore-not-found=true') + $dryRunArguments)
 		[void]$removed.Add($resource)
 	}
-	$timeout = "${WaitSeconds}s"
-	$null = Invoke-ToolchainBootstrapKubectl -Kubectl $kubectl -Kubeconfig $kubeconfigPath -Arguments @('delete', 'namespace/toolchain-system', '--ignore-not-found=true', '--wait=true', "--timeout=$timeout")
-	[void]$removed.Add('namespace/toolchain-system')
+	$forcedFinalizers = $false
+	if ($KeepStorage) {
+		foreach ($resource in @(
+			'deployment/toolchain-agent', 'deployment/toolchain-registry', 'deployment/toolchain-registry-gateway', 'deployment/toolchain-git',
+			'service/toolchain-agent', 'service/toolchain-registry', 'service/toolchain-registry-gateway', 'service/toolchain-git',
+			'serviceaccount/toolchain-agent', 'secret/toolchain-state', 'secret/toolchain-registry-credentials', 'secret/toolchain-git-admin',
+			'configmap/toolchain-image-mappings', 'configmap/toolchain-git-config', 'networkpolicy/toolchain-registry'
+		)) {
+			$null = Invoke-ToolchainBootstrapKubectl -Kubectl $kubectl -Kubeconfig $kubeconfigPath -Arguments (@('delete', $resource, '-n', 'toolchain-system', '--ignore-not-found=true') + $dryRunArguments)
+			[void]$removed.Add($resource)
+		}
+	} else {
+		$timeout = "${WaitSeconds}s"
+		try {
+			$null = Invoke-ToolchainBootstrapKubectl -Kubectl $kubectl -Kubeconfig $kubeconfigPath -Arguments (@('delete', 'namespace/toolchain-system', '--ignore-not-found=true', '--wait=true', "--timeout=$timeout") + $dryRunArguments)
+		} catch {
+			if (-not $Force -or $DryRun) { throw "Toolchain namespace deletion failed: $($_.Exception.Message). Retry with -Force to clear stuck namespace finalizers." }
+			Write-Warning "Toolchain namespace deletion timed out; clearing its finalizers because -Force was specified."
+			$patch = '{"spec":{"finalizers":[]}}'
+			$null = Invoke-ToolchainBootstrapKubectl -Kubectl $kubectl -Kubeconfig $kubeconfigPath -Arguments @('patch', 'namespace/toolchain-system', '--type=merge', '--patch', $patch)
+			$null = Invoke-ToolchainBootstrapKubectl -Kubectl $kubectl -Kubeconfig $kubeconfigPath -Arguments @('delete', 'namespace/toolchain-system', '--ignore-not-found=true', '--wait=false')
+			$forcedFinalizers = $true
+		}
+		[void]$removed.Add('namespace/toolchain-system')
+	}
 
 	$result = [pscustomobject]@{
 		PSTypeName = 'Toolchain.ClusterDeinitialization'
@@ -912,6 +1008,10 @@ function Invoke-ToolchainClusterDeinit {
 		Namespace = 'toolchain-system'
 		Removed = @($removed.ToArray())
 		WaitSeconds = $WaitSeconds
+		KeepStorage = [bool]$KeepStorage
+		DryRun = [bool]$DryRun
+		ForcedFinalizers = $forcedFinalizers
+		BackupPath = $backup
 	}
 	Write-ToolchainInfo "Removed Toolchain bootstrap resources from $($result.Cluster); the Kubernetes cluster was preserved."
 	if ($PassThru) { return $result }
