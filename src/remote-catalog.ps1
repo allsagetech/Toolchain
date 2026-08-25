@@ -82,9 +82,10 @@ function Test-ToolchainRegistryMetadataTag {
 	)
 
 	# Cosign stores signatures and attestations as tags alongside package tags.
-	# Package-kind markers and temporary release-staging tags are also registry
-	# metadata. None of these are installable packages.
+	# Release SBOMs, package-kind markers, and temporary release-staging tags
+	# are also registry metadata. None of these are installable packages.
 	return ($Tag -match '(?i)^sha256-[0-9a-f]{64}\.(sig|att|sbom)$') -or
+		($Tag -match '(?i)^sbom-v[0-9]+-[a-z0-9][a-z0-9._-]*$') -or
 		($Tag -match '(?i)^tlc-kind-[a-z0-9-]+--[a-z0-9][a-z0-9._-]*$') -or
 		($Tag -match '(?i)^tlc-catalog-v[0-9]+$') -or
 		($Tag -match '(?i)^tlc-platform-[a-z0-9._-]+$') -or

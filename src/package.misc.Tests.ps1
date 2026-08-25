@@ -76,9 +76,10 @@ Describe 'Docker package tag mapping' {
 		$tags.toolchain[0].ToString() | Should -Be '2.0.1'
 	}
 
-	It 'excludes Cosign, package-kind, and staging metadata from installable packages' {
+	It 'excludes Cosign, release SBOM, package-kind, and staging metadata from installable packages' {
 		$digitSignature = 'sha256-1' + ('a' * 63) + '.sig'
 		$letterSignature = 'sha256-a' + ('b' * 63) + '.sig'
+		$releaseSbom = 'sbom-v1-git-2.55.0_501-32442562296-1'
 		$staging = 'staging-podman-6.1.0_1-31838586914-1'
 		Mock GetTagsList { @{ Tags = @(
 			'git-2.0.0',
@@ -86,6 +87,7 @@ Describe 'Docker package tag mapping' {
 			$letterSignature,
 			('sha256-' + ('c' * 64) + '.att'),
 			('sha256-' + ('d' * 64) + '.sbom'),
+			$releaseSbom,
 			'tlc-kind-model-v1-100-1--qwen3-0.6b',
 			$staging
 		) } }
@@ -97,6 +99,7 @@ Describe 'Docker package tag mapping' {
 		$catalog = GetDockerTags -ToolingDefaultDisplay
 		@($catalog.PSObject.Properties.Name) | Should -Be @('git')
 		$rendered = $catalog | Out-String
+		$rendered | Should -Not -Match 'sbom-v1'
 		$rendered | Should -Not -Match 'staging'
 		$rendered | Should -Not -Match 'podman'
 	}
