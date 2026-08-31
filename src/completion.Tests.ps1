@@ -6,6 +6,28 @@ SPDX-License-Identifier: MPL-2.0
 
 BeforeAll {
 	. $PSCommandPath.Replace('.Tests.ps1', '.ps1')
+
+	function GetConfigPackages { @() }
+	function Get-ToolchainPowerShellProfilePath { 'profile.ps1' }
+	function Read-ToolchainProfileState {
+		param([string]$Path)
+		[pscustomobject]@{ Packages = @() }
+	}
+	function GetLocalPackages { @() }
+	function Read-ToolchainCatalogCache {
+		param([switch]$AllowStale)
+		[pscustomobject]@{ Tags = @() }
+	}
+	function Test-ToolchainRegistryMetadataTag {
+		param([string]$Tag)
+		$false
+	}
+	function Get-ToolchainClusterStates {
+		[CmdletBinding()]
+		param()
+		@()
+	}
+	function GetTagsList { @() }
 }
 
 Describe 'Toolchain nested argument completion' {
@@ -21,6 +43,8 @@ Describe 'Toolchain nested argument completion' {
 		@(Get-ToolchainNestedCompletionValues -Subcommand remote -Elements @('tlc','remote','health','-O') -WordToComplete '-O') | Should -Be @('-OnlyProblems')
 		@(Get-ToolchainNestedCompletionValues -Subcommand profile -Elements @('tlc','profile','a') -WordToComplete 'a') | Should -Be @('add')
 		@(Get-ToolchainNestedCompletionValues -Subcommand profile -Elements @('tlc','profile','add','h') -WordToComplete 'h') | Should -Be @('help')
+		@(Get-ToolchainNestedCompletionValues -Subcommand completion -Elements @('tlc','completion','e') -WordToComplete 'e') | Should -Be @('enable')
+		@(Get-ToolchainNestedCompletionValues -Subcommand shell -Elements @('tlc','shell','p') -WordToComplete 'p') | Should -Be @('pwsh')
 	@(Get-ToolchainNestedCompletionValues -Subcommand package -Elements @('tlc','package','d') -WordToComplete 'd') | Should -Be @('deploy')
 	@(Get-ToolchainNestedCompletionValues -Subcommand package -Elements @('tlc','package','r') -WordToComplete 'r') | Should -Be @('remove')
 	@(Get-ToolchainNestedCompletionValues -Subcommand package -Elements @('tlc','package','remove','-C') -WordToComplete '-C') | Should -Be @('-Components','-Cluster','-Config','-Confirm')
@@ -80,6 +104,10 @@ Describe 'Toolchain nested argument completion' {
 			Should -Contain 'help'
 		@(Get-ToolchainNestedCompletionValues -Subcommand help -Elements @('tlc','help','cl') -WordToComplete 'cl') |
 			Should -Be @('cluster')
+		@(Get-ToolchainNestedCompletionValues -Subcommand help -Elements @('tlc','help','co') -WordToComplete 'co') |
+			Should -Be @('completion')
+		@(Get-ToolchainNestedCompletionValues -Subcommand help -Elements @('tlc','help','sh') -WordToComplete 'sh') |
+			Should -Be @('shell')
 	}
 
 	It 'completes Toolchain and native K9s options' {
@@ -87,6 +115,37 @@ Describe 'Toolchain nested argument completion' {
 			Should -Contain '-Cluster'
 		@(Get-ToolchainNestedCompletionValues -Subcommand k9s -Elements @('tlc','k9s','--read') -WordToComplete '--read') |
 			Should -Be @('--readonly')
+	}
+
+	It 'completes locally known packages and saved clusters without querying a registry' {
+		Mock GetConfigPackages { @('node:22', 'git:2.55') }
+		Mock Get-ToolchainPowerShellProfilePath { 'profile.ps1' }
+		Mock Read-ToolchainProfileState { [pscustomobject]@{ Packages = @('helm:4') } }
+		Mock GetLocalPackages { @([pscustomobject]@{ Package = 'git' }) }
+		Mock Read-ToolchainCatalogCache {
+			[pscustomobject]@{
+				Tags = @('recaf-4.0.0_1', 'sha256-' + ('a' * 64) + '.sig', 'tlc-kind-tooling--recaf')
+			}
+		}
+		Mock Test-ToolchainRegistryMetadataTag {
+			param($Tag)
+			$Tag -match '^(sha256-|tlc-kind-)'
+		}
+		Mock Get-ToolchainClusterStates {
+			@([pscustomobject]@{ name = 'dev' }, [pscustomobject]@{ name = 'prod' })
+		}
+		Mock GetTagsList { throw 'Completion must not query a registry.' }
+
+		@(Get-ToolchainCompletionPackageNames) | Should -Be @('git', 'helm', 'node', 'recaf')
+		@(Get-ToolchainNestedCompletionValues -Subcommand pull -Elements @('tlc','pull','r') -WordToComplete 'r') |
+			Should -Be @('recaf')
+		@(Get-ToolchainNestedCompletionValues -Subcommand profile -Elements @('tlc','profile','remove','h') -WordToComplete 'h') |
+			Should -Be @('helm', 'help')
+		@(Get-ToolchainNestedCompletionValues -Subcommand cluster -Elements @('tlc','cluster','use','d') -WordToComplete 'd') |
+			Should -Be @('dev')
+		@(Get-ToolchainNestedCompletionValues -Subcommand k9s -Elements @('tlc','k9s','-Cluster','p') -WordToComplete 'p') |
+			Should -Be @('prod')
+		Should -Invoke GetTagsList -Times 0 -Exactly
 	}
 
 	It 'registers command, argument-list, and native completers' {

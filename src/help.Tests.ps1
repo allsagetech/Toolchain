@@ -13,12 +13,12 @@ Describe 'Toolchain command help catalog' {
 		$expected = @(
 			'version','list','remote','remote list','remote models','remote all','remote tags',
 			'remote health','remote info',
-			'pull','load','exec','run','update','prune','remove','save','init',
+			'pull','load','exec','run','shell','update','prune','remove','save','init',
 			'lock','restore','sync','activate','deactivate','verify','audit',
 			'profile','profile init','profile add','profile remove','profile list','profile path',
 			'package','package create','package deploy','package remove',
 			'cluster','cluster create','cluster init','cluster deinit','cluster reset','cluster restore','cluster doctor','cluster list','cluster status','cluster kubeconfig','cluster use','cluster current','cluster delete',
-			'k9s','doctor','help'
+			'k9s','doctor','completion','help'
 		)
 		$topics = Get-ToolchainHelpTopics
 		@($topics.Keys) | Should -Be $expected
@@ -41,6 +41,7 @@ Describe 'Toolchain command help catalog' {
 		$text | Should -Match 'k9s'
 		$text | Should -Match 'audit'
 		$text | Should -Match 'sync'
+		$text | Should -Match 'shell'
 		$text | Should -Match 'activate'
 		(Invoke-ToolchainHelp -CommandPath @('package','deploy')) | Should -Match '-Components NAMES'
 		(Invoke-ToolchainHelp -CommandPath @('package','deploy')) | Should -Match '-Set NAME=value'

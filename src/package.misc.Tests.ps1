@@ -80,6 +80,7 @@ Describe 'Docker package tag mapping' {
 		$digitSignature = 'sha256-1' + ('a' * 63) + '.sig'
 		$letterSignature = 'sha256-a' + ('b' * 63) + '.sig'
 		$releaseSbom = 'sbom-v1-git-2.55.0_501-32442562296-1'
+		$futureReleaseSbom = 'sbom-v2-recaf-4.0.0_1-33414531323-1'
 		$staging = 'staging-podman-6.1.0_1-31838586914-1'
 		Mock GetTagsList { @{ Tags = @(
 			'git-2.0.0',
@@ -88,6 +89,7 @@ Describe 'Docker package tag mapping' {
 			('sha256-' + ('c' * 64) + '.att'),
 			('sha256-' + ('d' * 64) + '.sbom'),
 			$releaseSbom,
+			$futureReleaseSbom,
 			'tlc-kind-model-v1-100-1--qwen3-0.6b',
 			$staging
 		) } }
@@ -100,6 +102,7 @@ Describe 'Docker package tag mapping' {
 		@($catalog.PSObject.Properties.Name) | Should -Be @('git')
 		$rendered = $catalog | Out-String
 		$rendered | Should -Not -Match 'sbom-v1'
+		$rendered | Should -Not -Match 'sbom-v2'
 		$rendered | Should -Not -Match 'staging'
 		$rendered | Should -Not -Match 'podman'
 	}

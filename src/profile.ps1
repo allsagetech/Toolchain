@@ -206,14 +206,16 @@ function Invoke-ToolchainProfile {
 			if (-not $Packages) { throw 'profile add requires at least one package reference (example: toolchain profile add node)' }
 			$null = Initialize-ToolchainPowerShellProfile -Path $path
 			$state = Read-ToolchainProfileState -Path $path
-			$updated = [Collections.Generic.List[string]]::new()
-			foreach ($existing in $state.Packages) { $updated.Add($existing) }
+			$added = [Collections.Generic.List[string]]::new()
 			foreach ($package in $Packages) {
 				Assert-ToolchainProfilePackage -Package $package
-				if (-not ($updated | Where-Object { $_ -ieq $package })) {
-					$updated.Add($package)
+				if (-not ($state.Packages | Where-Object { $_ -ieq $package }) -and -not ($added | Where-Object { $_ -ieq $package })) {
+					$added.Add($package)
 				}
 			}
+			$updated = [Collections.Generic.List[string]]::new()
+			foreach ($package in $added) { $updated.Add($package) }
+			foreach ($existing in $state.Packages) { $updated.Add($existing) }
 			Set-ToolchainProfilePackages -Path $path -Packages $updated.ToArray()
 			Write-ToolchainInfo "Updated Toolchain packages in PowerShell profile: $path"
 		}

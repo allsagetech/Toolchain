@@ -249,6 +249,7 @@ not supplied by configuration or environment variables.
 | `load` | Load packages into current session | `doc/toolchain-load.md` |
 | `exec` | Run a scriptblock in a managed session | `doc/toolchain-exec.md` |
 | `run` | Run a function from `Toolchain.ps1` (optionally under packages) | `doc/toolchain-run.md` |
+| `shell pwsh` | Launch Toolchain-managed PowerShell 7 without changing Windows defaults or the system PATH | `doc/toolchain-shell.md` |
 | `update` | Update all tagged packages | `doc/toolchain-update.md` |
 | `prune` | Delete unreferenced packages | `doc/toolchain-prune.md` |
 | `remove` / `rm` | Untag/delete packages | `doc/toolchain-remove.md` |

@@ -96,6 +96,12 @@ function Get-ToolchainHelpTopics {
 		-Usage @('tlc run FUNCTION [ARGUMENT ...]') `
 		-Examples @('tlc run build', 'tlc run test -Configuration Release') `
 		-Notes @('For example, tlc run build invokes a function named ToolchainBuild.')
+	$topics.shell = New-ToolchainHelpTopic `
+		-Description 'Starts a Toolchain-managed interactive shell without changing system settings.' `
+		-Usage @('tlc shell pwsh') `
+		-Commands @('pwsh      Start the verified Toolchain PowerShell 7 package and import Toolchain in the new session.') `
+		-Examples @('tlc shell pwsh') `
+		-Notes @('The PowerShell package is resolved using the normal pull policy. The command changes neither the system PATH nor Windows default-shell settings.', 'After the shell opens, run tlc completion enable in a compatible PowerShell 7 terminal for inline suggestions.')
 	$topics.update = New-ToolchainHelpTopic `
 		-Description 'Updates locally tagged packages to their current remote versions.' `
 		-Usage @('tlc update') `
@@ -409,6 +415,16 @@ function Get-ToolchainHelpTopics {
 			'-Refresh     Bypass cached remote registry data.'
 		) `
 		-Examples @('tlc doctor', 'tlc doctor -Strict', 'tlc doctor -Json')
+	$topics.completion = New-ToolchainHelpTopic `
+		-Description 'Controls optional inline Toolchain command suggestions from the PowerShell PSReadLine predictor.' `
+		-Usage @('tlc completion enable', 'tlc completion disable', 'tlc completion status') `
+		-Commands @(
+			'enable     Register the local predictor for the current PowerShell session.',
+			'disable    Unregister the Toolchain predictor and restore its previous prediction source.',
+			'status     Show availability, registration state, and PSReadLine settings.'
+		) `
+		-Examples @('tlc completion enable', 'tlc completion status', 'tlc completion disable') `
+		-Notes @('Requires PowerShell 7.2+ and PSReadLine 2.2.2+; Windows PowerShell 5.1 is unaffected.', 'Suggestions are generated locally without registry or network calls. Press F2 to switch PSReadLine between inline and list views.')
 	$topics.help = New-ToolchainHelpTopic `
 		-Description 'Displays the command overview or detailed help for a command path.' `
 		-Usage @('tlc help', 'tlc COMMAND help', 'tlc COMMAND SUBCOMMAND help', 'tlc help COMMAND [SUBCOMMAND]') `
@@ -498,6 +514,7 @@ function Invoke-ToolchainHelp {
 			'load           Load packages into the current session.',
 			'exec           Run a script block with packages loaded.',
 			'run            Run a Toolchain.ps1 project function.',
+			'shell          Launch a Toolchain-managed interactive shell.',
 			'update         Update locally tagged packages.',
 			'prune          Delete unreferenced package content.',
 			'remove         Remove local package tags and content.',
@@ -515,6 +532,7 @@ function Invoke-ToolchainHelp {
 			'cluster        Manage local Docker-backed Kubernetes clusters.',
 			'k9s            Launch a terminal UI for a Kubernetes cluster.',
 			'doctor         Check Toolchain storage and registry configuration.',
+			'completion     Control optional inline Toolchain command suggestions.',
 			'help           Display overview or command-specific help.'
 		)
 		[void]$lines.Add('')

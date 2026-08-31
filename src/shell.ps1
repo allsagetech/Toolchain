@@ -445,7 +445,8 @@ function ExecuteScript {
 		[Parameter(Mandatory)]
 		[scriptblock]$ScriptBlock,
 		[Parameter(Mandatory)]
-		[Collections.Hashtable[]]$Pkgs
+		[Collections.Hashtable[]]$Pkgs,
+		[object[]]$ArgumentList = @()
 	)
 	$GUID = New-Guid
 	$basePathState = Get-Variable -Name 'ToolchainExecBasePath' -Scope Script -ErrorAction SilentlyContinue
@@ -476,7 +477,7 @@ function ExecuteScript {
 				Set-ToolchainPathValue $basePath
 			}
 		}
-		& $ScriptBlock
+		& $ScriptBlock @ArgumentList
 	} finally {
 		RestoreSessionState $GUID
 		if ($hadBasePath) {

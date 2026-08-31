@@ -61,9 +61,10 @@ toolchain load 'go:1.22' *> $null
 ```
 
 Toolchain safely quotes package references, ignores case-only duplicates, and
-suppresses all output from managed startup loads. It does not change commands
-outside these markers. If the marked section has been manually malformed,
-Toolchain stops instead of rewriting the profile.
+places newly added package loads before existing managed loads. It suppresses
+all output from managed startup loads. It does not change commands outside
+these markers. If the marked section has been manually malformed, Toolchain
+stops instead of rewriting the profile.
 
 List only the packages managed by this command:
 

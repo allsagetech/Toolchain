@@ -69,6 +69,7 @@ Describe 'Invoke-Toolchain dispatcher' {
 		Mock Invoke-ToolchainSave { 'save' }
 		Mock Invoke-ToolchainExec { param([string[]]$Packages,[scriptblock]$ScriptBlock) @($Packages).Count }
 		Mock Invoke-ToolchainRun { param([string]$FnName,[object[]]$ArgumentList) @($FnName) + @($ArgumentList) }
+		Mock Invoke-ToolchainShell { param([string]$Command) "shell:$Command" }
 		Mock Invoke-ToolchainInit { 'init' }
 		Mock Invoke-ToolchainLock { param([string[]]$Packages,[string[]]$Update) if ($Update) { @($Update) } elseif ($Packages) { @($Packages) } else { 'lock' } }
 		Mock Invoke-ToolchainRestore { 'restore' }
@@ -82,6 +83,7 @@ Describe 'Invoke-Toolchain dispatcher' {
 		Mock Invoke-ToolchainDeploymentPackage { param($Command,$Path,$Cluster,$Components,$Set,[switch]$Confirm) @($Command,$Path,$Cluster,@($Components),@($Set),[bool]$Confirm) }
 		Mock Invoke-ToolchainK9s { param($Cluster,$Kubeconfig,[object[]]$ArgumentList) [pscustomobject]@{ Cluster = $Cluster; Kubeconfig = $Kubeconfig; Arguments = @($ArgumentList) } }
 		Mock Invoke-ToolchainDoctor { 'doctor' }
+		Mock Invoke-ToolchainPredictiveIntelliSense { param($Command) "completion:$Command" }
 		Mock Invoke-ToolchainHelp { param([string[]]$CommandPath) if ($CommandPath) { "help:$($CommandPath -join ' ')" } else { 'help' } }
 	}
 
@@ -139,6 +141,7 @@ Describe 'Invoke-Toolchain dispatcher' {
 		(Invoke-Toolchain -Command sync) | Should -Be 'sync'
 		(Invoke-Toolchain -Command activate) | Should -Be 'activate'
 		(Invoke-Toolchain -Command deactivate) | Should -Be 'deactivate'
+		(Invoke-Toolchain -Command shell -ArgumentList @('pwsh')) | Should -Be 'shell:pwsh'
 		@(Invoke-Toolchain -Command verify -ArgumentList @('node','git')) | Should -Be @('node','git')
 		(Invoke-Toolchain -Command audit -ArgumentList @('-Path','audit.lock.json','-Strict')) | Should -Be 'audit:audit.lock.json:True'
 		@(Invoke-Toolchain -Command profile -ArgumentList @('add','node','git')) | Should -Be @('add','node','git')
@@ -153,6 +156,7 @@ Describe 'Invoke-Toolchain dispatcher' {
 		$k9s = Invoke-Toolchain -Command k9s -ArgumentList @('--readonly','-A')
 		$k9s.Arguments | Should -Be @('--readonly','-A')
 		(Invoke-Toolchain -Command doctor) | Should -Be 'doctor'
+		(Invoke-Toolchain -Command completion -ArgumentList @('status')) | Should -Be 'completion:status'
 		(Invoke-Toolchain -Command help) | Should -Be 'help'
 		(Invoke-Toolchain -Command h) | Should -Be 'help'
 	}
@@ -163,7 +167,7 @@ Describe 'Invoke-Toolchain dispatcher' {
 	}
 
 	It 'routes suffix help for every top-level command without executing it' {
-		$commands = @('version','v','remote','list','load','pull','exec','run','remove','rm','save','prune','update','init','lock','restore','sync','activate','deactivate','verify','audit','profile','package','cluster','k9s','doctor')
+		$commands = @('version','v','remote','list','load','pull','exec','run','shell','remove','rm','save','prune','update','init','lock','restore','sync','activate','deactivate','verify','audit','profile','package','cluster','k9s','doctor','completion')
 		foreach ($command in $commands) {
 			$expected = switch ($command) { 'v' { 'version' }; 'rm' { 'remove' }; default { $command } }
 			(Invoke-Toolchain -Command $command -ArgumentList @('help')) | Should -Be "help:$expected"

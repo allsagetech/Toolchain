@@ -6,6 +6,7 @@ SPDX-License-Identifier: MPL-2.0
 
 . $PSScriptRoot\package.ps1
 . $PSScriptRoot\shell.ps1
+. $PSScriptRoot\powershell-shell.ps1
 . $PSScriptRoot\maintenance.ps1
 . $PSScriptRoot\profile.ps1
 . $PSScriptRoot\cluster.ps1
@@ -18,6 +19,7 @@ SPDX-License-Identifier: MPL-2.0
 . $PSScriptRoot\environment.ps1
 . $PSScriptRoot\audit.ps1
 . $PSScriptRoot\help.ps1
+. $PSScriptRoot\predictor.ps1
 . $PSScriptRoot\completion.ps1
 
 <#
@@ -34,7 +36,7 @@ function Invoke-Toolchain {
 	[CmdletBinding()]
 	param (
 		[Parameter(Mandatory)]
-		[ValidateSet('version', 'v', 'remote', 'list', 'load', 'pull', 'exec', 'run', 'remove', 'rm', 'save', 'prune', 'update', 'init', 'lock', 'restore', 'sync', 'activate', 'deactivate', 'verify', 'audit', 'profile', 'cluster', 'package', 'k9s', 'doctor', 'help', 'h')]
+		[ValidateSet('version', 'v', 'remote', 'list', 'load', 'pull', 'exec', 'run', 'shell', 'remove', 'rm', 'save', 'prune', 'update', 'init', 'lock', 'restore', 'sync', 'activate', 'deactivate', 'verify', 'audit', 'profile', 'cluster', 'package', 'k9s', 'doctor', 'completion', 'help', 'h')]
 		[string]$Command,
 		[Parameter(ValueFromRemainingArguments)]
 		[object[]]$ArgumentList
@@ -105,6 +107,10 @@ function Invoke-Toolchain {
 				$rest = if ($runArguments.Count -gt 1) { $runArguments[1..($runArguments.Count - 1)] } else { @() }
 				Invoke-ToolchainRun -FnName $fnName -ArgumentList $rest
 			}
+			'shell' {
+				$params, $remaining = ResolveParameters 'Invoke-ToolchainShell' $ArgumentList
+				Invoke-ToolchainShell @params @remaining
+			}
 			'init' {
 				$params, $remaining = ResolveParameters 'Invoke-ToolchainInit' $ArgumentList
 				Invoke-ToolchainInit @params @remaining
@@ -161,6 +167,10 @@ function Invoke-Toolchain {
 			'doctor' {
 				$params, $remaining = ResolveParameters 'Invoke-ToolchainDoctor' $ArgumentList
 				Invoke-ToolchainDoctor @params @remaining
+			}
+			'completion' {
+				$params, $remaining = ResolveParameters 'Invoke-ToolchainPredictiveIntelliSense' $ArgumentList
+				Invoke-ToolchainPredictiveIntelliSense @params @remaining
 			}
 		}
 	} catch {
